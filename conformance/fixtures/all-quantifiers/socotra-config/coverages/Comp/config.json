@@ -1,0 +1,9 @@
+{
+  "displayName": "Comprehensive",
+  "data": {
+    "limit": {
+      "displayName": "Limit",
+      "type": "int"
+    }
+  }
+}

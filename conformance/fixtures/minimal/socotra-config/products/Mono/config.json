@@ -1,0 +1,11 @@
+{
+  "displayName": "Monoline Product",
+  "contents": ["Vehicle"],
+  "charges": [],
+  "data": {
+    "policyRef": {
+      "displayName": "Policy reference",
+      "type": "string"
+    }
+  }
+}

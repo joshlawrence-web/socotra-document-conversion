@@ -1,0 +1,14 @@
+{
+  "displayName": "Insured Item",
+  "contents": [],
+  "data": {
+    "serialNumber": {
+      "displayName": "Serial number",
+      "type": "string"
+    },
+    "itemValue": {
+      "displayName": "Item value",
+      "type": "decimal"
+    }
+  }
+}

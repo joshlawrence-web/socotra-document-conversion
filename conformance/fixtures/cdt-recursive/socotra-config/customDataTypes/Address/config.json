@@ -1,0 +1,17 @@
+{
+  "displayName": "Address",
+  "data": {
+    "street": {
+      "displayName": "Street",
+      "type": "string"
+    },
+    "city": {
+      "displayName": "City",
+      "type": "string"
+    },
+    "subAddress": {
+      "displayName": "Sub-address (for unit / suite / apartment chaining)",
+      "type": "Address?"
+    }
+  }
+}

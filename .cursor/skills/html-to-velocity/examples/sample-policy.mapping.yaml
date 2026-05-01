@@ -1,0 +1,63 @@
+schema_version: '1.0'
+source: sample-policy.html
+generated_at: '2026-04-23T09:36:36+00:00'
+variables:
+- name: productName
+  placeholder: $TBD_productName
+  type: variable
+  context:
+    parent_tag: p
+    line: 18
+    nearest_label: Product
+  data_source: ''
+- name: currency
+  placeholder: $TBD_currency
+  type: variable
+  context:
+    parent_tag: p
+    line: 19
+    nearest_label: Currency
+  data_source: ''
+- name: policyNumber
+  placeholder: $TBD_policyNumber
+  type: variable
+  context:
+    parent_tag: strong
+    line: 20
+    nearest_label: Reference
+  data_source: ''
+- name: lastName
+  placeholder: $TBD_lastName
+  type: variable
+  context:
+    parent_tag: td
+    line: 30
+    nearest_label: '*insureds*'
+    column_header: Name
+  data_source: ''
+- name: location
+  placeholder: $TBD_location
+  type: variable
+  context:
+    parent_tag: td
+    line: 31
+    nearest_label: '*insureds*'
+    column_header: Location
+  data_source: ''
+- name: coverageName
+  placeholder: $TBD_coverageName
+  type: variable
+  context:
+    parent_tag: li
+    line: 38
+    nearest_label: Coverages
+  data_source: ''
+- name: coverageLimit
+  placeholder: $TBD_coverageLimit
+  type: variable
+  context:
+    parent_tag: li
+    line: 38
+    nearest_label: Coverages
+  data_source: ''
+loops: []

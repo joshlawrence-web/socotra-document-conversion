@@ -1,0 +1,80 @@
+# skill-lessons.yaml — accumulated pattern observations
+#
+# Seeded by Phase D session D2 (2026-04-22) with the two lessons drafted
+# verbatim in PIPELINE_EVOLUTION_PLAN.md §5.2. Hand-curated across runs:
+# the mapping-suggester MAY append new observation rows and MAY bump the
+# `seen_count`, `last_seen`, and `observed_in` fields on existing rows,
+# but MUST NEVER edit `pattern`, `current_rule`, `candidate_promotion`,
+# or `status`. Promotion from `observed` → `proposed` → `promoted` /
+# `rejected` is a human-only workflow (see
+# `.cursor/skills/mapping-suggester/SKILL.md` → "Lesson workflow
+# (Phase D)" and PIPELINE_EVOLUTION_PLAN.md §5.2 / §7).
+#
+# Agent-auto-promotion is a hard constraint: any run that sets
+# `status: promoted` (or edits `candidate_promotion` from `null`)
+# without a human review is a test failure, not a style violation.
+# See PIPELINE_EVOLUTION_PLAN.md §7.
+#
+# Shape contract: SCHEMA.md → "Artifact: `skill-lessons.yaml`".
+
+schema_version: '1.0'
+lessons:
+- id: claimant-eq-policyholder
+  first_seen: '2026-04-20'
+  last_seen:  '2026-04-23'
+  seen_count: 6
+  observed_in: [claim-form, renewal-notice]
+  pattern: "claimant_* variables on docs where no Claim entity exists"
+  current_rule: "medium, confirm-assumption"
+  candidate_promotion: null     # filled in by a human reviewer
+  status: observed              # observed | proposed | promoted | rejected
+
+- id: vehicle-scope-violation
+  first_seen: '2026-04-21'
+  last_seen:  '2026-04-23'
+  seen_count: 8
+  observed_in: [claim-form, renewal-notice, quote-application]
+  pattern: "vehicle_* placeholders outside any vehicles foreach"
+  current_rule: "low, restructure-template"
+  candidate_promotion: null
+  status: observed
+
+- id: insured-name-split
+  first_seen: '2026-04-23'
+  last_seen:  '2026-04-23'
+  seen_count: 3
+  observed_in: [policy-template, renewal-notice]
+  pattern: "insured_first_name / insured_last_name on docs where account has only a full name field; no firstName/lastName split available"
+  current_rule: "low, supply-from-plugin"
+  candidate_promotion: null
+  status: observed
+
+- id: esign-eq-policyholder
+  first_seen: '2026-04-23'
+  last_seen:  '2026-04-23'
+  seen_count: 2
+  observed_in: [policy-template]
+  pattern: "esign_full_name and esign_date on docs where e-signature is by the policyholder (account holder)"
+  current_rule: "medium, confirm-assumption"
+  candidate_promotion: null
+  status: observed
+
+- id: scope-violation-no-prefix
+  first_seen: '2026-04-23'
+  last_seen:  '2026-04-23'
+  seen_count: 2
+  observed_in: [quote-application, sample-policy]
+  pattern: "top-level variables (year, make, model, vin, first_name, last_name, etc.) that match scoped registry fields but carry no iterable prefix in their name and no loop context from Leg 1 — typically because the HTML loop block was not properly resolved"
+  current_rule: "low, restructure-template"
+  candidate_promotion: null
+  status: observed
+
+- id: policyholder-eq-account-name
+  first_seen: '2026-04-28'
+  last_seen:  '2026-04-28'
+  seen_count: 1
+  observed_in: [Simple-form]
+  pattern: "POLICYHOLDER_NAME (or similar policyholder_* / POLICYHOLDER_*) variables on docs where Socotra has no dedicated policyholder entity; closest registry field is account_paths.name ($data.account.data.name)"
+  current_rule: "medium, confirm-assumption"
+  candidate_promotion: null
+  status: observed

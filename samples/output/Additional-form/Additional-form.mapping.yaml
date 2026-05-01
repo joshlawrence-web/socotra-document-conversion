@@ -1,0 +1,37 @@
+schema_version: '1.0'
+source: Additional-form.html
+generated_at: '2026-05-01T14:32:13+00:00'
+variables:
+- name: INSURANCE_PRODUCT
+  placeholder: $TBD_INSURANCE_PRODUCT
+  type: variable
+  context:
+    parent_tag: p
+    line: 10
+    nearest_label: Insurance Product
+  data_source: ''
+- name: POLICY_NUMBER
+  placeholder: $TBD_POLICY_NUMBER
+  type: variable
+  context:
+    parent_tag: p
+    line: 11
+    nearest_label: Policy Number
+  data_source: ''
+- name: POLICYHOLDER_NAME
+  placeholder: $TBD_POLICYHOLDER_NAME
+  type: variable
+  context:
+    parent_tag: p
+    line: 12
+    nearest_label: Policyholder
+  data_source: ''
+- name: EFFECTIVE_START_DATE
+  placeholder: $TBD_EFFECTIVE_START_DATE
+  type: variable
+  context:
+    parent_tag: p
+    line: 13
+    nearest_label: Effective Start Date
+  data_source: ''
+loops: []

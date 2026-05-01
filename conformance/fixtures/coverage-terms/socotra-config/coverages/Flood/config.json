@@ -1,0 +1,16 @@
+{
+  "displayName": "Flood coverage",
+  "data": {
+    "effectiveDate": {
+      "displayName": "Effective date",
+      "type": "datetime"
+    }
+  },
+  "coverageTerms": [
+    {
+      "name": "deductible",
+      "displayName": "Flood deductible",
+      "options": ["250", "*500", "1000"]
+    }
+  ]
+}

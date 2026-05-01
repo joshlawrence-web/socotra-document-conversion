@@ -1,0 +1,10 @@
+{
+  "displayName": "Octopus",
+  "contents": [],
+  "data": {
+    "tankId": {
+      "displayName": "Tank identifier",
+      "type": "string"
+    }
+  }
+}

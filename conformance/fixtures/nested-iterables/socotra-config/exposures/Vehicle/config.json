@@ -1,0 +1,14 @@
+{
+  "displayName": "Fleet Vehicle",
+  "contents": [],
+  "data": {
+    "vin": {
+      "displayName": "VIN",
+      "type": "string"
+    },
+    "owners": {
+      "displayName": "Owners",
+      "type": "Owner+"
+    }
+  }
+}

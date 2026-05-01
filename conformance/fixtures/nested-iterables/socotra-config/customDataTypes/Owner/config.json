@@ -1,0 +1,13 @@
+{
+  "displayName": "Owner",
+  "data": {
+    "firstName": {
+      "displayName": "First name",
+      "type": "string"
+    },
+    "lastName": {
+      "displayName": "Last name",
+      "type": "string"
+    }
+  }
+}

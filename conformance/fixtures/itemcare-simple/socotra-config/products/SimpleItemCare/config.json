@@ -1,0 +1,15 @@
+{
+  "displayName": "SimpleItemCare",
+  "contents": ["Item+"],
+  "charges": [],
+  "data": {
+    "policyRef": {
+      "displayName": "Policy reference",
+      "type": "string"
+    },
+    "startDate": {
+      "displayName": "Start date",
+      "type": "datetime"
+    }
+  }
+}

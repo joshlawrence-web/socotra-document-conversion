@@ -1,0 +1,23 @@
+schema_version: '1.0'
+source: custom-naming.html
+generated_at: '2026-04-22T14:00:00+00:00'
+variables:
+- name: policy_number
+  placeholder: $TBD_policy_number
+  type: variable
+  context:
+    parent_tag: p
+    line: 5
+    nearest_label: Policy number
+  data_source: ''
+loops:
+- name: octopuses
+  placeholder: $TBD_octopuses
+  iterator: $octopus
+  detection: mustache
+  context:
+    nearest_heading: Octopuses
+    line: 10
+    container: ul
+  data_source: ''
+  fields: []

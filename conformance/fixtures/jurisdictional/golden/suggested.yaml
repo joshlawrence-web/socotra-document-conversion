@@ -1,0 +1,102 @@
+# jurisdictional.suggested.yaml
+# Suggested mapping — review conformance/fixtures/jurisdictional/golden/review.md
+# first, then edit any data_source value here before saving as
+# jurisdictional.mapping.yaml and running Leg 3 (Substitution Writer).
+#
+# Every low/medium item carries a next-action in `reasoning` drawn from the
+# closed vocabulary: pick-one | supply-from-plugin | restructure-template |
+# delete-from-template | confirm-assumption | needs-skill-update.
+
+schema_version: '1.0'
+input_mapping_version: '1.0'
+input_registry_version: '1.1'
+source: jurisdictional.html
+generated_at: '2026-04-22T14:00:00+00:00'
+path_registry: path-registry.yaml
+product: SingleState
+variables:
+- name: policy_number
+  placeholder: $TBD_policy_number
+  type: variable
+  context:
+    parent_tag: p
+    line: 5
+    nearest_label: Policy number
+  data_source: $data.policyNumber
+  confidence: high
+  reasoning: >
+    `policy_number` + nearest_label "Policy number" match the system path
+    `$data.policyNumber` (display_name: "Policy number", type: string).
+    requires_scope: [] (top-level system path). System paths are
+    jurisdiction-agnostic — `jurisdictional_scopes: true` does not
+    affect them.
+loops:
+- name: vehicles
+  placeholder: $TBD_vehicles
+  iterator: $vehicle
+  detection: mustache
+  context:
+    nearest_heading: Vehicles
+    line: 10
+    container: ul
+  data_source: $data.vehicles
+  iterator_velocity: $vehicle
+  foreach: '#foreach ($vehicle in $data.vehicles)'
+  confidence: high
+  reasoning: >
+    Loop name "vehicles" matches the Vehicle iterable
+    (quantifier: '+', iterable: true, list_velocity: $data.vehicles,
+    iterator: $vehicle). Vehicle itself carries no jurisdictional
+    qualifier — `qualification` / `appliesTo` / `exclusive` are only
+    on the Collision coverage — so the `jurisdictional_scopes`
+    refusal does not affect the exposure-list iteration. Copied
+    verbatim from the registry's iterables: index.
+  fields:
+  - name: vin
+    placeholder: $vehicle.TBD_vin
+    type: loop_field
+    context:
+      parent_tag: li
+      line: 12
+      nearest_label: VIN
+      loop: vehicles
+    data_source: $vehicle.data.vin
+    confidence: high
+    reasoning: >
+      Loop scope `vehicles` satisfies Vehicle requires_scope; field
+      `vin` matches Vehicle exposure field (display_name: "VIN",
+      type: string). `vin` is a plain exposure-data field, NOT a
+      coverage field — the `jurisdictional_scopes` refusal fires
+      only on paths that traverse the jurisdictional coverage
+      (`$vehicle.Collision.*`).
+  - name: collision_deductible
+    placeholder: $vehicle.TBD_collision_deductible
+    type: loop_field
+    context:
+      parent_tag: li
+      line: 14
+      nearest_label: Collision deductible
+      loop: vehicles
+    data_source: ''
+    confidence: low
+    reasoning: >
+      Name-match on registry candidate
+      `$vehicle.Collision.data.deductible` (display_name:
+      "Deductible", type: int, quantifier: '', iterable: false).
+      Loop scope `vehicles` satisfies Vehicle requires_scope, and
+      the standard `#if($vehicle.Collision)` guard from Rule 4
+      would normally cover optional-coverage presence — but the
+      Collision coverage carries a `qualification` key (the fixture
+      uses `qualification: { jurisdiction: "CA" }`), which flips
+      `feature_support.jurisdictional_scopes: true`. The extractor
+      does not surface the qualification object in
+      `requires_scope`, and no Rule 7 exists yet to translate
+      `qualification` into a jurisdiction-aware guard condition.
+      Emitting a `high` match would silently render the deductible
+      in every jurisdiction — including those where the coverage
+      does not apply. Downgraded to `low` per `CONFIG_COVERAGE.md`
+      §4 refusal contract. next-action: needs-skill-update: extend
+      the suggester with a `qualification` / `appliesTo` /
+      `exclusive` reader (Rule 7), surface the jurisdiction
+      predicate as a required guard in `reasoning`, and lift
+      `jurisdictional_scopes` off the refusal whitelist.

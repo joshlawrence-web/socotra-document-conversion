@@ -1,0 +1,15 @@
+{
+  "displayName": "Pure Data Monoline",
+  "contents": [],
+  "charges": [],
+  "data": {
+    "policyRef": {
+      "displayName": "Policy reference",
+      "type": "string"
+    },
+    "submittedAt": {
+      "displayName": "Submission timestamp",
+      "type": "datetime"
+    }
+  }
+}

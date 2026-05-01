@@ -1,0 +1,59 @@
+# suggested.suggested.yaml
+# Suggested mapping — review and confirm each data_source before running the
+# substitution step. Edit any data_source value, then save as policy-template.mapping.yaml.
+
+schema_version: '1.1'
+run_id: 937750e8-f675-43c8-bc33-4f3aec9450d2
+mode: terse
+generated_at: '2026-05-01T14:21:42Z'
+input_mapping_sha256: 95c459aca67235bfb2f212aabf4d28c3932a4301a324a061c7cb15ce80e8fabb
+input_registry_sha256: cc5e1fd9c043726086055e929aa0e79b6679bb61e5fb9d09607a4a89cc2cda8c
+registry_schema_version: '1.1'
+registry_generated_at: '2026-05-01T14:20:42.654406+00:00'
+registry_config_dir: /Users/joshualawrence/Projects/Cursor/Experiments/VelocityConverter1stLeg/conformance/fixtures/minimal/socotra-config
+registry_source_config_sha256: c4c81bb1fd66748cb86ee861d92a07cc772e0d3709c2158adec7b5351da8e3df
+live_source_config_sha256: null
+registry_config_verified: false
+registry_config_check: skipped_no_config_dir
+input_mapping_version: '1.0'
+input_registry_version: '1.1'
+source: minimal.html
+path_registry: path-registry.yaml
+product: Mono
+tooling:
+  mapping_suggester:
+    version: leg2_fill_mapping.py
+    ruleset_id: generic_registry_v2
+variables:
+- name: policy_ref
+  placeholder: $TBD_policy_ref
+  type: variable
+  context:
+    parent_tag: p
+    line: 5
+    nearest_label: Policy reference
+  data_source: $data.data.policyRef
+  confidence: high
+  reasoning: 'exact label match: "Policy reference" → display_name "Policy reference" → $data.data.policyRef'
+- name: account_name
+  placeholder: $TBD_account_name
+  type: variable
+  context:
+    parent_tag: p
+    line: 8
+    nearest_label: Account name
+  data_source: $data.account.data.name
+  confidence: high
+  reasoning: 'exact label match: "Account name" → display_name "Account name" → $data.account.data.name'
+- name: vehicle_vin
+  placeholder: $TBD_vehicle_vin
+  type: variable
+  context:
+    parent_tag: p
+    line: 12
+    nearest_label: VIN
+  data_source: ''
+  confidence: low
+  reasoning: 'registry candidate `$vehicle.data.vin` requires scope `#foreach ($vehicle in $data.vehicles)` but no loop signal
+    in Leg 1 output — next-action: restructure-template'
+loops: []

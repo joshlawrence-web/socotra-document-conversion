@@ -1,0 +1,11 @@
+{
+  "displayName": "Umbrella coverage",
+  "exclusive": true,
+  "appliesTo": ["claim"],
+  "data": {
+    "limit": {
+      "displayName": "Umbrella limit",
+      "type": "int"
+    }
+  }
+}

@@ -1,0 +1,1874 @@
+schema_version: '1.1'
+meta:
+  config_dir: /Users/joshualawrence/Projects/Cursor/Experiments/VelocityConverter1stLeg/socotra-config
+  product: ItemCare
+  display_name: ItemCare
+  generated_at: '2026-04-26T09:00:01.657127+00:00'
+  source_config_sha256: 79f8ffedc7298f7e039dc5d6d25f6148f56f8147195c8d998115d4148936b56d
+  note: 'Socotra Velocity dot-notation paths. Root object is $data (the renderingData
+    from DocumentDataSnapshotPlugin). Policy custom fields: $data.data.<field>. Account
+    fields: $data.account.data.<field>. Exposure lists: $data.<exposurePlural> (e.g.
+    $data.vehicles). Exposure fields: $<iterator>.data.<field> (e.g. $vehicle.data.vin).
+    Coverage fields: $<iterator>.<Coverage>.data.<field>. Charge amounts: $data.charges.<ChargeName>.amount
+    or $<iterator>.<Coverage>.charges.<ChargeName>.amount. Every entry carries `quantifier`
+    + `cardinality` + `iterable` flags plus a `requires_scope` list of #foreach steps
+    (outermost first) that must be active for the path to be valid. The previous `optional:
+    true/false` key on coverages has been replaced by `quantifier: ''?''` + `cardinality:
+    zero_or_one`.'
+feature_support:
+  nested_iterables: true
+  custom_data_types: false
+  recursive_cdts: false
+  jurisdictional_scopes: false
+  peril_based: false
+  multi_product: false
+  coverage_terms: true
+  default_option_prefix: false
+  auto_elements: false
+  array_data_extensions: true
+iterables:
+- name: Item
+  display_name: Item
+  kind: exposure
+  list_velocity: $data.items
+  iterator: $item
+  foreach: '#foreach ($item in $data.items)'
+  quantifier: +
+  cardinality: one_or_more
+system_paths:
+- field: locator
+  display_name: Policy/quote locator
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: system
+  velocity: $data.locator
+  requires_scope: []
+- field: productName
+  display_name: Product name
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: system
+  velocity: $data.productName
+  requires_scope: []
+- field: policyNumber
+  display_name: Policy number
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: system
+  velocity: $data.policyNumber
+  requires_scope: []
+- field: currency
+  display_name: Currency
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: system
+  velocity: $data.currency
+  requires_scope: []
+- field: policyStartTime
+  display_name: Policy start (epoch ms)
+  type: datetime
+  base_type: datetime
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: system
+  velocity: $data.policyStartTime
+  requires_scope: []
+- field: policyEndTime
+  display_name: Policy end (epoch ms)
+  type: datetime
+  base_type: datetime
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: system
+  velocity: $data.policyEndTime
+  requires_scope: []
+- field: created
+  display_name: Created timestamp
+  type: datetime
+  base_type: datetime
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: system
+  velocity: $data.created
+  requires_scope: []
+- field: updated
+  display_name: Last updated timestamp
+  type: datetime
+  base_type: datetime
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: system
+  velocity: $data.updated
+  requires_scope: []
+account_paths:
+- field: name
+  display_name: Account name
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: account
+  velocity: $data.account.data.name
+  requires_scope: []
+- field: addressLine1
+  display_name: Address line 1
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: account
+  velocity: $data.account.data.addressLine1
+  requires_scope: []
+- field: addressLine2
+  display_name: Address line 2
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: account
+  velocity: $data.account.data.addressLine2
+  requires_scope: []
+- field: city
+  display_name: City
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: account
+  velocity: $data.account.data.city
+  requires_scope: []
+- field: state
+  display_name: State
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: account
+  velocity: $data.account.data.state
+  requires_scope: []
+- field: postalCode
+  display_name: Postal code
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: account
+  velocity: $data.account.data.postalCode
+  requires_scope: []
+- field: country
+  display_name: Country
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: account
+  velocity: $data.account.data.country
+  requires_scope: []
+- field: email
+  display_name: Email
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: account
+  velocity: $data.account.data.email
+  requires_scope: []
+- field: phone
+  display_name: Phone
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: account
+  velocity: $data.account.data.phone
+  requires_scope: []
+policy_data:
+- field: countryCode
+  display_name: Country Code
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.countryCode
+  requires_scope: []
+- field: migratedContract
+  display_name: Migrated Contract
+  type: boolean
+  base_type: boolean
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.migratedContract
+  requires_scope: []
+- field: contractId
+  display_name: Contract ID
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.contractId
+  requires_scope: []
+- field: contractExternalReference
+  display_name: Contract External Reference
+  type: string?
+  base_type: string
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.contractExternalReference
+  requires_scope: []
+- field: propositionCoverCategoryCode
+  display_name: Proposition Cover Category Code
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.propositionCoverCategoryCode
+  requires_scope: []
+- field: productCategoryId
+  display_name: Product Category Id
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.productCategoryId
+  requires_scope: []
+- field: productTypeId
+  display_name: Product Type Id
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.productTypeId
+  requires_scope: []
+- field: productVariantId
+  display_name: Product Variant Id
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.productVariantId
+  requires_scope: []
+- field: legalEntityCode
+  display_name: Legal Entity Code
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.legalEntityCode
+  requires_scope: []
+- field: correspondenceAddressId
+  display_name: Correspondence Address Id
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.correspondenceAddressId
+  requires_scope: []
+- field: clientCode
+  display_name: Client Code
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.clientCode
+  requires_scope: []
+- field: channelCode
+  display_name: Channel Code
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.channelCode
+  requires_scope: []
+- field: channelAttributeCode
+  display_name: Channel Attribute Code
+  type: string?
+  base_type: string
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.channelAttributeCode
+  requires_scope: []
+- field: productTerm
+  display_name: Product Term
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.productTerm
+  requires_scope: []
+- field: paymentProfileCode
+  display_name: Payment Profile Code
+  type: string?
+  base_type: string
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.paymentProfileCode
+  requires_scope: []
+- field: paymentProfileDetails
+  display_name: Payment Profile Details
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.paymentProfileDetails
+  requires_scope: []
+- field: paymentMethodCode
+  display_name: Payment Method Code
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.paymentMethodCode
+  requires_scope: []
+- field: underwriterCode
+  display_name: Underwriter Code
+  type: string?
+  base_type: string
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.underwriterCode
+  requires_scope: []
+- field: periodOfCover
+  display_name: Period of Cover
+  type: int
+  base_type: int
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.periodOfCover
+  requires_scope: []
+- field: documentUrl
+  display_name: Document URL
+  type: string?
+  base_type: string
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.documentUrl
+  requires_scope: []
+- field: documentCopy
+  display_name: Document Copy
+  type: string?
+  base_type: string
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.documentCopy
+  requires_scope: []
+- field: coolingOffPeriod
+  display_name: Cooling off Period
+  type: int
+  base_type: int
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.coolingOffPeriod
+  requires_scope: []
+- field: newBusinessWaitPeriod
+  display_name: New Business Wait Period
+  type: int?
+  base_type: int
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.newBusinessWaitPeriod
+  requires_scope: []
+- field: maxItems
+  display_name: Max Items
+  type: int?
+  base_type: int
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.maxItems
+  requires_scope: []
+- field: numberInsuredExposures
+  display_name: Number Insured Exposures
+  type: int?
+  base_type: int
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.numberInsuredExposures
+  requires_scope: []
+- field: multiplan
+  display_name: Multiplan
+  type: boolean
+  base_type: boolean
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.multiplan
+  requires_scope: []
+- field: currentContractRenewalPreference
+  display_name: Current Contract Renewal Preference
+  type: boolean?
+  base_type: boolean
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.currentContractRenewalPreference
+  requires_scope: []
+- field: futureAutorenewalPreference
+  display_name: Future Autorenewal Preference
+  type: boolean?
+  base_type: boolean
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.futureAutorenewalPreference
+  requires_scope: []
+- field: soldByUserId
+  display_name: Sold by User ID
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.soldByUserId
+  requires_scope: []
+- field: soldByUserType
+  display_name: Sold By User Type
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.soldByUserType
+  requires_scope: []
+- field: endorsedByUserId
+  display_name: Endorsed by User ID
+  type: string?
+  base_type: string
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.endorsedByUserId
+  requires_scope: []
+- field: endorsedByUserType
+  display_name: Endorsed By User Type
+  type: string?
+  base_type: string
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.endorsedByUserType
+  requires_scope: []
+- field: staffIdForDiscount
+  display_name: Staff ID For Discount
+  type: string?
+  base_type: string
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.staffIdForDiscount
+  requires_scope: []
+- field: netTotalAmountExclDiscount
+  display_name: Net Total Amount Excluding Discount
+  type: decimal
+  base_type: decimal
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.netTotalAmountExclDiscount
+  requires_scope: []
+- field: discountProfileCode
+  display_name: Discount Profile Code
+  type: string?
+  base_type: string
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.discountProfileCode
+  requires_scope: []
+- field: discountTerm
+  display_name: Discount Term
+  type: string?
+  base_type: string
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.discountTerm
+  requires_scope: []
+- field: discountAmount
+  display_name: Discount Amount
+  type: decimal?
+  base_type: decimal
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.discountAmount
+  requires_scope: []
+- field: discountType
+  display_name: Discount Type
+  type: string?
+  base_type: string
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.discountType
+  requires_scope: []
+  options:
+  - P
+  - F
+- field: csaDiscretionaryDiscountAmount
+  display_name: CSA Discretionary Discount Amount
+  type: int?
+  base_type: int
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.csaDiscretionaryDiscountAmount
+  requires_scope: []
+- field: nominatedPaymentDay
+  display_name: Nominated Payment Day
+  type: int?
+  base_type: int
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.nominatedPaymentDay
+  requires_scope: []
+- field: referenceIdCode
+  display_name: Reference ID Code
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.referenceIdCode
+  requires_scope: []
+- field: instanceCode
+  display_name: Instance Code
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.instanceCode
+  requires_scope: []
+- field: checkDigit
+  display_name: Check Digit
+  type: string?
+  base_type: string
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.checkDigit
+  requires_scope: []
+- field: contractTermEndDate
+  display_name: Contract Term End Date
+  type: datetime
+  base_type: datetime
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.contractTermEndDate
+  requires_scope: []
+- field: expectedRenewalDate
+  display_name: Expected Renewal Date
+  type: date
+  base_type: date
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.expectedRenewalDate
+  requires_scope: []
+- field: thirdPartyContractExpiryDate
+  display_name: Third Party Contract Expiry Date
+  type: date?
+  base_type: date
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.thirdPartyContractExpiryDate
+  requires_scope: []
+- field: ratingEffectiveDate
+  display_name: Rating Effective Date
+  type: date
+  base_type: date
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.ratingEffectiveDate
+  requires_scope: []
+- field: ratingSystemCode
+  display_name: Rating System Code
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.ratingSystemCode
+  requires_scope: []
+- field: systemCode
+  display_name: System Code
+  type: string?
+  base_type: string
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.systemCode
+  requires_scope: []
+- field: salesTaxProductClassCode
+  display_name: Sales Tax Product Class Code
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.salesTaxProductClassCode
+  requires_scope: []
+- field: offerReference
+  display_name: Offer Reference
+  type: string?
+  base_type: string
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.offerReference
+  requires_scope: []
+- field: offerEffectiveStartDate
+  display_name: Offer Effective Start Date
+  type: date?
+  base_type: date
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.offerEffectiveStartDate
+  requires_scope: []
+- field: billingAccountProfileId
+  display_name: Billing Account Profile Id
+  type: string?
+  base_type: string
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.billingAccountProfileId
+  requires_scope: []
+- field: settlementPeriod
+  display_name: Settlement Period
+  type: int
+  base_type: int
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.settlementPeriod
+  requires_scope: []
+- field: settlementPeriodType
+  display_name: Settlement Period Type
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.settlementPeriodType
+  requires_scope: []
+- field: settlementPeriodOffsetInDays
+  display_name: Settlement Period Offset In Days
+  type: int
+  base_type: int
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.settlementPeriodOffsetInDays
+  requires_scope: []
+- field: gracePeriod
+  display_name: Grace Period
+  type: int
+  base_type: int
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.gracePeriod
+  requires_scope: []
+- field: gracePeriodType
+  display_name: Grace Period Type
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.gracePeriodType
+  requires_scope: []
+- field: renewalPhase
+  display_name: Renewal Phase
+  type: int
+  base_type: int
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.renewalPhase
+  requires_scope: []
+- field: createdByInteractionId
+  display_name: Created By Interaction Id
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.createdByInteractionId
+  requires_scope: []
+- field: lastUpdatedByInteractionId
+  display_name: Last Updated By Interaction Id
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.lastUpdatedByInteractionId
+  requires_scope: []
+- field: createdInteractionEventId
+  display_name: Created Interaction Event Id
+  type: int
+  base_type: int
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.createdInteractionEventId
+  requires_scope: []
+- field: lastUpdatedInteractionEventId
+  display_name: Last Updated Interaction Event Id
+  type: int
+  base_type: int
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: policy_data
+  velocity: $data.data.lastUpdatedInteractionEventId
+  requires_scope: []
+policy_charges:
+- name: fee
+  category: fee
+  velocity_amount: $data.charges.fee.amount
+  velocity_object: $data.charges.fee
+  requires_scope: []
+- name: premium
+  category: premium
+  velocity_amount: $data.charges.premium.amount
+  velocity_object: $data.charges.premium
+  requires_scope: []
+- name: tax
+  category: tax
+  velocity_amount: $data.charges.tax.amount
+  velocity_object: $data.charges.tax
+  requires_scope: []
+- name: premiumExclDiscount
+  category: nonFinancial
+  velocity_amount: $data.charges.premiumExclDiscount.amount
+  velocity_object: $data.charges.premiumExclDiscount
+  requires_scope: []
+- name: settlement
+  category: premium
+  velocity_amount: $data.charges.settlement.amount
+  velocity_object: $data.charges.settlement
+  requires_scope: []
+exposures:
+- name: Item
+  display_name: Item
+  list_velocity: $data.items
+  iterator: item
+  foreach: '#foreach ($item in $data.items)'
+  raw_contents:
+  - Accessories?
+  - AccidentalDamage?
+  - Breakdown?
+  - Loss?
+  - RepeatFaultThree?
+  - Replacement?
+  - ReplacementRepair?
+  - ReplacementWO?
+  - Theft?
+  system_fields:
+  - field: locator
+    display_name: Exposure locator (system)
+    type: string
+    base_type: string
+    quantifier: ''
+    cardinality: exactly_one
+    iterable: false
+    category: exposure_system
+    velocity: $item.locator
+    requires_scope:
+    - iterator: $item
+      foreach: '#foreach ($item in $data.items)'
+  - field: name
+    display_name: Exposure type name (system)
+    type: string
+    base_type: string
+    quantifier: ''
+    cardinality: exactly_one
+    iterable: false
+    category: exposure_system
+    velocity: $item.name
+    requires_scope:
+    - iterator: $item
+      foreach: '#foreach ($item in $data.items)'
+  fields:
+  - field: itemLocationAddressId
+    display_name: Item Location Address Id
+    type: string
+    base_type: string
+    quantifier: ''
+    cardinality: exactly_one
+    iterable: false
+    category: exposure_data
+    velocity: $item.data.itemLocationAddressId
+    requires_scope:
+    - iterator: $item
+      foreach: '#foreach ($item in $data.items)'
+  - field: goodsCategoryCode
+    display_name: Goods Category Code
+    type: string
+    base_type: string
+    quantifier: ''
+    cardinality: exactly_one
+    iterable: false
+    category: exposure_data
+    velocity: $item.data.goodsCategoryCode
+    requires_scope:
+    - iterator: $item
+      foreach: '#foreach ($item in $data.items)'
+  - field: manufacturerBrandCode
+    display_name: Manufacturer Brand Code
+    type: string
+    base_type: string
+    quantifier: ''
+    cardinality: exactly_one
+    iterable: false
+    category: exposure_data
+    velocity: $item.data.manufacturerBrandCode
+    requires_scope:
+    - iterator: $item
+      foreach: '#foreach ($item in $data.items)'
+  - field: levelOfCoverCategoryCode
+    display_name: Level of Cover Category Code
+    type: string
+    base_type: string
+    quantifier: ''
+    cardinality: exactly_one
+    iterable: false
+    category: exposure_data
+    velocity: $item.data.levelOfCoverCategoryCode
+    requires_scope:
+    - iterator: $item
+      foreach: '#foreach ($item in $data.items)'
+  - field: coverExclusions
+    display_name: Cover Exclusions
+    type: CoverExclusions*
+    base_type: CoverExclusions
+    quantifier: '*'
+    cardinality: any
+    iterable: true
+    category: exposure_data
+    velocity: $item.data.coverExclusions
+    requires_scope:
+    - iterator: $item
+      foreach: '#foreach ($item in $data.items)'
+    custom_type_ref: CoverExclusions
+  - field: manufacturerLabourGuaranteePeriod
+    display_name: Manufacturer Labour Guarantee Period
+    type: int?
+    base_type: int
+    quantifier: '?'
+    cardinality: zero_or_one
+    iterable: false
+    category: exposure_data
+    velocity: $item.data.manufacturerLabourGuaranteePeriod
+    requires_scope:
+    - iterator: $item
+      foreach: '#foreach ($item in $data.items)'
+  - field: manufacturerPartsGuaranteePeriod
+    display_name: Manufacturer Parts Guarantee Period
+    type: int
+    base_type: int
+    quantifier: ''
+    cardinality: exactly_one
+    iterable: false
+    category: exposure_data
+    velocity: $item.data.manufacturerPartsGuaranteePeriod
+    requires_scope:
+    - iterator: $item
+      foreach: '#foreach ($item in $data.items)'
+  - field: purchaseDate
+    display_name: Purchase Date
+    type: date
+    base_type: date
+    quantifier: ''
+    cardinality: exactly_one
+    iterable: false
+    category: exposure_data
+    velocity: $item.data.purchaseDate
+    requires_scope:
+    - iterator: $item
+      foreach: '#foreach ($item in $data.items)'
+  - field: purchasePrice
+    display_name: Purchase Price
+    type: decimal
+    base_type: decimal
+    quantifier: ''
+    cardinality: exactly_one
+    iterable: false
+    category: exposure_data
+    velocity: $item.data.purchasePrice
+    requires_scope:
+    - iterator: $item
+      foreach: '#foreach ($item in $data.items)'
+  - field: manufactureYear
+    display_name: Manufacture Year
+    type: date?
+    base_type: date
+    quantifier: '?'
+    cardinality: zero_or_one
+    iterable: false
+    category: exposure_data
+    velocity: $item.data.manufactureYear
+    requires_scope:
+    - iterator: $item
+      foreach: '#foreach ($item in $data.items)'
+  - field: itemTypeCode
+    display_name: Item Type Code
+    type: string
+    base_type: string
+    quantifier: ''
+    cardinality: exactly_one
+    iterable: false
+    category: exposure_data
+    velocity: $item.data.itemTypeCode
+    requires_scope:
+    - iterator: $item
+      foreach: '#foreach ($item in $data.items)'
+  - field: itemInWarrantyAtTakeup
+    display_name: Item In Warranty At Take Up
+    type: boolean
+    base_type: boolean
+    quantifier: ''
+    cardinality: exactly_one
+    iterable: false
+    category: exposure_data
+    velocity: $item.data.itemInWarrantyAtTakeup
+    requires_scope:
+    - iterator: $item
+      foreach: '#foreach ($item in $data.items)'
+  - field: itemInWorkingOrderAtTakeup
+    display_name: Item In Working Order At Takeup
+    type: boolean
+    base_type: boolean
+    quantifier: ''
+    cardinality: exactly_one
+    iterable: false
+    category: exposure_data
+    velocity: $item.data.itemInWorkingOrderAtTakeup
+    requires_scope:
+    - iterator: $item
+      foreach: '#foreach ($item in $data.items)'
+  - field: maxClaimAmount
+    display_name: Max Claim Amount
+    type: decimal?
+    base_type: decimal
+    quantifier: '?'
+    cardinality: zero_or_one
+    iterable: false
+    category: exposure_data
+    velocity: $item.data.maxClaimAmount
+    requires_scope:
+    - iterator: $item
+      foreach: '#foreach ($item in $data.items)'
+  coverages:
+  - name: Accessories
+    display_name: Accessories
+    velocity: $item.Accessories
+    note: '#if($item.Accessories) before accessing — coverage may not be present on
+      every exposure'
+    requires_scope:
+    - iterator: $item
+      foreach: '#foreach ($item in $data.items)'
+    fields:
+    - field: perilStartDate
+      display_name: Peril Start Date
+      type: date?
+      base_type: date
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.Accessories.data.perilStartDate
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: perilEndDate
+      display_name: Peril End Date
+      type: date?
+      base_type: date
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.Accessories.data.perilEndDate
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: premium
+      display_name: Premium
+      type: decimal?
+      base_type: decimal
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.Accessories.data.premium
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: taxRate
+      display_name: Tax Rate
+      type: decimal?
+      base_type: decimal
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.Accessories.data.taxRate
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: taxAmount
+      display_name: Tax Amount
+      type: decimal?
+      base_type: decimal
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.Accessories.data.taxAmount
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    charges:
+    - name: premium
+      category: premium
+      velocity_amount: $item.Accessories.charges.premium.amount
+      velocity_object: $item.Accessories.charges.premium
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    quantifier: '?'
+    cardinality: zero_or_one
+    iterable: false
+  - name: AccidentalDamage
+    display_name: Accidental Damage
+    velocity: $item.AccidentalDamage
+    note: '#if($item.AccidentalDamage) before accessing — coverage may not be present
+      on every exposure'
+    requires_scope:
+    - iterator: $item
+      foreach: '#foreach ($item in $data.items)'
+    fields:
+    - field: perilStartDate
+      display_name: Peril Start Date
+      type: date?
+      base_type: date
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.AccidentalDamage.data.perilStartDate
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: perilEndDate
+      display_name: Peril End Date
+      type: date?
+      base_type: date
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.AccidentalDamage.data.perilEndDate
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: premium
+      display_name: Premium
+      type: decimal?
+      base_type: decimal
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.AccidentalDamage.data.premium
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: taxRate
+      display_name: Tax Rate
+      type: decimal?
+      base_type: decimal
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.AccidentalDamage.data.taxRate
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: taxAmount
+      display_name: Tax Amount
+      type: decimal?
+      base_type: decimal
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.AccidentalDamage.data.taxAmount
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    charges:
+    - name: premium
+      category: premium
+      velocity_amount: $item.AccidentalDamage.charges.premium.amount
+      velocity_object: $item.AccidentalDamage.charges.premium
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - name: tax
+      category: tax
+      velocity_amount: $item.AccidentalDamage.charges.tax.amount
+      velocity_object: $item.AccidentalDamage.charges.tax
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - name: premiumExclDiscount
+      category: nonFinancial
+      velocity_amount: $item.AccidentalDamage.charges.premiumExclDiscount.amount
+      velocity_object: $item.AccidentalDamage.charges.premiumExclDiscount
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    quantifier: '?'
+    cardinality: zero_or_one
+    iterable: false
+  - name: Breakdown
+    display_name: Breakdown
+    velocity: $item.Breakdown
+    note: '#if($item.Breakdown) before accessing — coverage may not be present on
+      every exposure'
+    requires_scope:
+    - iterator: $item
+      foreach: '#foreach ($item in $data.items)'
+    fields:
+    - field: perilStartDate
+      display_name: Peril Start Date
+      type: date?
+      base_type: date
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.Breakdown.data.perilStartDate
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: perilEndDate
+      display_name: Peril End Date
+      type: date?
+      base_type: date
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.Breakdown.data.perilEndDate
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: premium
+      display_name: Premium
+      type: decimal?
+      base_type: decimal
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.Breakdown.data.premium
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: taxRate
+      display_name: Tax Rate
+      type: decimal?
+      base_type: decimal
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.Breakdown.data.taxRate
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: taxAmount
+      display_name: Tax Amount
+      type: decimal?
+      base_type: decimal
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.Breakdown.data.taxAmount
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: labourCovered
+      display_name: Labour Covered
+      type: string?
+      base_type: string
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.Breakdown.data.labourCovered
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+      options:
+      - 'true'
+      - 'false'
+      - ''
+    - field: partsCovered
+      display_name: Parts Covered
+      type: string?
+      base_type: string
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.Breakdown.data.partsCovered
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+      options:
+      - 'true'
+      - 'false'
+      - ''
+    - field: manufacturerLabourGuaranteeEndDate
+      display_name: Manufacturer Labour Guarantee End Date
+      type: date?
+      base_type: date
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.Breakdown.data.manufacturerLabourGuaranteeEndDate
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: manufacturerPartsGuaranteeEndDate
+      display_name: Manufacturer Parts Guarantee End Date
+      type: date?
+      base_type: date
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.Breakdown.data.manufacturerPartsGuaranteeEndDate
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    charges:
+    - name: premium
+      category: premium
+      velocity_amount: $item.Breakdown.charges.premium.amount
+      velocity_object: $item.Breakdown.charges.premium
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    quantifier: '?'
+    cardinality: zero_or_one
+    iterable: false
+  - name: Loss
+    display_name: Loss
+    velocity: $item.Loss
+    note: '#if($item.Loss) before accessing — coverage may not be present on every
+      exposure'
+    requires_scope:
+    - iterator: $item
+      foreach: '#foreach ($item in $data.items)'
+    fields:
+    - field: perilStartDate
+      display_name: Peril Start Date
+      type: date?
+      base_type: date
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.Loss.data.perilStartDate
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: perilEndDate
+      display_name: Peril End Date
+      type: date?
+      base_type: date
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.Loss.data.perilEndDate
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: premium
+      display_name: Premium
+      type: decimal?
+      base_type: decimal
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.Loss.data.premium
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: taxRate
+      display_name: Tax Rate
+      type: decimal?
+      base_type: decimal
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.Loss.data.taxRate
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: taxAmount
+      display_name: Tax Amount
+      type: decimal?
+      base_type: decimal
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.Loss.data.taxAmount
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    charges:
+    - name: premium
+      category: premium
+      velocity_amount: $item.Loss.charges.premium.amount
+      velocity_object: $item.Loss.charges.premium
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    quantifier: '?'
+    cardinality: zero_or_one
+    iterable: false
+  - name: RepeatFaultThree
+    display_name: RepeatFaultThree
+    velocity: $item.RepeatFaultThree
+    note: '#if($item.RepeatFaultThree) before accessing — coverage may not be present
+      on every exposure'
+    requires_scope:
+    - iterator: $item
+      foreach: '#foreach ($item in $data.items)'
+    fields:
+    - field: perilStartDate
+      display_name: Peril Start Date
+      type: date?
+      base_type: date
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.RepeatFaultThree.data.perilStartDate
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: perilEndDate
+      display_name: Peril End Date
+      type: date?
+      base_type: date
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.RepeatFaultThree.data.perilEndDate
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: premium
+      display_name: Premium
+      type: decimal?
+      base_type: decimal
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.RepeatFaultThree.data.premium
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: taxRate
+      display_name: Tax Rate
+      type: decimal?
+      base_type: decimal
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.RepeatFaultThree.data.taxRate
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: taxAmount
+      display_name: Tax Amount
+      type: decimal?
+      base_type: decimal
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.RepeatFaultThree.data.taxAmount
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    charges:
+    - name: premium
+      category: premium
+      velocity_amount: $item.RepeatFaultThree.charges.premium.amount
+      velocity_object: $item.RepeatFaultThree.charges.premium
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    quantifier: '?'
+    cardinality: zero_or_one
+    iterable: false
+  - name: Replacement
+    display_name: Replacement
+    velocity: $item.Replacement
+    note: '#if($item.Replacement) before accessing — coverage may not be present on
+      every exposure'
+    requires_scope:
+    - iterator: $item
+      foreach: '#foreach ($item in $data.items)'
+    fields:
+    - field: perilStartDate
+      display_name: Peril Start Date
+      type: date?
+      base_type: date
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.Replacement.data.perilStartDate
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: perilEndDate
+      display_name: Peril End Date
+      type: date?
+      base_type: date
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.Replacement.data.perilEndDate
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: premium
+      display_name: Premium
+      type: decimal?
+      base_type: decimal
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.Replacement.data.premium
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: taxRate
+      display_name: Tax Rate
+      type: decimal?
+      base_type: decimal
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.Replacement.data.taxRate
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: taxAmount
+      display_name: Tax Amount
+      type: decimal?
+      base_type: decimal
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.Replacement.data.taxAmount
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    charges:
+    - name: premium
+      category: premium
+      velocity_amount: $item.Replacement.charges.premium.amount
+      velocity_object: $item.Replacement.charges.premium
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    quantifier: '?'
+    cardinality: zero_or_one
+    iterable: false
+  - name: ReplacementRepair
+    display_name: ReplacementRepair
+    velocity: $item.ReplacementRepair
+    note: '#if($item.ReplacementRepair) before accessing — coverage may not be present
+      on every exposure'
+    requires_scope:
+    - iterator: $item
+      foreach: '#foreach ($item in $data.items)'
+    fields:
+    - field: perilStartDate
+      display_name: Peril Start Date
+      type: date?
+      base_type: date
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.ReplacementRepair.data.perilStartDate
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: perilEndDate
+      display_name: Peril End Date
+      type: date?
+      base_type: date
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.ReplacementRepair.data.perilEndDate
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: premium
+      display_name: Premium
+      type: decimal?
+      base_type: decimal
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.ReplacementRepair.data.premium
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: taxRate
+      display_name: Tax Rate
+      type: decimal?
+      base_type: decimal
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.ReplacementRepair.data.taxRate
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: taxAmount
+      display_name: Tax Amount
+      type: decimal?
+      base_type: decimal
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.ReplacementRepair.data.taxAmount
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    charges:
+    - name: premium
+      category: premium
+      velocity_amount: $item.ReplacementRepair.charges.premium.amount
+      velocity_object: $item.ReplacementRepair.charges.premium
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    quantifier: '?'
+    cardinality: zero_or_one
+    iterable: false
+  - name: ReplacementWO
+    display_name: ReplacementWO
+    velocity: $item.ReplacementWO
+    note: '#if($item.ReplacementWO) before accessing — coverage may not be present
+      on every exposure'
+    requires_scope:
+    - iterator: $item
+      foreach: '#foreach ($item in $data.items)'
+    fields:
+    - field: perilStartDate
+      display_name: Peril Start Date
+      type: date?
+      base_type: date
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.ReplacementWO.data.perilStartDate
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: perilEndDate
+      display_name: Peril End Date
+      type: date?
+      base_type: date
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.ReplacementWO.data.perilEndDate
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: premium
+      display_name: Premium
+      type: decimal?
+      base_type: decimal
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.ReplacementWO.data.premium
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: taxRate
+      display_name: Tax Rate
+      type: decimal?
+      base_type: decimal
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.ReplacementWO.data.taxRate
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: taxAmount
+      display_name: Tax Amount
+      type: decimal?
+      base_type: decimal
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.ReplacementWO.data.taxAmount
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    charges:
+    - name: premium
+      category: premium
+      velocity_amount: $item.ReplacementWO.charges.premium.amount
+      velocity_object: $item.ReplacementWO.charges.premium
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    quantifier: '?'
+    cardinality: zero_or_one
+    iterable: false
+  - name: Theft
+    display_name: Theft
+    velocity: $item.Theft
+    note: '#if($item.Theft) before accessing — coverage may not be present on every
+      exposure'
+    requires_scope:
+    - iterator: $item
+      foreach: '#foreach ($item in $data.items)'
+    fields:
+    - field: perilStartDate
+      display_name: Peril Start Date
+      type: date?
+      base_type: date
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.Theft.data.perilStartDate
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: perilEndDate
+      display_name: Peril End Date
+      type: date?
+      base_type: date
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.Theft.data.perilEndDate
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: premium
+      display_name: Premium
+      type: decimal?
+      base_type: decimal
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.Theft.data.premium
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: taxRate
+      display_name: Tax Rate
+      type: decimal?
+      base_type: decimal
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.Theft.data.taxRate
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    - field: taxAmount
+      display_name: Tax Amount
+      type: decimal?
+      base_type: decimal
+      quantifier: '?'
+      cardinality: zero_or_one
+      iterable: false
+      category: coverage_data
+      velocity: $item.Theft.data.taxAmount
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    charges:
+    - name: premium
+      category: premium
+      velocity_amount: $item.Theft.charges.premium.amount
+      velocity_object: $item.Theft.charges.premium
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    quantifier: '?'
+    cardinality: zero_or_one
+    iterable: false
+  quantifier: +
+  cardinality: one_or_more
+  iterable: true

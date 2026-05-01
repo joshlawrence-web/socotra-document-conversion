@@ -1,0 +1,52 @@
+# suggested.suggested.yaml
+# Suggested mapping — review and confirm each data_source before running the
+# substitution step. Edit any data_source value, then save as policy-template.mapping.yaml.
+
+schema_version: '1.1'
+run_id: 87491548-dd5c-4d59-9735-2ec1e40320a9
+mode: terse
+generated_at: '2026-05-01T14:21:43Z'
+input_mapping_sha256: 5bc5e0b7fa7f7d8ebc95b6db8bb407b6a981af169ca24d93284f4465eb9b02af
+input_registry_sha256: 9cdb3ca67ab4a7c1426e031d4c6d67139963dd3c84e3e896216ffefdc879b410
+registry_schema_version: '1.1'
+registry_generated_at: '2026-05-01T14:20:41.827383+00:00'
+registry_config_dir: /Users/joshualawrence/Projects/Cursor/Experiments/VelocityConverter1stLeg/conformance/fixtures/custom-naming/socotra-config
+registry_source_config_sha256: 9ed97636c149d3b056713cc4e759247b430fb099fff045c4cf9c24cc592328bd
+live_source_config_sha256: null
+registry_config_verified: false
+registry_config_check: skipped_no_config_dir
+input_mapping_version: '1.0'
+input_registry_version: '1.1'
+source: custom-naming.html
+path_registry: path-registry.yaml
+product: DeepSeaFleet
+tooling:
+  mapping_suggester:
+    version: leg2_fill_mapping.py
+    ruleset_id: generic_registry_v2
+variables:
+- name: policy_number
+  placeholder: $TBD_policy_number
+  type: variable
+  context:
+    parent_tag: p
+    line: 5
+    nearest_label: Policy number
+  data_source: $data.policyNumber
+  confidence: high
+  reasoning: 'exact label match: "Policy number" → display_name "Policy number" → $data.policyNumber'
+loops:
+- name: octopuses
+  placeholder: $TBD_octopuses
+  iterator: $octopus
+  detection: mustache
+  context:
+    nearest_heading: Octopuses
+    line: 10
+    container: ul
+  data_source: $data.octopus
+  fields: []
+  confidence: high
+  reasoning: matched via terminology.yaml synonym `octopuses` → canonical `Octopus` → $data.octopus
+  type: loop
+  foreach: '#foreach ($octopus in $data.octopus)'

@@ -1,0 +1,55 @@
+schema_version: '1.0'
+source: itemcare-simple.html
+generated_at: '2026-04-28T00:00:00+00:00'
+variables:
+- name: POLICY_NUMBER
+  placeholder: $TBD_POLICY_NUMBER
+  type: variable
+  context:
+    parent_tag: p
+    line: 5
+    nearest_label: Policy number
+  data_source: ''
+- name: POLICYHOLDER_NAME
+  placeholder: $TBD_POLICYHOLDER_NAME
+  type: variable
+  context:
+    parent_tag: p
+    line: 6
+    nearest_label: Policyholder
+  data_source: ''
+- name: SERIAL_NUMBER
+  placeholder: $item.TBD_SERIAL_NUMBER
+  type: variable
+  context:
+    parent_tag: td
+    line: 15
+    nearest_label: Serial number
+    loop: items
+  data_source: ''
+- name: SCOPE_VIOLATION
+  placeholder: $TBD_SCOPE_VIOLATION
+  type: variable
+  context:
+    parent_tag: p
+    line: 20
+    nearest_label: Serial number
+    loop_hint: Item
+  data_source: ''
+loops:
+- name: items
+  placeholder: $TBD_items
+  type: loop
+  context:
+    nearest_heading: Items
+    line: 12
+  data_source: ''
+  fields:
+  - name: item_value
+    placeholder: $item.TBD_item_value
+    type: loop_field
+    context:
+      parent_tag: td
+      line: 16
+      nearest_label: Item value
+    data_source: ''

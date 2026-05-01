@@ -1,0 +1,726 @@
+source: policy-template.html
+generated_at: '2026-04-20T09:27:45+00:00'
+variables:
+- name: policy_number
+  placeholder: $TBD_policy_number
+  type: variable
+  context:
+    parent_tag: style
+    line: 5
+    nearest_label: Policy Document
+  data_source: ''
+- name: insured_first_name
+  placeholder: $TBD_insured_first_name
+  type: variable
+  context:
+    parent_tag: style
+    line: 5
+    nearest_label: Policy Document
+  data_source: ''
+- name: insured_last_name
+  placeholder: $TBD_insured_last_name
+  type: variable
+  context:
+    parent_tag: style
+    line: 5
+    nearest_label: Policy Document
+  data_source: ''
+- name: insurance_company
+  placeholder: $TBD_insurance_company
+  type: variable
+  context:
+    parent_tag: h6
+    line: 85
+    nearest_label: Application for Insurance Please review, sign where indicated and return.
+  data_source: ''
+- name: insurer_address_line_1
+  placeholder: $TBD_insurer_address_line_1
+  type: variable
+  context:
+    parent_tag: body
+    line: 71
+    nearest_label: Application for Insurance Please review, sign where indicated and return.
+  data_source: ''
+- name: insurer_address_line_2
+  placeholder: $TBD_insurer_address_line_2
+  type: variable
+  context:
+    parent_tag: body
+    line: 71
+    nearest_label: Application for Insurance Please review, sign where indicated and return.
+  data_source: ''
+- name: broker_name
+  placeholder: $TBD_broker_name
+  type: variable
+  context:
+    parent_tag: h6
+    line: 91
+    nearest_label: Application for Insurance Please review, sign where indicated and return.
+  data_source: ''
+- name: agency_name
+  placeholder: $TBD_agency_name
+  type: variable
+  context:
+    parent_tag: body
+    line: 71
+    nearest_label: Application for Insurance Please review, sign where indicated and return.
+  data_source: ''
+- name: agency_address_line_1
+  placeholder: $TBD_agency_address_line_1
+  type: variable
+  context:
+    parent_tag: body
+    line: 71
+    nearest_label: Application for Insurance Please review, sign where indicated and return.
+  data_source: ''
+- name: agency_city
+  placeholder: $TBD_agency_city
+  type: variable
+  context:
+    parent_tag: body
+    line: 71
+    nearest_label: Application for Insurance Please review, sign where indicated and return.
+  data_source: ''
+- name: agency_state
+  placeholder: $TBD_agency_state
+  type: variable
+  context:
+    parent_tag: body
+    line: 71
+    nearest_label: Application for Insurance Please review, sign where indicated and return.
+  data_source: ''
+- name: agency_zip
+  placeholder: $TBD_agency_zip
+  type: variable
+  context:
+    parent_tag: body
+    line: 71
+    nearest_label: Application for Insurance Please review, sign where indicated and return.
+  data_source: ''
+- name: agent_code
+  placeholder: $TBD_agent_code
+  type: variable
+  context:
+    parent_tag: body
+    line: 71
+    nearest_label: Application for Insurance Please review, sign where indicated and return.
+  data_source: ''
+- name: agent_phone
+  placeholder: $TBD_agent_phone
+  type: variable
+  context:
+    parent_tag: body
+    line: 71
+    nearest_label: Application for Insurance Please review, sign where indicated and return.
+  data_source: ''
+- name: financial_responsibility_vendor
+  placeholder: $TBD_financial_responsibility_vendor
+  type: variable
+  context:
+    parent_tag: h6
+    line: 107
+    nearest_label: '#end'
+  data_source: ''
+- name: financial_responsibility_phone
+  placeholder: $TBD_financial_responsibility_phone
+  type: variable
+  context:
+    parent_tag: h6
+    line: 108
+    nearest_label: '#end'
+  data_source: ''
+- name: policy_period_start
+  placeholder: $TBD_policy_period_start
+  type: variable
+  context:
+    parent_tag: h6
+    line: 112
+    nearest_label: '#end'
+  data_source: ''
+- name: policy_period_end
+  placeholder: $TBD_policy_period_end
+  type: variable
+  context:
+    parent_tag: h6
+    line: 112
+    nearest_label: '#end'
+  data_source: ''
+- name: effective_date_start
+  placeholder: $TBD_effective_date_start
+  type: variable
+  context:
+    parent_tag: h6
+    line: 116
+    nearest_label: '#end'
+  data_source: ''
+- name: effective_date_end
+  placeholder: $TBD_effective_date_end
+  type: variable
+  context:
+    parent_tag: h6
+    line: 116
+    nearest_label: '#end'
+  data_source: ''
+- name: total_policy_premium
+  placeholder: $TBD_total_policy_premium
+  type: variable
+  context:
+    parent_tag: h6
+    line: 120
+    nearest_label: '#end'
+  data_source: ''
+- name: initial_payment_required
+  placeholder: $TBD_initial_payment_required
+  type: variable
+  context:
+    parent_tag: h6
+    line: 124
+    nearest_label: '#end'
+  data_source: ''
+- name: initial_payment_received
+  placeholder: $TBD_initial_payment_received
+  type: variable
+  context:
+    parent_tag: h6
+    line: 128
+    nearest_label: '#end'
+  data_source: ''
+- name: payment_plan
+  placeholder: $TBD_payment_plan
+  type: variable
+  context:
+    parent_tag: h6
+    line: 132
+    nearest_label: '#end'
+  data_source: ''
+- name: returned_payment_fee
+  placeholder: $TBD_returned_payment_fee
+  type: variable
+  context:
+    parent_tag: p
+    line: 353
+    nearest_label: I agree to pay the installment fees shown on my billing statement that become du
+  data_source: ''
+- name: late_fee
+  placeholder: $TBD_late_fee
+  type: variable
+  context:
+    parent_tag: p
+    line: 354
+    nearest_label: I agree to pay the installment fees shown on my billing statement that become du
+  data_source: ''
+- name: late_fee_grace_days
+  placeholder: $TBD_late_fee_grace_days
+  type: variable
+  context:
+    parent_tag: p
+    line: 354
+    nearest_label: I agree to pay the installment fees shown on my billing statement that become du
+  data_source: ''
+- name: esign_full_name
+  placeholder: $TBD_esign_full_name
+  type: variable
+  context:
+    parent_tag: p
+    line: 357
+    nearest_label: Date
+  data_source: ''
+- name: esign_date
+  placeholder: $TBD_esign_date
+  type: variable
+  context:
+    parent_tag: p
+    line: 357
+    nearest_label: Date
+  data_source: ''
+loops:
+- name: named_insureds
+  placeholder: $TBD_named_insureds
+  iterator: $named_insured
+  detection: mustache
+  context:
+    line: 71
+    container: body
+  data_source: ''
+  fields:
+  - name: first_name
+    placeholder: $named_insured.TBD_first_name
+    type: loop_field
+    context:
+      parent_tag: li
+      line: 102
+      nearest_label: '{{#named_insureds}}'
+    data_source: ''
+  - name: last_name
+    placeholder: $named_insured.TBD_last_name
+    type: loop_field
+    context:
+      parent_tag: li
+      line: 102
+      nearest_label: '{{#named_insureds}}'
+    data_source: ''
+- name: drivers
+  placeholder: $TBD_drivers
+  iterator: $driver
+  detection: mustache
+  context:
+    nearest_heading: Drivers and household residents
+    line: 141
+    container: ul
+  data_source: ''
+  fields:
+  - name: first_name
+    placeholder: $driver.TBD_first_name
+    type: loop_field
+    context:
+      parent_tag: li
+      line: 143
+      nearest_label: '{{#drivers}}'
+    data_source: ''
+  - name: last_name
+    placeholder: $driver.TBD_last_name
+    type: loop_field
+    context:
+      parent_tag: li
+      line: 143
+      nearest_label: '{{#drivers}}'
+    data_source: ''
+  - name: date_of_birth
+    placeholder: $driver.TBD_date_of_birth
+    type: loop_field
+    context:
+      parent_tag: li
+      line: 143
+      nearest_label: '{{#drivers}}'
+    data_source: ''
+  - name: marital_status
+    placeholder: $driver.TBD_marital_status
+    type: loop_field
+    context:
+      parent_tag: li
+      line: 143
+      nearest_label: '{{#drivers}}'
+    data_source: ''
+  - name: license_state
+    placeholder: $driver.TBD_license_state
+    type: loop_field
+    context:
+      parent_tag: li
+      line: 143
+      nearest_label: '{{#drivers}}'
+    data_source: ''
+  - name: license_number
+    placeholder: $driver.TBD_license_number
+    type: loop_field
+    context:
+      parent_tag: li
+      line: 143
+      nearest_label: '{{#drivers}}'
+    data_source: ''
+  - name: relationship
+    placeholder: $driver.TBD_relationship
+    type: loop_field
+    context:
+      parent_tag: li
+      line: 143
+      nearest_label: '{{#drivers}}'
+    data_source: ''
+  - name: principal_vehicle_year
+    placeholder: $driver.TBD_principal_vehicle_year
+    type: loop_field
+    context:
+      parent_tag: li
+      line: 143
+      nearest_label: '{{#drivers}}'
+    data_source: ''
+  - name: principal_vehicle_make
+    placeholder: $driver.TBD_principal_vehicle_make
+    type: loop_field
+    context:
+      parent_tag: li
+      line: 143
+      nearest_label: '{{#drivers}}'
+    data_source: ''
+  - name: principal_vehicle_model
+    placeholder: $driver.TBD_principal_vehicle_model
+    type: loop_field
+    context:
+      parent_tag: li
+      line: 143
+      nearest_label: '{{#drivers}}'
+    data_source: ''
+  - name: education_level
+    placeholder: $driver.TBD_education_level
+    type: loop_field
+    context:
+      parent_tag: li
+      line: 143
+      nearest_label: '{{#drivers}}'
+    data_source: ''
+- name: driver_filings
+  placeholder: $TBD_driver_filings
+  iterator: $driver_filing
+  detection: mustache
+  context:
+    line: 71
+    container: body
+  data_source: ''
+  fields:
+  - name: first_name
+    placeholder: $driver_filing.TBD_first_name
+    type: loop_field
+    context:
+      parent_tag: span
+      line: 159
+      nearest_label: Name
+    data_source: ''
+  - name: last_name
+    placeholder: $driver_filing.TBD_last_name
+    type: loop_field
+    context:
+      parent_tag: span
+      line: 159
+      nearest_label: Name
+    data_source: ''
+  - name: filing_type
+    placeholder: $driver_filing.TBD_filing_type
+    type: loop_field
+    context:
+      parent_tag: span
+      line: 167
+      nearest_label: Filing type
+    data_source: ''
+  - name: filing_state
+    placeholder: $driver_filing.TBD_filing_state
+    type: loop_field
+    context:
+      parent_tag: span
+      line: 169
+      nearest_label: State
+    data_source: ''
+  - name: case_number
+    placeholder: $driver_filing.TBD_case_number
+    type: loop_field
+    context:
+      parent_tag: span
+      line: 171
+      nearest_label: Case number
+    data_source: ''
+- name: general_coverages
+  placeholder: $TBD_general_coverages
+  iterator: $general_coverage
+  detection: mustache
+  context:
+    nearest_heading: Outline of coverage
+    line: 187
+    container: tbody
+  data_source: ''
+  fields:
+  - name: coverage_name
+    placeholder: $general_coverage.TBD_coverage_name
+    type: loop_field
+    context:
+      parent_tag: td
+      line: 190
+      nearest_label: '{{#general_coverages}}'
+      column_header: General policy coverage
+    data_source: ''
+  - name: limits
+    placeholder: $general_coverage.TBD_limits
+    type: loop_field
+    context:
+      parent_tag: td
+      line: 193
+      nearest_label: '{{#general_coverages}}'
+      column_header: limits
+    data_source: ''
+  - name: limits_detail
+    placeholder: $general_coverage.TBD_limits_detail
+    type: loop_field
+    context:
+      parent_tag: td
+      line: 193
+      nearest_label: '{{#general_coverages}}'
+      column_header: limits
+    data_source: ''
+  - name: deductible
+    placeholder: $general_coverage.TBD_deductible
+    type: loop_field
+    context:
+      parent_tag: td
+      line: 197
+      nearest_label: '{{#general_coverages}}'
+      column_header: deductible
+    data_source: ''
+  - name: premium
+    placeholder: $general_coverage.TBD_premium
+    type: loop_field
+    context:
+      parent_tag: td
+      line: 200
+      nearest_label: '{{#general_coverages}}'
+      column_header: premium
+    data_source: ''
+- name: coverages
+  placeholder: $TBD_coverages
+  iterator: $coverage
+  detection: mustache
+  context:
+    nearest_heading: Vehicles
+    line: 224
+    container: tbody
+  data_source: ''
+  fields:
+  - name: coverage_name
+    placeholder: $coverage.TBD_coverage_name
+    type: loop_field
+    context:
+      parent_tag: td
+      line: 227
+      nearest_label: '{{#coverages}}'
+      column_header: Vehicle coverage
+    data_source: ''
+  - name: limits
+    placeholder: $coverage.TBD_limits
+    type: loop_field
+    context:
+      parent_tag: td
+      line: 230
+      nearest_label: '{{#coverages}}'
+      column_header: limits
+    data_source: ''
+  - name: limits_detail
+    placeholder: $coverage.TBD_limits_detail
+    type: loop_field
+    context:
+      parent_tag: td
+      line: 230
+      nearest_label: '{{#coverages}}'
+      column_header: limits
+    data_source: ''
+  - name: deductible
+    placeholder: $coverage.TBD_deductible
+    type: loop_field
+    context:
+      parent_tag: td
+      line: 234
+      nearest_label: '{{#coverages}}'
+      column_header: deductible
+    data_source: ''
+  - name: premium
+    placeholder: $coverage.TBD_premium
+    type: loop_field
+    context:
+      parent_tag: td
+      line: 237
+      nearest_label: '{{#coverages}}'
+      column_header: premium
+    data_source: ''
+- name: vehicles
+  placeholder: $TBD_vehicles
+  iterator: $vehicle
+  detection: mustache
+  context:
+    nearest_heading: Outline of coverage
+    line: 209
+    container: div
+  data_source: ''
+  fields:
+  - name: year
+    placeholder: $vehicle.TBD_year
+    type: loop_field
+    context:
+      parent_tag: div
+      line: 209
+      nearest_label: '#end'
+    data_source: ''
+  - name: make
+    placeholder: $vehicle.TBD_make
+    type: loop_field
+    context:
+      parent_tag: div
+      line: 209
+      nearest_label: '#end'
+    data_source: ''
+  - name: model
+    placeholder: $vehicle.TBD_model
+    type: loop_field
+    context:
+      parent_tag: div
+      line: 209
+      nearest_label: '#end'
+    data_source: ''
+  - name: cc
+    placeholder: $vehicle.TBD_cc
+    type: loop_field
+    context:
+      parent_tag: div
+      line: 209
+      nearest_label: '#end'
+    data_source: ''
+  - name: vin
+    placeholder: $vehicle.TBD_vin
+    type: loop_field
+    context:
+      parent_tag: div
+      line: 209
+      nearest_label: '#end'
+    data_source: ''
+  - name: garaging_zip
+    placeholder: $vehicle.TBD_garaging_zip
+    type: loop_field
+    context:
+      parent_tag: div
+      line: 209
+      nearest_label: '#end'
+    data_source: ''
+  - name: garaging_state
+    placeholder: $vehicle.TBD_garaging_state
+    type: loop_field
+    context:
+      parent_tag: div
+      line: 209
+      nearest_label: '#end'
+    data_source: ''
+- name: discount_drivers
+  placeholder: $TBD_discount_drivers
+  iterator: $discount_driver
+  detection: mustache
+  context:
+    nearest_heading: Premium discounts
+    line: 254
+    container: p
+  data_source: ''
+  fields:
+  - name: first_name
+    placeholder: $discount_driver.TBD_first_name
+    type: loop_field
+    context:
+      parent_tag: span
+      line: 257
+      nearest_label: '{{#discount_drivers}}'
+    data_source: ''
+  - name: last_name
+    placeholder: $discount_driver.TBD_last_name
+    type: loop_field
+    context:
+      parent_tag: span
+      line: 257
+      nearest_label: '{{#discount_drivers}}'
+    data_source: ''
+- name: discount_vehicles
+  placeholder: $TBD_discount_vehicles
+  iterator: $discount_vehicle
+  detection: mustache
+  context:
+    nearest_heading: Premium discounts
+    line: 263
+    container: p
+  data_source: ''
+  fields:
+  - name: year
+    placeholder: $discount_vehicle.TBD_year
+    type: loop_field
+    context:
+      parent_tag: span
+      line: 266
+      nearest_label: '{{#discount_vehicles}}'
+    data_source: ''
+  - name: make
+    placeholder: $discount_vehicle.TBD_make
+    type: loop_field
+    context:
+      parent_tag: span
+      line: 267
+      nearest_label: '{{#discount_vehicles}}'
+    data_source: ''
+  - name: model
+    placeholder: $discount_vehicle.TBD_model
+    type: loop_field
+    context:
+      parent_tag: span
+      line: 268
+      nearest_label: '{{#discount_vehicles}}'
+    data_source: ''
+- name: lienholders
+  placeholder: $TBD_lienholders
+  iterator: $lienholder
+  detection: mustache
+  context:
+    nearest_heading: Lienholder and Additional Interest information
+    line: 291
+    container: tbody
+  data_source: ''
+  fields:
+  - name: vehicle_year
+    placeholder: $lienholder.TBD_vehicle_year
+    type: loop_field
+    context:
+      parent_tag: span
+      line: 295
+      nearest_label: '{{#lienholders}}'
+    data_source: ''
+  - name: vehicle_make
+    placeholder: $lienholder.TBD_vehicle_make
+    type: loop_field
+    context:
+      parent_tag: span
+      line: 295
+      nearest_label: '{{#lienholders}}'
+    data_source: ''
+  - name: vehicle_model
+    placeholder: $lienholder.TBD_vehicle_model
+    type: loop_field
+    context:
+      parent_tag: span
+      line: 295
+      nearest_label: '{{#lienholders}}'
+    data_source: ''
+  - name: lienholder_name
+    placeholder: $lienholder.TBD_lienholder_name
+    type: loop_field
+    context:
+      parent_tag: span
+      line: 302
+      nearest_label: '{{#lienholders}}'
+    data_source: ''
+  - name: lienholder_address
+    placeholder: $lienholder.TBD_lienholder_address
+    type: loop_field
+    context:
+      parent_tag: span
+      line: 305
+      nearest_label: '{{#lienholders}}'
+    data_source: ''
+  - name: lienholder_city
+    placeholder: $lienholder.TBD_lienholder_city
+    type: loop_field
+    context:
+      parent_tag: span
+      line: 308
+      nearest_label: ','
+    data_source: ''
+  - name: lienholder_state
+    placeholder: $lienholder.TBD_lienholder_state
+    type: loop_field
+    context:
+      parent_tag: span
+      line: 311
+      nearest_label: ','
+    data_source: ''
+  - name: lienholder_zip
+    placeholder: $lienholder.TBD_lienholder_zip
+    type: loop_field
+    context:
+      parent_tag: span
+      line: 314
+      nearest_label: ','
+    data_source: ''
+  - name: additional_interest
+    placeholder: $lienholder.TBD_additional_interest
+    type: loop_field
+    context:
+      parent_tag: span
+      line: 319
+      nearest_label: '{{#lienholders}}'
+    data_source: ''

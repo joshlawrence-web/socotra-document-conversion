@@ -1,0 +1,10 @@
+{
+  "displayName": "Addon",
+  "contents": [],
+  "data": {
+    "description": {
+      "displayName": "Description",
+      "type": "string"
+    }
+  }
+}

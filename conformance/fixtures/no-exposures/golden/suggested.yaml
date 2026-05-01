@@ -1,0 +1,62 @@
+# no-exposures.suggested.yaml
+# Suggested mapping — review conformance/fixtures/no-exposures/golden/review.md
+# first, then edit any data_source value here before saving as
+# no-exposures.mapping.yaml and running Leg 3 (Substitution Writer).
+#
+# Every low/medium item carries a next-action in `reasoning` drawn from the
+# closed vocabulary: pick-one | supply-from-plugin | restructure-template |
+# delete-from-template | confirm-assumption | needs-skill-update.
+
+schema_version: '1.0'
+input_mapping_version: '1.0'
+input_registry_version: '1.1'
+source: no-exposures.html
+generated_at: '2026-04-22T14:00:00+00:00'
+path_registry: path-registry.yaml
+product: Mono
+variables:
+- name: policy_ref
+  placeholder: $TBD_policy_ref
+  type: variable
+  context:
+    parent_tag: p
+    line: 5
+    nearest_label: Policy reference
+  data_source: $data.data.policyRef
+  confidence: high
+  reasoning: >
+    `policy_ref` + nearest_label "Policy reference" map exactly to the
+    policy data field `policyRef` (display_name: "Policy reference",
+    type: string). requires_scope: [] (top-level policy data). No
+    iterable wrapping is needed — the product's `contents: []` means
+    there is no exposure scope to enter.
+- name: submitted_at
+  placeholder: $TBD_submitted_at
+  type: variable
+  context:
+    parent_tag: p
+    line: 7
+    nearest_label: Submission timestamp
+  data_source: $data.data.submittedAt
+  confidence: high
+  reasoning: >
+    `submitted_at` + nearest_label "Submission timestamp" map exactly
+    to the policy data field `submittedAt` (display_name: "Submission
+    timestamp", type: datetime). requires_scope: [] (top-level policy
+    data).
+- name: account_name
+  placeholder: $TBD_account_name
+  type: variable
+  context:
+    parent_tag: p
+    line: 9
+    nearest_label: Account name
+  data_source: $data.account.data.name
+  confidence: high
+  reasoning: >
+    `account_name` + nearest_label "Account name" map exactly to the
+    account field `name` (display_name: "Account name", type: string).
+    requires_scope: [] (account paths are top-level and exposure-
+    independent — the empty `contents:` list on this product has no
+    effect on account resolution).
+loops: []

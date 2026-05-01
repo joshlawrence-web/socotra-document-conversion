@@ -1,0 +1,14 @@
+{
+  "displayName": "Policyholder",
+  "contents": [],
+  "data": {
+    "fullName": {
+      "displayName": "Full name",
+      "type": "string"
+    },
+    "dwellingAddress": {
+      "displayName": "Dwelling address",
+      "type": "Address"
+    }
+  }
+}

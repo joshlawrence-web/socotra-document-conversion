@@ -1,0 +1,10 @@
+{
+  "displayName": "Vehicle",
+  "contents": ["Collision"],
+  "data": {
+    "vin": {
+      "displayName": "VIN",
+      "type": "string"
+    }
+  }
+}

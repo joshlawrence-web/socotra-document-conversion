@@ -1,0 +1,21 @@
+# terminology.yaml — Phase E synonym layer for the custom-naming fixture.
+#
+# Lifts the `octopuses` loop from `low` + `supply-from-plugin` (the pre-
+# Phase-E regression anchor in FIXTURE.md) to `high` by declaring
+# `octopuses` / `octopi` as aliases for the canonical exposure `Octopus`.
+# The fixture's golden/suggested.yaml + golden/review.md reflect the
+# post-terminology match: Rule 1 resolves `octopuses` via step 3 of the
+# name-match precedence and cites the synonym in reasoning.
+#
+# Shape contract: SCHEMA.md → "Artifact: `terminology.yaml`".
+
+schema_version: '1.0'
+tenant: DeepSeaFleet
+
+synonyms:
+  exposures:
+    Octopus: [octopuses, octopi]
+  coverages: {}
+  fields:    {}
+
+display_name_aliases: {}

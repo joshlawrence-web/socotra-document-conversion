@@ -1,0 +1,10 @@
+{
+  "displayName": "Insured Vehicle",
+  "contents": ["Coll", "MedPay?", "Comp!"],
+  "data": {
+    "vin": {
+      "displayName": "VIN",
+      "type": "string"
+    }
+  }
+}

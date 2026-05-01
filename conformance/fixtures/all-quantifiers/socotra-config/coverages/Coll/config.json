@@ -1,0 +1,9 @@
+{
+  "displayName": "Collision",
+  "data": {
+    "deductible": {
+      "displayName": "Deductible",
+      "type": "int"
+    }
+  }
+}

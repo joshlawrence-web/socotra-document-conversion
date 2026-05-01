@@ -1,0 +1,67 @@
+# terminology.yaml — per-tenant synonym layer (Phase E)
+#
+# Maps customer-specific vocabulary to the canonical Socotra config names
+# that extract_paths.py emits into path-registry.yaml. The
+# mapping-suggester consults this file after case-insensitive matching and
+# before fuzzy fallback (see `.cursor/skills/mapping-suggester/SKILL.md`
+# → "Name-match precedence"). Any match made via this layer carries an
+# explicit `reasoning` cite:
+#
+#   matched via terminology.yaml synonym `<alias>` → canonical `<name>`
+#
+# -------------------------------------------------------------------------
+# Scope contract (hard constraints — see PIPELINE_EVOLUTION_PLAN.md §6 / §7
+# and SKILL.md → "Important constraints"):
+#
+# 1. Per-tenant. Never commit a second tenant's terminology into this file.
+#    Create a sibling file (e.g. `terminology.acme.yaml`) and pass it via
+#    `--terminology <path>` for that run.
+# 2. No merging. The suggester refuses to combine multiple terminology
+#    files in a single run. Pick one.
+# 3. Exact strings only. The match is `alias in synonym_list` with simple
+#    case-insensitive equality — no fuzzy, no stemming, no regex.
+# 4. Canonical keys MUST exist in path-registry.yaml. An alias pointing at
+#    a non-existent canonical name is flagged at shape-probe time with
+#    `needs-skill-update: terminology canonical name <X> not found in
+#    registry`.
+# 5. Never bundle this file into `.cursor/skills/`. It lives at the repo
+#    / project root (same directory as `path-registry.yaml`) so tenant
+#    data stays out of the skill.
+# -------------------------------------------------------------------------
+
+schema_version: '1.0'
+tenant: CommercialAuto    # free-text tenant identifier; separate tenants =
+                          # separate files.
+
+# synonyms: map canonical registry names to a list of aliases. The keys
+# under `exposures` / `coverages` / `fields` MUST match a live registry
+# `name` (case-sensitive, as emitted by `extract_paths.py`). Values are
+# lists of aliases that may appear in a Leg 1 mapping YAML's placeholder
+# `name`, its `context.nearest_label`, or its `context.nearest_heading`.
+#
+# Example (uncomment and edit for the active tenant):
+#
+#   exposures:
+#     Vehicle: [unit, asset, auto, car]
+#     Driver:  [operator, insured-party, named-insured, principal-operator]
+#   coverages:
+#     Liability: [bi-pd, third-party, tpbi]
+#     Coll:      [collision]
+#     Comp:      [comprehensive, otc, other-than-collision]
+#   fields:
+#     vin:  [hin, serial-number]
+#     year: [model-year]
+synonyms:
+  exposures: {}
+  coverages: {}
+  fields:    {}
+
+# display_name_aliases: free-text → alias list mapping used when the
+# placeholder's nearest_label / nearest_heading matches a human display
+# string rather than a canonical field name. Keys are quoted to preserve
+# spaces and casing.
+#
+# Example:
+#
+#   "Gross Vehicle Weight": [gvw, weight-rating, gvwr]
+display_name_aliases: {}

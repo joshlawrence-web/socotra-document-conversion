@@ -1,0 +1,29 @@
+schema_version: '1.0'
+source: minimal.html
+generated_at: '2026-04-22T14:00:00+00:00'
+variables:
+- name: policy_ref
+  placeholder: $TBD_policy_ref
+  type: variable
+  context:
+    parent_tag: p
+    line: 5
+    nearest_label: Policy reference
+  data_source: ''
+- name: account_name
+  placeholder: $TBD_account_name
+  type: variable
+  context:
+    parent_tag: p
+    line: 8
+    nearest_label: Account name
+  data_source: ''
+- name: vehicle_vin
+  placeholder: $TBD_vehicle_vin
+  type: variable
+  context:
+    parent_tag: p
+    line: 12
+    nearest_label: VIN
+  data_source: ''
+loops: []

@@ -1,0 +1,285 @@
+schema_version: '1.1'
+meta:
+  config_dir: /Users/joshualawrence/Projects/Cursor/Experiments/VelocityConverter1stLeg/conformance/fixtures/jurisdictional-exclusive/socotra-config
+  product: SpecialAuto
+  display_name: Special Auto
+  generated_at: '2026-05-01T14:20:42.455171+00:00'
+  source_config_sha256: d5dc53896328070ac719be93ecb766b44a1b2504d1f8720053620692a5ef417b
+  note: 'Socotra Velocity dot-notation paths. Root object is $data (the renderingData
+    from DocumentDataSnapshotPlugin). Policy custom fields: $data.data.<field>. Account
+    fields: $data.account.data.<field>. Exposure lists: $data.<exposurePlural> (e.g.
+    $data.vehicles). Exposure fields: $<iterator>.data.<field> (e.g. $vehicle.data.vin).
+    Coverage fields: $<iterator>.<Coverage>.data.<field>. Charge amounts: $data.charges.<ChargeName>.amount
+    or $<iterator>.<Coverage>.charges.<ChargeName>.amount. Every entry carries `quantifier`
+    + `cardinality` + `iterable` flags plus a `requires_scope` list of #foreach steps
+    (outermost first) that must be active for the path to be valid. The previous `optional:
+    true/false` key on coverages has been replaced by `quantifier: ''?''` + `cardinality:
+    zero_or_one`.'
+feature_support:
+  nested_iterables: false
+  custom_data_types: false
+  recursive_cdts: false
+  jurisdictional_scopes: true
+  peril_based: false
+  multi_product: false
+  coverage_terms: false
+  default_option_prefix: false
+  auto_elements: false
+  array_data_extensions: false
+iterables:
+- name: Vehicle
+  display_name: Vehicle
+  kind: exposure
+  list_velocity: $data.vehicles
+  iterator: $vehicle
+  foreach: '#foreach ($vehicle in $data.vehicles)'
+  quantifier: +
+  cardinality: one_or_more
+system_paths:
+- field: locator
+  display_name: Policy/quote locator
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: system
+  velocity: $data.locator
+  requires_scope: []
+- field: productName
+  display_name: Product name
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: system
+  velocity: $data.productName
+  requires_scope: []
+- field: policyNumber
+  display_name: Policy number
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: system
+  velocity: $data.policyNumber
+  requires_scope: []
+- field: currency
+  display_name: Currency
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: system
+  velocity: $data.currency
+  requires_scope: []
+- field: policyStartTime
+  display_name: Policy start (epoch ms)
+  type: datetime
+  base_type: datetime
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: system
+  velocity: $data.policyStartTime
+  requires_scope: []
+- field: policyEndTime
+  display_name: Policy end (epoch ms)
+  type: datetime
+  base_type: datetime
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: system
+  velocity: $data.policyEndTime
+  requires_scope: []
+- field: created
+  display_name: Created timestamp
+  type: datetime
+  base_type: datetime
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: system
+  velocity: $data.created
+  requires_scope: []
+- field: updated
+  display_name: Last updated timestamp
+  type: datetime
+  base_type: datetime
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: system
+  velocity: $data.updated
+  requires_scope: []
+account_paths:
+- field: name
+  display_name: Account name
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: account
+  velocity: $data.account.data.name
+  requires_scope: []
+- field: addressLine1
+  display_name: Address line 1
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: account
+  velocity: $data.account.data.addressLine1
+  requires_scope: []
+- field: addressLine2
+  display_name: Address line 2
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: account
+  velocity: $data.account.data.addressLine2
+  requires_scope: []
+- field: city
+  display_name: City
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: account
+  velocity: $data.account.data.city
+  requires_scope: []
+- field: state
+  display_name: State
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: account
+  velocity: $data.account.data.state
+  requires_scope: []
+- field: postalCode
+  display_name: Postal code
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: account
+  velocity: $data.account.data.postalCode
+  requires_scope: []
+- field: country
+  display_name: Country
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: account
+  velocity: $data.account.data.country
+  requires_scope: []
+- field: email
+  display_name: Email
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: account
+  velocity: $data.account.data.email
+  requires_scope: []
+- field: phone
+  display_name: Phone
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: account
+  velocity: $data.account.data.phone
+  requires_scope: []
+policy_data: []
+policy_charges: []
+exposures:
+- name: Vehicle
+  display_name: Vehicle
+  list_velocity: $data.vehicles
+  iterator: vehicle
+  foreach: '#foreach ($vehicle in $data.vehicles)'
+  raw_contents:
+  - Umbrella
+  system_fields:
+  - field: locator
+    display_name: Exposure locator (system)
+    type: string
+    base_type: string
+    quantifier: ''
+    cardinality: exactly_one
+    iterable: false
+    category: exposure_system
+    velocity: $vehicle.locator
+    requires_scope:
+    - iterator: $vehicle
+      foreach: '#foreach ($vehicle in $data.vehicles)'
+  - field: name
+    display_name: Exposure type name (system)
+    type: string
+    base_type: string
+    quantifier: ''
+    cardinality: exactly_one
+    iterable: false
+    category: exposure_system
+    velocity: $vehicle.name
+    requires_scope:
+    - iterator: $vehicle
+      foreach: '#foreach ($vehicle in $data.vehicles)'
+  fields:
+  - field: vin
+    display_name: VIN
+    type: string
+    base_type: string
+    quantifier: ''
+    cardinality: exactly_one
+    iterable: false
+    category: exposure_data
+    velocity: $vehicle.data.vin
+    requires_scope:
+    - iterator: $vehicle
+      foreach: '#foreach ($vehicle in $data.vehicles)'
+  coverages:
+  - name: Umbrella
+    display_name: Umbrella coverage
+    velocity: $vehicle.Umbrella
+    note: '#if($vehicle.Umbrella) before accessing — coverage may not be present on
+      every exposure'
+    requires_scope:
+    - iterator: $vehicle
+      foreach: '#foreach ($vehicle in $data.vehicles)'
+    fields:
+    - field: limit
+      display_name: Umbrella limit
+      type: int
+      base_type: int
+      quantifier: ''
+      cardinality: exactly_one
+      iterable: false
+      category: coverage_data
+      velocity: $vehicle.Umbrella.data.limit
+      requires_scope:
+      - iterator: $vehicle
+        foreach: '#foreach ($vehicle in $data.vehicles)'
+    quantifier: ''
+    cardinality: exactly_one
+    iterable: false
+  quantifier: +
+  cardinality: one_or_more
+  iterable: true

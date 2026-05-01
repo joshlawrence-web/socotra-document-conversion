@@ -1,0 +1,265 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://velocityconverter/conformance/schemas/suggester-log.schema.json",
+  "title": "Mapping-suggester per-run telemetry (JSON Lines)",
+  "description": "Each line of a `<stem>.suggester-log.jsonl` file MUST validate against one of these record shapes. The file is append-only: every suggester run emits N `placeholder` records (one per variable and one per loop), terminated by exactly one `summary` record whose `run_id` matches every preceding placeholder record in that run. Multiple runs append into the same file; records are ordered by emission time.",
+  "oneOf": [
+    { "$ref": "#/$defs/placeholder" },
+    { "$ref": "#/$defs/summary" }
+  ],
+  "$defs": {
+    "iso8601_utc": {
+      "type": "string",
+      "description": "UTC timestamp in RFC 3339 / ISO 8601 with `Z` suffix.",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$"
+    },
+    "run_id": {
+      "type": "string",
+      "description": "UUID identifying the run. All records from a single run share the same run_id.",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["high", "medium", "low"]
+    },
+    "next_action": {
+      "description": "Closed vocabulary from mapping-suggester SKILL.md. `null` only on high-confidence rows where no follow-up is required.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "string",
+          "enum": [
+            "pick-one",
+            "supply-from-plugin",
+            "restructure-template",
+            "delete-from-template",
+            "confirm-assumption",
+            "needs-skill-update"
+          ]
+        }
+      ]
+    },
+    "placeholder": {
+      "type": "object",
+      "description": "One record per variable or loop observed in the mapping YAML.",
+      "required": [
+        "ts",
+        "run_id",
+        "kind",
+        "name",
+        "placeholder",
+        "type",
+        "context",
+        "chosen_match",
+        "confidence",
+        "next_action",
+        "rejected_candidates",
+        "unknown_context_keys"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "ts":   { "$ref": "#/$defs/iso8601_utc" },
+        "run_id": { "$ref": "#/$defs/run_id" },
+        "kind": { "const": "placeholder" },
+        "name": { "type": "string", "minLength": 1 },
+        "placeholder": {
+          "type": "string",
+          "description": "Full `$TBD_*` token (including any leading scope prefix like `$vehicle.`)."
+        },
+        "type": { "type": "string", "enum": ["variable", "loop", "loop_field"] },
+        "context": {
+          "type": "object",
+          "description": "Mirrors the `context:` block from the mapping YAML. Recognised keys pass through typed; unrecognised keys are still carried so patterns can be detected downstream.",
+          "additionalProperties": true,
+          "properties": {
+            "parent_tag":     { "type": ["string", "null"] },
+            "nearest_label":  { "type": ["string", "null"] },
+            "nearest_heading":{ "type": ["string", "null"] },
+            "line":           { "type": ["integer", "null"] },
+            "loop":           { "type": ["string", "null"] },
+            "loop_hint":      { "type": ["string", "null"] },
+            "column_header":  { "type": ["string", "null"] },
+            "container":      { "type": ["string", "null"] },
+            "detection":      { "type": ["string", "null"] }
+          }
+        },
+        "chosen_match": {
+          "description": "The Velocity path the suggester picked, or `null` when no confident match.",
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string", "minLength": 1 }
+          ]
+        },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "next_action": { "$ref": "#/$defs/next_action" },
+        "rejected_candidates": {
+          "type": "array",
+          "description": "Registry paths considered but not chosen, each with a machine-readable rejection reason.",
+          "items": {
+            "type": "object",
+            "required": ["velocity", "reason"],
+            "additionalProperties": false,
+            "properties": {
+              "velocity": { "type": "string", "minLength": 1 },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "scope_violation",
+                  "quantifier_mismatch",
+                  "cardinality_mismatch",
+                  "type_mismatch",
+                  "display_name_mismatch",
+                  "charge_form_mismatch",
+                  "feature_refused",
+                  "ambiguous_tiebreak",
+                  "no_label_context",
+                  "other"
+                ]
+              }
+            }
+          }
+        },
+        "unknown_context_keys": {
+          "type": "array",
+          "description": "Names of context keys present on this placeholder that are NOT in the v1.0 recognised vocabulary.",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "description": "Exactly one per run, emitted after the last placeholder record.",
+      "required": [
+        "ts",
+        "run_id",
+        "kind",
+        "source",
+        "product",
+        "totals",
+        "confidence_counts",
+        "next_actions",
+        "dead_registry_paths",
+        "hot_registry_paths",
+        "unknown_context_keys_seen"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "ts":   { "$ref": "#/$defs/iso8601_utc" },
+        "run_id": { "$ref": "#/$defs/run_id" },
+        "kind": { "const": "summary" },
+        "source": {
+          "type": "string",
+          "description": "Original HTML filename (value of the mapping YAML's `source:` key)."
+        },
+        "product": {
+          "type": "string",
+          "description": "Product name (value of the registry's `meta.product` key)."
+        },
+        "totals": {
+          "type": "object",
+          "required": ["variables", "loops"],
+          "additionalProperties": false,
+          "properties": {
+            "variables": { "type": "integer", "minimum": 0 },
+            "loops":     { "type": "integer", "minimum": 0 }
+          }
+        },
+        "confidence_counts": {
+          "type": "object",
+          "required": ["high", "medium", "low"],
+          "additionalProperties": false,
+          "properties": {
+            "high":   { "type": "integer", "minimum": 0 },
+            "medium": { "type": "integer", "minimum": 0 },
+            "low":    { "type": "integer", "minimum": 0 }
+          }
+        },
+        "next_actions": {
+          "type": "object",
+          "description": "Count per next-action code observed in this run. Keys are from the closed vocabulary in `next_action`; codes with zero occurrences may be omitted.",
+          "additionalProperties": { "type": "integer", "minimum": 0 },
+          "propertyNames": {
+            "enum": [
+              "pick-one",
+              "supply-from-plugin",
+              "restructure-template",
+              "delete-from-template",
+              "confirm-assumption",
+              "needs-skill-update"
+            ]
+          }
+        },
+        "dead_registry_paths": {
+          "type": "array",
+          "description": "Registry entries that matched zero placeholders in this run (candidates for coverage gaps).",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "hot_registry_paths": {
+          "type": "array",
+          "description": "Registry entries that matched two or more placeholders in this run (candidates for synonym promotion).",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "unknown_context_keys_seen": {
+          "type": "array",
+          "description": "Union of `unknown_context_keys` across every placeholder record in this run.",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "mode": {
+          "type": "string",
+          "description": "Leg 2 run mode when stamped by tooling.",
+          "enum": ["full", "terse", "delta", "batch"]
+        },
+        "input_mapping_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "input_registry_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "registry_schema_version": { "type": "string" },
+        "registry_generated_at": { "type": "string" },
+        "registry_config_dir": { "type": "string" },
+        "registry_source_config_sha256": {
+          "oneOf": [
+            { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            { "type": "null" }
+          ]
+        },
+        "live_source_config_sha256": {
+          "oneOf": [
+            { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            { "type": "null" }
+          ]
+        },
+        "registry_config_verified": { "type": "boolean" },
+        "registry_config_check": {
+          "type": "string",
+          "enum": [
+            "matched",
+            "skipped_no_config_dir",
+            "skipped_escape_hatch",
+            "skipped_missing_registry_fingerprint",
+            "failed_mismatch"
+          ]
+        },
+        "base_suggested_sha256": {
+          "oneOf": [
+            { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            { "type": "null" }
+          ]
+        },
+        "previous_run_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/run_id" },
+            { "type": "null" }
+          ]
+        },
+        "result_suggested_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "delta_changes": {
+          "type": "object",
+          "description": "Delta audit payload when mode=delta.",
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}

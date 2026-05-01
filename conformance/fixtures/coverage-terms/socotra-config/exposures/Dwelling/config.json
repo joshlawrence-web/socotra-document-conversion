@@ -1,0 +1,10 @@
+{
+  "displayName": "Dwelling",
+  "contents": ["Flood"],
+  "data": {
+    "address": {
+      "displayName": "Dwelling address",
+      "type": "string"
+    }
+  }
+}

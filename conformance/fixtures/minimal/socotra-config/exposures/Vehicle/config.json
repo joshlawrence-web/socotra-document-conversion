@@ -1,0 +1,10 @@
+{
+  "displayName": "Insured Vehicle",
+  "contents": [],
+  "data": {
+    "vin": {
+      "displayName": "VIN",
+      "type": "string"
+    }
+  }
+}

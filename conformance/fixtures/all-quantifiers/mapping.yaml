@@ -1,0 +1,86 @@
+schema_version: '1.0'
+source: all-quantifiers.html
+generated_at: '2026-04-22T14:00:00+00:00'
+variables:
+- name: policy_ref
+  placeholder: $TBD_policy_ref
+  type: variable
+  context:
+    parent_tag: p
+    line: 5
+    nearest_label: Policy reference
+  data_source: ''
+- name: ref_number
+  placeholder: $TBD_ref_number
+  type: variable
+  context:
+    parent_tag: p
+    line: 7
+    nearest_label: Reference number
+  data_source: ''
+loops:
+- name: vehicles
+  placeholder: $TBD_vehicles
+  iterator: $vehicle
+  detection: mustache
+  context:
+    nearest_heading: Vehicles
+    line: 15
+    container: ul
+  data_source: ''
+  fields:
+  - name: vin
+    placeholder: $vehicle.TBD_vin
+    type: loop_field
+    context:
+      parent_tag: li
+      line: 17
+      nearest_label: VIN
+      loop: vehicles
+    data_source: ''
+  - name: coll_deductible
+    placeholder: $vehicle.TBD_coll_deductible
+    type: loop_field
+    context:
+      parent_tag: li
+      line: 19
+      nearest_label: Collision deductible
+      loop: vehicles
+    data_source: ''
+  - name: medpay_limit
+    placeholder: $vehicle.TBD_medpay_limit
+    type: loop_field
+    context:
+      parent_tag: li
+      line: 21
+      nearest_label: MedPay limit
+      loop: vehicles
+    data_source: ''
+  - name: comp_limit
+    placeholder: $vehicle.TBD_comp_limit
+    type: loop_field
+    context:
+      parent_tag: li
+      line: 23
+      nearest_label: Comprehensive limit
+      loop: vehicles
+    data_source: ''
+- name: drivers
+  placeholder: $TBD_drivers
+  iterator: $driver
+  detection: mustache
+  context:
+    nearest_heading: Drivers
+    line: 30
+    container: ul
+  data_source: ''
+  fields:
+  - name: first_name
+    placeholder: $driver.TBD_first_name
+    type: loop_field
+    context:
+      parent_tag: li
+      line: 32
+      nearest_label: First name
+      loop: drivers
+    data_source: ''

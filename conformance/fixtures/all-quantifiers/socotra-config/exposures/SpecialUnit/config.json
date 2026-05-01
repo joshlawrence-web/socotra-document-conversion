@@ -1,0 +1,10 @@
+{
+  "displayName": "Special Unit",
+  "contents": [],
+  "data": {
+    "unitId": {
+      "displayName": "Unit ID",
+      "type": "string"
+    }
+  }
+}

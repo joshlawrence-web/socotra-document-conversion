@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# macOS
+.DS_Store
+.cursor/.DS_Store
+
+# Pipeline actual/ outputs (test run artefacts, not golden)
+conformance/fixtures/*/actual/
+
+# IDE
+.vscode/

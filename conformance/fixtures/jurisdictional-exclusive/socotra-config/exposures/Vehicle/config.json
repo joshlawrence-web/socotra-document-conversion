@@ -1,0 +1,10 @@
+{
+  "displayName": "Vehicle",
+  "contents": ["Umbrella"],
+  "data": {
+    "vin": {
+      "displayName": "VIN",
+      "type": "string"
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "displayName": "Policyholder",
+  "contents": [],
+  "data": {
+    "fullName": {
+      "displayName": "Full name",
+      "type": "string"
+    }
+  }
+}

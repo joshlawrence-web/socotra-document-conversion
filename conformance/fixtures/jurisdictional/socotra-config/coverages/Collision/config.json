@@ -1,0 +1,12 @@
+{
+  "displayName": "Collision coverage",
+  "qualification": {
+    "jurisdiction": "CA"
+  },
+  "data": {
+    "deductible": {
+      "displayName": "Deductible",
+      "type": "int"
+    }
+  }
+}

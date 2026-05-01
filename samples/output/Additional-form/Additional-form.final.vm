@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>Insurance Policy Summary</title>
+</head>
+<body>
+<h1>Insurance Policy Summary</h1>
+
+<p><strong>Insurance Product:</strong> $TBD_INSURANCE_PRODUCT</p>
+
+
+<p><strong>Policy Number:</strong> $data.policyNumber</p>
+
+
+<p><strong>Policyholder:</strong> $data.account.data.name</p>
+
+
+<p><strong>Effective Start Date:</strong> $TBD_EFFECTIVE_START_DATE</p>
+
+</body>
+</html>

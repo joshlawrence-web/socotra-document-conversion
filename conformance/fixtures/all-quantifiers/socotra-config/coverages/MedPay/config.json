@@ -1,0 +1,9 @@
+{
+  "displayName": "Medical Payments",
+  "data": {
+    "limit": {
+      "displayName": "Limit",
+      "type": "int"
+    }
+  }
+}

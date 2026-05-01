@@ -1,0 +1,15 @@
+{
+  "displayName": "Multi-quantifier Product",
+  "contents": ["Vehicle+", "Driver*", "Addon?", "SpecialUnit!", "Policyholder"],
+  "charges": [],
+  "data": {
+    "policyRef": {
+      "displayName": "Policy reference",
+      "type": "string"
+    },
+    "refNumber": {
+      "displayName": "Reference number",
+      "type": "string?"
+    }
+  }
+}

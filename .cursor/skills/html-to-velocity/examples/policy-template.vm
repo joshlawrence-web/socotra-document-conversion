@@ -1,0 +1,415 @@
+<html><head><link href="https://www.w3schools.com/w3css/4/w3.css" rel="stylesheet"/>
+<meta charset="utf-8"/>
+<title>Policy Document</title>
+<style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 30px;
+            line-height: 1.4;
+        }
+        .sectionTitle {
+            font-weight: bold;
+            font-size: 1.2em;
+            margin-top: 20px;
+        }
+        .pageBreak {
+            page-break-before: always;
+        }
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 1em;
+        }
+        .policy-info {
+            text-align: right;
+            font-size: 10pt;
+            line-height: 1.2;
+        }
+        .app-info {
+            text-align: left;
+            font-size: 10pt;
+            line-height: 1.2;
+        }
+        .logo {
+            text-align: right;
+            font-weight: bold;
+            font-size: 16pt;
+        }
+        .dotted-line {
+            border: none;
+            border-top: 1px dotted #888;
+            margin: 1em 0;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1em 0;
+        }
+        th, td {
+            text-align: left;
+            vertical-align: top;
+            padding: 4px 6px;
+        }
+        h1, h2, h3, h4 {
+            margin-bottom: 6px;
+            margin-top: 24px;
+        }
+        @page{
+            counter-increment: page;
+            @top-right{
+                content: "Policy Number: " "$TBD_policy_number " "\A"
+                            "Insured: " "$TBD_insured_first_name " "$TBD_insured_last_name " "\A"
+                            "Page " counter(page) " / " counter(pages);
+                font-size: 10pt;
+                white-space: pre;
+            }
+        }
+    </style>
+</head>
+<body>
+<!-- PAGE 1 -->
+<p>
+</p><div class="logo"><span style="float: right">Logo</span></div>
+<p></p>
+<div class="page-header">
+<div class="app-info">
+<h1> Application for Insurance</h1>
+<p>Please review, sign where indicated and return.</p>
+</div>
+</div>
+
+#if($TBD_policy_number)
+<h4>Policy and premium information for policy number $TBD_policy_number</h4>
+#end
+
+<hr class="dotted-line"/>
+<p>
+</p>
+#if($TBD_insurance_company)
+<h6>Insurance company: $TBD_insurance_company</h6>
+#end
+
+        $TBD_insurer_address_line_1 <br/>
+        $TBD_insurer_address_line_2 <br/>
+<p></p>
+<hr class="dotted-line"/>
+<p>
+</p>
+#if($TBD_broker_name)
+<h6>Broker/Agent: $TBD_broker_name</h6>
+#end
+
+        Agency: $TBD_agency_name <br/>
+        $TBD_agency_address_line_1 <br/>
+        $TBD_agency_city $TBD_agency_state $TBD_agency_zip <br/>
+        $TBD_agent_code<br/>
+        $TBD_agent_phone<br/>
+<p></p>
+<hr class="dotted-line"/>
+<p>
+</p>
+#if($TBD_insured_first_name and $TBD_insured_last_name)
+<h6>Named Insured: $TBD_insured_first_name $TBD_insured_last_name </h6>
+#end
+
+            
+#foreach ($named_insured in $TBD_named_insureds)
+
+            <li>$named_insured.TBD_first_name $named_insured.TBD_last_name</li>
+            
+#end
+
+    <p></p>
+<hr class="dotted-line"/>
+<p>
+</p><h6>Financial responsibility vendor: $TBD_financial_responsibility_vendor</h6>
+<h6>$TBD_financial_responsibility_phone</h6>
+<p></p>
+<hr class="dotted-line"/>
+<p>
+</p><h6>Policy Period: $TBD_policy_period_start - $TBD_policy_period_end </h6>
+<p></p>
+<hr class="dotted-line"/>
+<p>
+</p><h6>Effective date and time: $TBD_effective_date_start - $TBD_effective_date_end </h6>
+<p></p>
+<hr class="dotted-line"/>
+<p>
+</p><h6>Total policy premium: $TBD_total_policy_premium </h6>
+<p></p>
+<hr class="dotted-line"/>
+<p>
+</p><h6>Initial Payment Required:  $TBD_initial_payment_required </h6>
+<p></p>
+<hr class="dotted-line"/>
+<p>
+</p><h6>Initial Payment Received:  $TBD_initial_payment_received</h6>
+<p></p>
+<hr class="dotted-line"/>
+<p>
+</p><h6>Payment Plan: $TBD_payment_plan </h6>
+<p></p>
+<hr class="dotted-line"/>
+<h3>Drivers and household residents</h3>
+<p>
+        All household residents who operate the vehicles described in the application, all operators that have an ownership
+        interest in any of these vehicles and any other regular operator of these vehicles are listed below.
+    </p>
+<div>
+<ul>
+            
+#foreach ($driver in $TBD_drivers)
+
+            <li>$driver.TBD_first_name $driver.TBD_last_name<br/>
+            Date of birth: $driver.TBD_date_of_birth<br/>
+            Marital Status: $driver.TBD_marital_status<br/>
+            License Status: $driver.TBD_license_state - $driver.TBD_license_number<br/>
+            Relationship: $driver.TBD_relationship<br/><br/>
+            Principle Vehicle: $driver.TBD_principal_vehicle_year $driver.TBD_principal_vehicle_make $driver.TBD_principal_vehicle_model <br/>
+            Education level: $driver.TBD_education_level<br/><br/>
+</li>
+            
+#end
+
+        </ul>
+<hr class="dotted-line"/>
+</div>
+<h3>Driver filing</h3>
+    
+#foreach ($driver_filing in $TBD_driver_filings)
+
+    <p>
+<strong>Name</strong><br/>
+<span class="placeholder">
+        $driver_filing.TBD_first_name
+        $driver_filing.TBD_last_name
+        </span>
+</p>
+<hr class="dotted-line"/>
+<p>
+<strong>Filing type:</strong>
+<span class="placeholder">$driver_filing.TBD_filing_type</span><br/>
+<strong>State:</strong>
+<span class="placeholder">$driver_filing.TBD_filing_state</span><br/>
+<strong>Case number:</strong>
+<span class="placeholder">$driver_filing.TBD_case_number</span>
+</p>
+    
+#end
+
+    <div>
+<h3>Outline of coverage</h3>
+<p> Your insurance policy and any policy endorsements contain a full explanation of your coverage. The policy limits shown for a vehicle may not be combined with the limits for the same coverage on another vehicle.
+        </p>
+<table>
+<thead>
+<tr>
+<th>General policy coverage</th>
+<th>limits</th>
+<th>deductible</th>
+<th>premium</th>
+</tr>
+</thead>
+<tbody>
+                
+#foreach ($general_coverage in $TBD_general_coverages)
+
+                <tr>
+<td>
+                        $general_coverage.TBD_coverage_name
+                    </td>
+<td>
+                        $general_coverage.TBD_limits <br/>
+                        $general_coverage.TBD_limits_detail <br/>
+</td>
+<td>
+                        $general_coverage.TBD_deductible
+                    </td>
+<td>
+                        $general_coverage.TBD_premium
+                    </td>
+</tr>
+                
+#end
+
+            </tbody>
+</table>
+<hr class="dotted-line"/>
+</div>
+<div>
+<h3>Vehicles</h3>
+            
+#foreach ($vehicle in $TBD_vehicles)
+
+            $vehicle.TBD_year $vehicle.TBD_make $vehicle.TBD_model CC: $vehicle.TBD_cc <br/>
+            VIN: $vehicle.TBD_vin <br/>
+                Garaging Zip Code:  $vehicle.TBD_garaging_zip State: $vehicle.TBD_garaging_state <br/>
+<table>
+<thead>
+<tr>
+<th>Vehicle coverage</th>
+<th>limits</th>
+<th>deductible</th>
+<th>premium</th>
+</tr>
+</thead>
+<tbody>
+                    
+#foreach ($coverage in $TBD_coverages)
+
+                    <tr>
+<td>
+                            $coverage.TBD_coverage_name
+                        </td>
+<td>
+                            $coverage.TBD_limits <br/>
+                            $coverage.TBD_limits_detail <br/>
+</td>
+<td>
+                            $coverage.TBD_deductible
+                        </td>
+<td>
+                            $coverage.TBD_premium
+                        </td>
+</tr>
+                    
+#end
+
+                </tbody>
+</table>
+<hr class="dotted-line"/>
+            
+#end
+
+        <br/>
+</div>
+<h3>Premium discounts</h3>
+<p>
+<strong>Policy</strong><br/>
+<span class="placeholder">$TBD_policy_number</span>
+</p>
+<hr class="dotted-line"/>
+<p>
+<strong>Driver</strong><br/>
+        
+#foreach ($discount_driver in $TBD_discount_drivers)
+
+        <span class="placeholder">
+        $discount_driver.TBD_first_name $discount_driver.TBD_last_name
+        </span>
+        
+#end
+
+    </p>
+<hr class="dotted-line"/>
+<p>
+<strong>Vehicle</strong><br/>
+        
+#foreach ($discount_vehicle in $TBD_discount_vehicles)
+
+        <span class="placeholder">$discount_vehicle.TBD_year</span>
+<span class="placeholder">$discount_vehicle.TBD_make</span>
+<span class="placeholder">$discount_vehicle.TBD_model</span>
+        
+#end
+
+    </p>
+<h2>Driving history</h2>
+<p>
+        Please review the following information carefully because driving history is used to determine your rate.
+        All accidents are considered at-fault and chargeable unless we receive additional information from you or another
+        source that proves the accident was not-at-fault. We obtain driving history from the following sources:
+    </p>
+<ul>
+<li>Your application (APP)</li>
+<li>Motor Vehicle Reports and/or court data (MVR) - provided by a consumer reporting agency</li>
+<li>Company claims history (XXXX)</li>
+</ul>
+<h2>Lienholder and Additional Interest information</h2>
+<table>
+<thead>
+<tr>
+<th>Vehicle</th>
+<th>Lienholder</th>
+<th>Additional Interest</th>
+</tr>
+</thead>
+<tbody>
+            
+#foreach ($lienholder in $TBD_lienholders)
+
+            <tr>
+<td>
+<span class="placeholder">
+                    $lienholder.TBD_vehicle_year
+                    $lienholder.TBD_vehicle_make
+                    $lienholder.TBD_vehicle_model
+                </span>
+</td>
+<td>
+<span class="placeholder">
+                    $lienholder.TBD_lienholder_name
+                </span><br/>
+<span class="placeholder">
+                    $lienholder.TBD_lienholder_address
+                </span>,
+                <span class="placeholder">
+                    $lienholder.TBD_lienholder_city
+                </span>,
+                <span class="placeholder">
+                    $lienholder.TBD_lienholder_state
+                </span>
+<span class="placeholder">
+                    $lienholder.TBD_lienholder_zip
+                </span>
+</td>
+<td>
+<span class="placeholder">
+                    $lienholder.TBD_additional_interest
+                </span>
+</td>
+</tr>
+            
+#end
+
+        </tbody>
+</table>
+<div>
+<h3> Notice regarding accessory and safety riding apparel coverage</h3>
+<p>Subject to your limits of liability, if you have paid a premium for Comprehensive Coverage or Collision Coverage and you do not have Agreed Value on your motorcycle or off-road vehicle, you will receive coverage for any loss arising from theft or damage to any accessory attached to your motorcycle or off-road vehicle up to $3,000. "Accessory" means equipment, devices, enhancements, and changes, other than those that are original manufacturer installed, which alter the appearance or performance of a covered vehicle.</p>
+<p>Please be aware that accessories may have been added to your vehicle by any previous owner, including a dealership. In this event, the cost for any accessory may have been included in the purchase price of the vehicle. If the total value of your accessories exceeds $3,000, you may wish to purchase additional coverage. This coverage is available for an additional premium and affords protection for up to $30,000 worth of accessories.</p>
+<p>If you have Comprehensive and Collision coverage, your Safety Riding Apparel coverage will automatically provide $500 worth of coverage for any damaged safety riding apparel, provided that:<br/>
+        * the apparel is owned by you or any other person named on the declarations page, and <br/>
+        * the apparel was damaged while being worn on a motorcycle by you, a relative or a passenger in a covered collision loss or a loss resulting from contact with an animal.
+        </p>
+<p>You can also purchase additional coverage, up to $3,000.</p>
+<h3> Application Agreement</h3>
+<h5> Verification of content</h5>
+<p>I declare that the statements contained herein are true to the best of my knowledge and belief and do agree to pay any surcharges applicable under the Company rules which are necessitated by inaccurate statements. To the extent permitted by Texas Insurance Code sections 705.003 and 705 004, I understand that this policy may be declared void if this application contains any false information or if any information that would alter the Company's exposure is omitted or misrepresented. <br/>
+        Any person who knowingly presents a false or fraudulent claim for the payment of a loss is guilty of a crime and may be subject to fines and confinement in state prison.
+        </p>
+<h5> Notice of information practices </h5>
+<p>I understand that to calculate an accurate price for my insurance, the Company may obtain information from third parties, such as consumer reporting agencies that provide driving, claims and credit histories. The Company may use a credit-based insurance score based on the information contained in the credit history. The Company or its affiliates may obtain new or updated information to calculate my renewal premium or service my insurance. I may access information about me and correct it if inaccurate. In some cases, the law permits the Company to disclose the information it collects without authorization. However, the Company will not share personal information with nonaffiliated companies for their marketing purposes without consent. Complete details are in the Company's Privacy Policy, which will be provided with this insurance policy and upon request.
+        </p>
+<h5> Acknowledgement and agreement</h5>
+<p>If I make my initial payment by electronic funds transfer, check, draft, or other remittance, the coverage afforded under this policy is conditioned on payment to the Company by the financial institution. If the transfer, check, draft, or other remittance is not honored by the financial institution, the Company shall be deemed not to have accepted the payment and this policy shall be void.</p>
+<p>If I make my initial payment by credit card, the coverage afforded under this policy is conditioned on payment to the Company by the card issuer. I understand that if the Company is unable to collect my initial payment from the card issuer, the Company shall be deemed not to have accepted the payment and this policy shall be void. I also understand that if I authorize a credit card transaction for any payment other than the initial payment, this policy will be subject to cancellation for nonpayment of premium if the Company is unable to collect payment from the card issuer. The Company is deemed "unable to collect" in the following instances: (1) when I reach my credit limit on my credit card and the card issuer refuses the charge; (2) when the card issuer cancels or revokes my credit card; or (3) when the card issuer does not pay the Company, for any reason whatsoever, upon the Company's request.</p>
+<p>I agree that the maximum limit of liability for Comprehensive Coverage and Collision Coverage (if purchased) is the Actual Cash Value of the factory standard vehicle at the time of the loss, unless either of the Total Loss Coverage or Agreed Value Coverage options is selected, in which case the maximum limits are determined as provided for in the policy contract. </p>
+<p>If I have purchased Agreed Value Coverage, I understand that I must maintain the necessary paperwork (photos, title of vehicle, and all receipts) used in determining the Agreed Value of each vehicle. In the event of a loss, this information will be required to settle a claim.</p>
+<p>All physical damage losses, regardless of loss settlement option and whether partial or total, are subject to the applicable deductible.</p>
+<p></p>
+<h5> Other charges</h5>
+<p>I agree to pay the installment fees shown on my billing statement that become due during the policy term and each renewal policy term in accordance with the payment plan I have selected. I understand that the amount of these fees may change upon policy renewal or if I change my payment plan. Any change in the amount of installment fees will be reflected on my payment schedule.</p>
+<p>I understand that a returned payment fee of $TBD_returned_payment_fee will be assessed to the balance due on my policy if any check offered in payment is not honored by my bank or other financial institution. Imposition of such charge shall not deem the Company to have accepted the check unconditionally.</p>
+<p>I agree to pay a late fee of $TBD_late_fee during the policy term and each renewal policy term when either the minimum amount due is not paid or payment is postmarked more than $TBD_late_fee_grace_days days after the premium due date. The amount of this fee may change upon policy renewal.</p>
+<p>By signing below, I appoint the President of the Company, with full power of substitution, as my proxy and with authority to vote for me, in my absence, at any membership meeting. The authority granted to the President shall remain in effect for as long as I am a policyholder of the Company, provided that I may revoke the authority granted to the President at any time by providing written notice. I agree to be governed by the provisions of Chapter 912, Texas Insurance Code 2003.</p>
+</div>
+<p>
+<strong>Signature of named insured</strong>
+<span style="font-size:1.2em; font-weight:bold;">X</span>
+<strong>Date</strong><br/><br/>
+        $TBD_esign_full_name   $TBD_esign_date<br/>
+        ...........................................................................................................
+    </p>
+</body></html>
