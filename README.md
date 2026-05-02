@@ -46,19 +46,28 @@ flowchart LR
 2. **Run the pipeline** using the orchestrator (`scripts/agent.py`):
 
    ```bash
-   # End-to-end (most common)
-   python3 scripts/agent.py "RUN_PIPELINE leg1+leg2 input=samples/input/claim-form.html"
+   # Full pipeline — HTML → .final.vm (most common)
+   python3 scripts/agent.py "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/claim-form.html registry=registry/path-registry.yaml output=samples/output"
+
+   # Full pipeline, high-confidence substitutions only (medium/low stay as $TBD_* for review)
+   python3 scripts/agent.py "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/claim-form.html registry=registry/path-registry.yaml output=samples/output high_only=true"
 
    # Leg 1 only (HTML → .vm + .mapping.yaml)
    python3 scripts/agent.py "RUN_PIPELINE leg1 input=samples/input/claim-form.html output=samples/output"
 
    # Leg 2 only (suggest paths for an existing .mapping.yaml)
-   python3 scripts/agent.py "RUN_PIPELINE leg2 mapping=samples/output/claim-form/claim-form.mapping.yaml"
+   python3 scripts/agent.py "RUN_PIPELINE leg2 mode=terse mapping=samples/output/claim-form/claim-form.mapping.yaml"
+
+   # Leg 3 only (write final .vm from a reviewed .suggested.yaml)
+   python3 scripts/agent.py "RUN_PIPELINE leg3 suggested=samples/output/claim-form/claim-form.suggested.yaml"
+
+   # Leg 3 only, high-confidence substitutions only
+   python3 scripts/agent.py "RUN_PIPELINE leg3 suggested=samples/output/claim-form/claim-form.suggested.yaml high_only=true"
    ```
 
    The orchestrator shows a preflight summary and requires you to type `PROCEED` before running. Add `--yes` to skip confirmation in CI/headless use.
 
-3. **Review and sign off** on the suggestions, then merge accepted paths back into the `.vm` template.
+3. **Review the report** — open `<stem>.leg3-report.md` in `samples/output/<stem>/` to see what resolved and what remains as `$TBD_*`. The `.final.vm` is the production template.
 
 > **Note:** You can also invoke Leg 1 and Leg 2 directly (see their `SKILL.md` files under `.cursor/skills/`), but the orchestrator is the recommended entry point.
 
@@ -81,6 +90,7 @@ flowchart LR
 |---|---|
 | `.cursor/skills/html-to-velocity/` | Leg 1 skill — HTML → Velocity converter |
 | `.cursor/skills/mapping-suggester/` | Leg 2 skill — AI path suggester |
+| `scripts/leg3_substitute.py` | Leg 3 — substitutes confirmed paths into `.final.vm` |
 | `samples/input/` | Sample HTML mockups (4 templates) |
 | `samples/output/` | Sample pipeline outputs (`.vm`, `.mapping.yaml`, `.suggested.yaml`, `.review.md`) |
 | `socotra-config/` | Bundled sample Socotra config — drives the demo registry |

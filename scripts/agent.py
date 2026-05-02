@@ -2,12 +2,16 @@
 """Pipeline orchestrator — no API key required.
 
 Parses a structured RUN_PIPELINE invocation, validates inputs, shows a preflight
-summary, requires PROCEED confirmation, then dispatches to Leg 1 / Leg 2 scripts.
+summary, requires PROCEED confirmation, then dispatches to Leg 1 / Leg 2 / Leg 3 scripts.
 
 Usage:
     python3 scripts/agent.py "RUN_PIPELINE leg1 input=samples/input/Simple-form.html"
     python3 scripts/agent.py "RUN_PIPELINE leg1+leg2 input=samples/input/Simple-form.html"
-    python3 scripts/agent.py --yes "RUN_PIPELINE leg1+leg2 input=samples/input/Simple-form.html"
+    python3 scripts/agent.py "RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.suggested.yaml"
+    python3 scripts/agent.py "RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.suggested.yaml high_only=true"
+    python3 scripts/agent.py "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml"
+    python3 scripts/agent.py "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml high_only=true"
+    python3 scripts/agent.py --yes "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html"
     python3 scripts/agent.py          # interactive stdin mode
 """
 
@@ -35,7 +39,9 @@ This agent requires an explicit invocation token. Examples:
   RUN_PIPELINE leg2 mode=terse mapping=samples/output/claim-form/claim-form.mapping.yaml
   RUN_PIPELINE leg1+leg2 input=samples/input/claim-form.html registry=registry/path-registry.yaml
   RUN_PIPELINE leg3 suggested=samples/output/claim-form/claim-form.suggested.yaml
+  RUN_PIPELINE leg3 suggested=samples/output/claim-form/claim-form.suggested.yaml high_only=true
   RUN_PIPELINE leg1+leg2+leg3 input=samples/input/claim-form.html registry=registry/path-registry.yaml
+  RUN_PIPELINE leg1+leg2+leg3 input=samples/input/claim-form.html registry=registry/path-registry.yaml high_only=true
 
 Required per operation:
   leg1           : input=<file.html>
@@ -44,7 +50,10 @@ Required per operation:
   leg3           : suggested=<file.suggested.yaml>
   leg1+leg2+leg3 : input=<file.html>  [mode defaults to terse]
 
-Optional for all: output=<dir>  registry=<path>  terminology=<path>
+Optional for all:           output=<dir>  registry=<path>  terminology=<path>
+Optional for leg3 variants: high_only=true  (substitute only confidence:high tokens;
+                            medium/low remain as $TBD_* and appear in the deferred
+                            section of the leg3-report.md)
 """
 
 VALID_OPS = {"leg1", "leg2", "leg1+leg2", "leg3", "leg1+leg2+leg3"}
@@ -392,6 +401,15 @@ def guided_mode() -> str:
         print("  delta — only unresolved $TBD_ fields")
         mode_val = _ask("Mode", default="terse")
         parts.append(f"mode={mode_val}")
+
+    # High-only mode (leg3 / leg1+leg2+leg3)
+    if operation in ("leg3", "leg1+leg2+leg3"):
+        print("\nHigh-only mode: substitute only confidence:high tokens.")
+        print("  Medium/low tokens stay as $TBD_* and appear in the deferred")
+        print("  section of the leg3-report.md for human review.")
+        high_only_val = _ask("Enable high-only mode? [y/N]", default="n")
+        if high_only_val.lower() in ("y", "yes"):
+            parts.append("high_only=true")
 
     # Optional overrides
     output = _ask("\nOutput directory", default="samples/output")
