@@ -61,7 +61,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 VAR_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
-MUSTACHE_RE = re.compile(r"\{\{\s*([#/])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
+MUSTACHE_RE = re.compile(r"\[\s*(/?)\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\]")
 
 # Containers eligible to auto-detect a loop (opt-in only).
 LOOP_CONTAINER_TAGS = {"tbody", "ul", "ol", "table", "section", "div"}
@@ -405,7 +405,7 @@ def rewrite_vars_in_subtree(
 
 
 # ---------------------------------------------------------------------------
-# Mustache loop processing ({{#name}} ... {{/name}})
+# Loop processing ([name] ... [/name])
 # ---------------------------------------------------------------------------
 
 def _collect_mustache_tokens(soup) -> list[dict]:
@@ -426,18 +426,18 @@ def _collect_mustache_tokens(soup) -> list[dict]:
 
 
 def _find_innermost_pair(soup) -> Optional[tuple[dict, dict]]:
-    """Return (opener, closer) for an innermost Mustache section.
+    """Return (opener, closer) for an innermost loop section.
 
     An innermost section is an opener with a matching closer where no other
     opener appears between them (in DOM-order token stream).
     """
     tokens = _collect_mustache_tokens(soup)
     for i, t in enumerate(tokens):
-        if t["kind"] != "#":
+        if t["kind"] != "":
             continue
         for j in range(i + 1, len(tokens)):
             tj = tokens[j]
-            if tj["kind"] == "#":
+            if tj["kind"] == "":
                 break
             if tj["kind"] == "/" and tj["name"] == t["name"]:
                 return (t, tj)
@@ -530,10 +530,10 @@ def _process_mustache_pair(
                 loop_name=name,
             )
 
-    # Body text inside the opener's text node (after the `{{#name}}` token) and
-    # inside the closer's text node (before the `{{/name}}` token) is part of
+    # Body text inside the opener's text node (after the `[name]` token) and
+    # inside the closer's text node (before the `[/name]` token) is part of
     # the loop body and must be rewritten with the iterator prefix. This is
-    # common in real templates (e.g. `{{#vehicles}} {{year}} {{make}} ...`).
+    # common in real templates (e.g. `[vehicles] {{year}} {{make}} ...`).
     op_s = str(op_node)
     op_before = op_s[: opener["start"]]
     op_tail = op_s[opener["end"]:]
@@ -599,7 +599,7 @@ def _loop_entry(name, iterator, container, fields, detection) -> dict:
 
 
 def process_all_mustache_loops(soup, mapping: Mapping):
-    """Convert all {{#name}}...{{/name}} pairs, innermost first."""
+    """Convert all [name]...[/name] pairs, innermost first."""
     # Safety cap so a malformed template can't spin forever.
     for _ in range(1000):
         pair = _find_innermost_pair(soup)
@@ -800,11 +800,11 @@ def build_sanity_report(raw_html: str, soup: BeautifulSoup, source_name: str) ->
 
     # --- DOM-based checks on the original soup ------------------------------
 
-    # (a) Mustache sections with body containing <li> but no <ul>/<ol> ancestor
+    # (a) Loop sections with body containing <li> but no <ul>/<ol> ancestor
     tokens = _collect_mustache_tokens(soup)
-    openers = {(t["name"], id(t["node"])): t for t in tokens if t["kind"] == "#"}
+    openers = {(t["name"], id(t["node"])): t for t in tokens if t["kind"] == ""}
     for t in tokens:
-        if t["kind"] != "#":
+        if t["kind"] != "":
             continue
         parent = t["node"].parent
         # Find the closer with same name in same parent
@@ -842,7 +842,7 @@ def build_sanity_report(raw_html: str, soup: BeautifulSoup, source_name: str) ->
                 report.add(
                     category="Structural",
                     message=(
-                        f"Loop `{{{{#{t['name']}}}}}` body contains `<li>` but has no "
+                        f"Loop `[{t['name']}]` body contains `<li>` but has no "
                         "`<ul>`/`<ol>` ancestor; it will render as loose list items."
                     ),
                     line=line_of(t["node"]) or line_of(parent),
@@ -917,12 +917,12 @@ def build_sanity_report(raw_html: str, soup: BeautifulSoup, source_name: str) ->
     # (d) Cross-scope variable name reuse (same var name used in multiple Mustache
     #     loops). Informational, since Mustache semantics make this legal.
     loop_scopes: dict[str, set[str]] = {}
-    # Walk Mustache sections and record inner variables per loop
+    # Walk loop sections and record inner variables per loop
     pair_tokens = _collect_mustache_tokens(soup)
     # Pair up via stack
     stack: list[dict] = []
     for tok in pair_tokens:
-        if tok["kind"] == "#":
+        if tok["kind"] == "":
             stack.append(tok)
         elif tok["kind"] == "/":
             # Pop the matching opener
@@ -963,13 +963,13 @@ def build_sanity_report(raw_html: str, soup: BeautifulSoup, source_name: str) ->
                     severity="info",
                 )
 
-    # (e) Unmatched Mustache tokens (opener without closer or vice versa)
-    openers_list = [t for t in _collect_mustache_tokens(soup) if t["kind"] == "#"]
+    # (e) Unmatched loop tokens (opener without closer or vice versa)
+    openers_list = [t for t in _collect_mustache_tokens(soup) if t["kind"] == ""]
     closers_list = [t for t in _collect_mustache_tokens(soup) if t["kind"] == "/"]
     unmatched_openers = []
     stack2: list[dict] = []
     for t in _collect_mustache_tokens(soup):
-        if t["kind"] == "#":
+        if t["kind"] == "":
             stack2.append(t)
         else:
             for i in range(len(stack2) - 1, -1, -1):
@@ -978,15 +978,15 @@ def build_sanity_report(raw_html: str, soup: BeautifulSoup, source_name: str) ->
                     break
             else:
                 report.add(
-                    category="Unmatched Mustache tokens",
-                    message=f"`{{{{/{t['name']}}}}}` has no matching opener.",
+                    category="Unmatched loop tokens",
+                    message=f"`[/{t['name']}]` has no matching opener.",
                     line=line_of(t["node"]),
                     severity="error",
                 )
     for t in stack2:
         report.add(
-            category="Unmatched Mustache tokens",
-            message=f"`{{{{#{t['name']}}}}}` has no matching closer.",
+            category="Unmatched loop tokens",
+            message=f"`[{t['name']}]` has no matching closer.",
             line=line_of(t["node"]),
             severity="error",
         )

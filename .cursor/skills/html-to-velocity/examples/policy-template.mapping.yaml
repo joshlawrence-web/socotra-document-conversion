@@ -249,7 +249,7 @@ loops:
     context:
       parent_tag: li
       line: 102
-      nearest_label: '{{#named_insureds}}'
+      nearest_label: '[named_insureds]'
     data_source: ''
   - name: last_name
     placeholder: $named_insured.TBD_last_name
@@ -257,7 +257,7 @@ loops:
     context:
       parent_tag: li
       line: 102
-      nearest_label: '{{#named_insureds}}'
+      nearest_label: '[named_insureds]'
     data_source: ''
 - name: drivers
   placeholder: $TBD_drivers
@@ -275,7 +275,7 @@ loops:
     context:
       parent_tag: li
       line: 143
-      nearest_label: '{{#drivers}}'
+      nearest_label: '[drivers]'
     data_source: ''
   - name: last_name
     placeholder: $driver.TBD_last_name
@@ -283,7 +283,7 @@ loops:
     context:
       parent_tag: li
       line: 143
-      nearest_label: '{{#drivers}}'
+      nearest_label: '[drivers]'
     data_source: ''
   - name: date_of_birth
     placeholder: $driver.TBD_date_of_birth
@@ -291,7 +291,7 @@ loops:
     context:
       parent_tag: li
       line: 143
-      nearest_label: '{{#drivers}}'
+      nearest_label: '[drivers]'
     data_source: ''
   - name: marital_status
     placeholder: $driver.TBD_marital_status
@@ -299,7 +299,7 @@ loops:
     context:
       parent_tag: li
       line: 143
-      nearest_label: '{{#drivers}}'
+      nearest_label: '[drivers]'
     data_source: ''
   - name: license_state
     placeholder: $driver.TBD_license_state
@@ -307,7 +307,7 @@ loops:
     context:
       parent_tag: li
       line: 143
-      nearest_label: '{{#drivers}}'
+      nearest_label: '[drivers]'
     data_source: ''
   - name: license_number
     placeholder: $driver.TBD_license_number
@@ -315,7 +315,7 @@ loops:
     context:
       parent_tag: li
       line: 143
-      nearest_label: '{{#drivers}}'
+      nearest_label: '[drivers]'
     data_source: ''
   - name: relationship
     placeholder: $driver.TBD_relationship
@@ -323,7 +323,7 @@ loops:
     context:
       parent_tag: li
       line: 143
-      nearest_label: '{{#drivers}}'
+      nearest_label: '[drivers]'
     data_source: ''
   - name: principal_vehicle_year
     placeholder: $driver.TBD_principal_vehicle_year
@@ -331,7 +331,7 @@ loops:
     context:
       parent_tag: li
       line: 143
-      nearest_label: '{{#drivers}}'
+      nearest_label: '[drivers]'
     data_source: ''
   - name: principal_vehicle_make
     placeholder: $driver.TBD_principal_vehicle_make
@@ -339,7 +339,7 @@ loops:
     context:
       parent_tag: li
       line: 143
-      nearest_label: '{{#drivers}}'
+      nearest_label: '[drivers]'
     data_source: ''
   - name: principal_vehicle_model
     placeholder: $driver.TBD_principal_vehicle_model
@@ -347,7 +347,7 @@ loops:
     context:
       parent_tag: li
       line: 143
-      nearest_label: '{{#drivers}}'
+      nearest_label: '[drivers]'
     data_source: ''
   - name: education_level
     placeholder: $driver.TBD_education_level
@@ -355,7 +355,7 @@ loops:
     context:
       parent_tag: li
       line: 143
-      nearest_label: '{{#drivers}}'
+      nearest_label: '[drivers]'
     data_source: ''
 - name: driver_filings
   placeholder: $TBD_driver_filings
@@ -422,7 +422,7 @@ loops:
     context:
       parent_tag: td
       line: 190
-      nearest_label: '{{#general_coverages}}'
+      nearest_label: '[general_coverages]'
       column_header: General policy coverage
     data_source: ''
   - name: limits
@@ -431,7 +431,7 @@ loops:
     context:
       parent_tag: td
       line: 193
-      nearest_label: '{{#general_coverages}}'
+      nearest_label: '[general_coverages]'
       column_header: limits
     data_source: ''
   - name: limits_detail
@@ -440,7 +440,7 @@ loops:
     context:
       parent_tag: td
       line: 193
-      nearest_label: '{{#general_coverages}}'
+      nearest_label: '[general_coverages]'
       column_header: limits
     data_source: ''
   - name: deductible
@@ -449,7 +449,7 @@ loops:
     context:
       parent_tag: td
       line: 197
-      nearest_label: '{{#general_coverages}}'
+      nearest_label: '[general_coverages]'
       column_header: deductible
     data_source: ''
   - name: premium
@@ -458,7 +458,7 @@ loops:
     context:
       parent_tag: td
       line: 200
-      nearest_label: '{{#general_coverages}}'
+      nearest_label: '[general_coverages]'
       column_header: premium
     data_source: ''
 - name: coverages
@@ -477,7 +477,7 @@ loops:
     context:
       parent_tag: td
       line: 227
-      nearest_label: '{{#coverages}}'
+      nearest_label: '[coverages]'
       column_header: Vehicle coverage
     data_source: ''
   - name: limits
@@ -486,7 +486,7 @@ loops:
     context:
       parent_tag: td
       line: 230
-      nearest_label: '{{#coverages}}'
+      nearest_label: '[coverages]'
       column_header: limits
     data_source: ''
   - name: limits_detail
@@ -495,7 +495,7 @@ loops:
     context:
       parent_tag: td
       line: 230
-      nearest_label: '{{#coverages}}'
+      nearest_label: '[coverages]'
       column_header: limits
     data_source: ''
   - name: deductible
@@ -504,7 +504,7 @@ loops:
     context:
       parent_tag: td
       line: 234
-      nearest_label: '{{#coverages}}'
+      nearest_label: '[coverages]'
       column_header: deductible
     data_source: ''
   - name: premium
@@ -513,7 +513,7 @@ loops:
     context:
       parent_tag: td
       line: 237
-      nearest_label: '{{#coverages}}'
+      nearest_label: '[coverages]'
       column_header: premium
     data_source: ''
 - name: vehicles
@@ -598,7 +598,7 @@ loops:
     context:
       parent_tag: span
       line: 257
-      nearest_label: '{{#discount_drivers}}'
+      nearest_label: '[discount_drivers]'
     data_source: ''
   - name: last_name
     placeholder: $discount_driver.TBD_last_name
@@ -606,7 +606,7 @@ loops:
     context:
       parent_tag: span
       line: 257
-      nearest_label: '{{#discount_drivers}}'
+      nearest_label: '[discount_drivers]'
     data_source: ''
 - name: discount_vehicles
   placeholder: $TBD_discount_vehicles
@@ -624,7 +624,7 @@ loops:
     context:
       parent_tag: span
       line: 266
-      nearest_label: '{{#discount_vehicles}}'
+      nearest_label: '[discount_vehicles]'
     data_source: ''
   - name: make
     placeholder: $discount_vehicle.TBD_make
@@ -632,7 +632,7 @@ loops:
     context:
       parent_tag: span
       line: 267
-      nearest_label: '{{#discount_vehicles}}'
+      nearest_label: '[discount_vehicles]'
     data_source: ''
   - name: model
     placeholder: $discount_vehicle.TBD_model
@@ -640,7 +640,7 @@ loops:
     context:
       parent_tag: span
       line: 268
-      nearest_label: '{{#discount_vehicles}}'
+      nearest_label: '[discount_vehicles]'
     data_source: ''
 - name: lienholders
   placeholder: $TBD_lienholders
@@ -658,7 +658,7 @@ loops:
     context:
       parent_tag: span
       line: 295
-      nearest_label: '{{#lienholders}}'
+      nearest_label: '[lienholders]'
     data_source: ''
   - name: vehicle_make
     placeholder: $lienholder.TBD_vehicle_make
@@ -666,7 +666,7 @@ loops:
     context:
       parent_tag: span
       line: 295
-      nearest_label: '{{#lienholders}}'
+      nearest_label: '[lienholders]'
     data_source: ''
   - name: vehicle_model
     placeholder: $lienholder.TBD_vehicle_model
@@ -674,7 +674,7 @@ loops:
     context:
       parent_tag: span
       line: 295
-      nearest_label: '{{#lienholders}}'
+      nearest_label: '[lienholders]'
     data_source: ''
   - name: lienholder_name
     placeholder: $lienholder.TBD_lienholder_name
@@ -682,7 +682,7 @@ loops:
     context:
       parent_tag: span
       line: 302
-      nearest_label: '{{#lienholders}}'
+      nearest_label: '[lienholders]'
     data_source: ''
   - name: lienholder_address
     placeholder: $lienholder.TBD_lienholder_address
@@ -690,7 +690,7 @@ loops:
     context:
       parent_tag: span
       line: 305
-      nearest_label: '{{#lienholders}}'
+      nearest_label: '[lienholders]'
     data_source: ''
   - name: lienholder_city
     placeholder: $lienholder.TBD_lienholder_city
@@ -722,5 +722,5 @@ loops:
     context:
       parent_tag: span
       line: 319
-      nearest_label: '{{#lienholders}}'
+      nearest_label: '[lienholders]'
     data_source: ''

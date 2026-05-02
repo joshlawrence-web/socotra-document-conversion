@@ -1,0 +1,319 @@
+# Policy-summary.suggested.yaml
+# Suggested mapping — review and confirm each data_source before running the
+# substitution step. Edit any data_source value, then save as policy-template.mapping.yaml.
+
+schema_version: '1.1'
+run_id: d6470e71-9293-414b-a41f-697347b4b448
+mode: terse
+generated_at: '2026-05-02T12:03:06Z'
+input_mapping_sha256: 441c182286c5cad5898e34e18f1f7b886febf05796e204ff17338721ba94fb39
+input_registry_sha256: c4f3dbf3f05e8e8b23c7d31b8f48afd9a9ba612ef054de574ab1c85865edc22c
+registry_schema_version: '1.1'
+registry_generated_at: '2026-04-26T09:00:01.657127+00:00'
+registry_config_dir: /Users/joshualawrence/Projects/Cursor/Experiments/VelocityConverter1stLeg/socotra-config
+registry_source_config_sha256: 79f8ffedc7298f7e039dc5d6d25f6148f56f8147195c8d998115d4148936b56d
+live_source_config_sha256: null
+registry_config_verified: false
+registry_config_check: skipped_no_config_dir
+input_mapping_version: '1.0'
+input_registry_version: '1.1'
+source: Policy-summary.html
+path_registry: ../../../registry/path-registry.yaml
+product: ItemCare
+tooling:
+  mapping_suggester:
+    version: leg2_fill_mapping.py
+    ruleset_id: generic_registry_v2
+variables:
+- name: contractId
+  placeholder: $TBD_contractId
+  type: variable
+  context:
+    parent_tag: p
+    line: 10
+    nearest_label: Contract Reference
+  data_source: $data.data.contractId
+  confidence: high
+  reasoning: 'exact match: contractId → $data.data.contractId'
+- name: policyNumber
+  placeholder: $TBD_policyNumber
+  type: variable
+  context:
+    parent_tag: p
+    line: 11
+    nearest_label: Policy Number
+  data_source: $data.policyNumber
+  confidence: high
+  reasoning: 'exact match: policyNumber → $data.policyNumber'
+- name: productName
+  placeholder: $TBD_productName
+  type: variable
+  context:
+    parent_tag: p
+    line: 12
+    nearest_label: Product
+  data_source: $data.productName
+  confidence: high
+  reasoning: 'exact match: productName → $data.productName'
+- name: policyStartTime
+  placeholder: $TBD_policyStartTime
+  type: variable
+  context:
+    parent_tag: p
+    line: 13
+    nearest_label: Policy Start
+  data_source: $data.policyStartTime
+  confidence: high
+  reasoning: 'exact match: policyStartTime → $data.policyStartTime'
+- name: policyEndTime
+  placeholder: $TBD_policyEndTime
+  type: variable
+  context:
+    parent_tag: p
+    line: 14
+    nearest_label: Policy End
+  data_source: $data.policyEndTime
+  confidence: high
+  reasoning: 'exact match: policyEndTime → $data.policyEndTime'
+- name: channelCode
+  placeholder: $TBD_channelCode
+  type: variable
+  context:
+    parent_tag: p
+    line: 15
+    nearest_label: Channel
+  data_source: $data.data.channelCode
+  confidence: high
+  reasoning: 'exact match: channelCode → $data.data.channelCode'
+- name: paymentMethodCode
+  placeholder: $TBD_paymentMethodCode
+  type: variable
+  context:
+    parent_tag: p
+    line: 16
+    nearest_label: Payment Method
+  data_source: $data.data.paymentMethodCode
+  confidence: high
+  reasoning: 'exact match: paymentMethodCode → $data.data.paymentMethodCode'
+- name: coolingOffPeriod
+  placeholder: $TBD_coolingOffPeriod
+  type: variable
+  context:
+    parent_tag: p
+    line: 17
+    nearest_label: Cooling-Off Period
+  data_source: $data.data.coolingOffPeriod
+  confidence: high
+  reasoning: 'exact match: coolingOffPeriod → $data.data.coolingOffPeriod'
+- name: accountName
+  placeholder: $TBD_accountName
+  type: variable
+  context:
+    parent_tag: p
+    line: 20
+    nearest_label: Name
+  data_source: ''
+  confidence: low
+  reasoning: 'no registry match for accountName — next-action: supply-from-plugin'
+- name: accountEmail
+  placeholder: $TBD_accountEmail
+  type: variable
+  context:
+    parent_tag: p
+    line: 21
+    nearest_label: Email
+  data_source: $data.account.data.email
+  confidence: high
+  reasoning: 'exact label match: "Email" → display_name "Email" → $data.account.data.email'
+- name: totalPremium
+  placeholder: $TBD_totalPremium
+  type: variable
+  context:
+    parent_tag: p
+    line: 24
+    nearest_label: Premium
+  data_source: ''
+  confidence: low
+  reasoning: 'registry candidate `$item.Accessories.data.premium` requires scope `#foreach ($item in $data.items)` but no
+    loop signal in Leg 1 output — next-action: restructure-template'
+- name: totalTax
+  placeholder: $TBD_totalTax
+  type: variable
+  context:
+    parent_tag: p
+    line: 25
+    nearest_label: Tax
+  data_source: ''
+  confidence: low
+  reasoning: 'no registry match for totalTax — next-action: supply-from-plugin'
+loops:
+- name: items
+  placeholder: $TBD_items
+  iterator: $item
+  detection: mustache
+  context:
+    nearest_heading: Covered Items
+    line: 40
+    container: tbody
+  data_source: $data.items
+  fields:
+  - name: manufacturerBrandCode
+    placeholder: $item.TBD_manufacturerBrandCode
+    type: loop_field
+    context:
+      parent_tag: td
+      line: 43
+      nearest_label: '[items]'
+      column_header: Brand
+      loop: items
+    data_source: $item.data.manufacturerBrandCode
+    confidence: high
+    reasoning: manufacturerBrandCode → $item.data.manufacturerBrandCode (Item exposure)
+  - name: goodsCategoryCode
+    placeholder: $item.TBD_goodsCategoryCode
+    type: loop_field
+    context:
+      parent_tag: td
+      line: 44
+      nearest_label: '[items]'
+      column_header: Category
+      loop: items
+    data_source: $item.data.goodsCategoryCode
+    confidence: high
+    reasoning: goodsCategoryCode → $item.data.goodsCategoryCode (Item exposure)
+  - name: itemTypeCode
+    placeholder: $item.TBD_itemTypeCode
+    type: loop_field
+    context:
+      parent_tag: td
+      line: 45
+      nearest_label: '[items]'
+      column_header: Item Type
+      loop: items
+    data_source: $item.data.itemTypeCode
+    confidence: high
+    reasoning: itemTypeCode → $item.data.itemTypeCode (Item exposure)
+  - name: purchaseDate
+    placeholder: $item.TBD_purchaseDate
+    type: loop_field
+    context:
+      parent_tag: td
+      line: 46
+      nearest_label: '[items]'
+      column_header: Purchase Date
+      loop: items
+    data_source: $item.data.purchaseDate
+    confidence: high
+    reasoning: purchaseDate → $item.data.purchaseDate (Item exposure)
+  - name: purchasePrice
+    placeholder: $item.TBD_purchasePrice
+    type: loop_field
+    context:
+      parent_tag: td
+      line: 47
+      nearest_label: '[items]'
+      column_header: Purchase Price
+      loop: items
+    data_source: $item.data.purchasePrice
+    confidence: high
+    reasoning: purchasePrice → $item.data.purchasePrice (Item exposure)
+  - name: levelOfCoverCategoryCode
+    placeholder: $item.TBD_levelOfCoverCategoryCode
+    type: loop_field
+    context:
+      parent_tag: td
+      line: 48
+      nearest_label: '[items]'
+      column_header: Cover Level
+      loop: items
+    data_source: $item.data.levelOfCoverCategoryCode
+    confidence: high
+    reasoning: levelOfCoverCategoryCode → $item.data.levelOfCoverCategoryCode (Item exposure)
+  - name: maxClaimAmount
+    placeholder: $item.TBD_maxClaimAmount
+    type: loop_field
+    context:
+      parent_tag: td
+      line: 49
+      nearest_label: '[items]'
+      column_header: Max Claim
+      loop: items
+    data_source: $item.data.maxClaimAmount
+    confidence: high
+    reasoning: maxClaimAmount → $item.data.maxClaimAmount (Item exposure)
+  confidence: high
+  reasoning: loop `items` → iterable `Item` → $data.items
+  type: loop
+  foreach: '#foreach ($item in $data.items)'
+  available_coverages:
+  - name: Accessories
+    velocity: $item.Accessories
+    quantifier: '?'
+    cardinality: zero_or_one
+  - name: AccidentalDamage
+    velocity: $item.AccidentalDamage
+    quantifier: '?'
+    cardinality: zero_or_one
+  - name: Breakdown
+    velocity: $item.Breakdown
+    quantifier: '?'
+    cardinality: zero_or_one
+  - name: Loss
+    velocity: $item.Loss
+    quantifier: '?'
+    cardinality: zero_or_one
+  - name: RepeatFaultThree
+    velocity: $item.RepeatFaultThree
+    quantifier: '?'
+    cardinality: zero_or_one
+  - name: Replacement
+    velocity: $item.Replacement
+    quantifier: '?'
+    cardinality: zero_or_one
+  - name: ReplacementRepair
+    velocity: $item.ReplacementRepair
+    quantifier: '?'
+    cardinality: zero_or_one
+  - name: ReplacementWO
+    velocity: $item.ReplacementWO
+    quantifier: '?'
+    cardinality: zero_or_one
+  - name: Theft
+    velocity: $item.Theft
+    quantifier: '?'
+    cardinality: zero_or_one
+- name: coverExclusions
+  placeholder: $TBD_coverExclusions
+  iterator: $coverExclusion
+  detection: mustache
+  context:
+    nearest_heading: Cover Exclusions
+    line: 56
+    container: ul
+  data_source: ''
+  fields:
+  - name: code
+    placeholder: $coverExclusion.TBD_code
+    type: loop_field
+    context:
+      parent_tag: li
+      line: 58
+      nearest_label: '[coverExclusions]'
+      loop: coverExclusions
+    data_source: ''
+    confidence: low
+    reasoning: 'iterator `coverExclusion` not mapped to any iterable — next-action: supply-from-plugin'
+  - name: description
+    placeholder: $coverExclusion.TBD_description
+    type: loop_field
+    context:
+      parent_tag: li
+      line: 58
+      nearest_label: '[coverExclusions]'
+      loop: coverExclusions
+    data_source: ''
+    confidence: low
+    reasoning: 'iterator `coverExclusion` not mapped to any iterable — next-action: supply-from-plugin'
+  confidence: low
+  reasoning: 'loop `coverExclusions` has no matching iterable in registry — next-action: supply-from-plugin'
+  type: loop

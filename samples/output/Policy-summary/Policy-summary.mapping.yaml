@@ -1,0 +1,209 @@
+schema_version: '1.0'
+source: Policy-summary.html
+generated_at: '2026-05-02T12:03:05+00:00'
+variables:
+- name: contractId
+  placeholder: $TBD_contractId
+  type: variable
+  context:
+    parent_tag: p
+    line: 10
+    nearest_label: Contract Reference
+  data_source: ''
+- name: policyNumber
+  placeholder: $TBD_policyNumber
+  type: variable
+  context:
+    parent_tag: p
+    line: 11
+    nearest_label: Policy Number
+  data_source: ''
+- name: productName
+  placeholder: $TBD_productName
+  type: variable
+  context:
+    parent_tag: p
+    line: 12
+    nearest_label: Product
+  data_source: ''
+- name: policyStartTime
+  placeholder: $TBD_policyStartTime
+  type: variable
+  context:
+    parent_tag: p
+    line: 13
+    nearest_label: Policy Start
+  data_source: ''
+- name: policyEndTime
+  placeholder: $TBD_policyEndTime
+  type: variable
+  context:
+    parent_tag: p
+    line: 14
+    nearest_label: Policy End
+  data_source: ''
+- name: channelCode
+  placeholder: $TBD_channelCode
+  type: variable
+  context:
+    parent_tag: p
+    line: 15
+    nearest_label: Channel
+  data_source: ''
+- name: paymentMethodCode
+  placeholder: $TBD_paymentMethodCode
+  type: variable
+  context:
+    parent_tag: p
+    line: 16
+    nearest_label: Payment Method
+  data_source: ''
+- name: coolingOffPeriod
+  placeholder: $TBD_coolingOffPeriod
+  type: variable
+  context:
+    parent_tag: p
+    line: 17
+    nearest_label: Cooling-Off Period
+  data_source: ''
+- name: accountName
+  placeholder: $TBD_accountName
+  type: variable
+  context:
+    parent_tag: p
+    line: 20
+    nearest_label: Name
+  data_source: ''
+- name: accountEmail
+  placeholder: $TBD_accountEmail
+  type: variable
+  context:
+    parent_tag: p
+    line: 21
+    nearest_label: Email
+  data_source: ''
+- name: totalPremium
+  placeholder: $TBD_totalPremium
+  type: variable
+  context:
+    parent_tag: p
+    line: 24
+    nearest_label: Premium
+  data_source: ''
+- name: totalTax
+  placeholder: $TBD_totalTax
+  type: variable
+  context:
+    parent_tag: p
+    line: 25
+    nearest_label: Tax
+  data_source: ''
+loops:
+- name: items
+  placeholder: $TBD_items
+  iterator: $item
+  detection: mustache
+  context:
+    nearest_heading: Covered Items
+    line: 40
+    container: tbody
+  data_source: ''
+  fields:
+  - name: manufacturerBrandCode
+    placeholder: $item.TBD_manufacturerBrandCode
+    type: loop_field
+    context:
+      parent_tag: td
+      line: 43
+      nearest_label: '[items]'
+      column_header: Brand
+      loop: items
+    data_source: ''
+  - name: goodsCategoryCode
+    placeholder: $item.TBD_goodsCategoryCode
+    type: loop_field
+    context:
+      parent_tag: td
+      line: 44
+      nearest_label: '[items]'
+      column_header: Category
+      loop: items
+    data_source: ''
+  - name: itemTypeCode
+    placeholder: $item.TBD_itemTypeCode
+    type: loop_field
+    context:
+      parent_tag: td
+      line: 45
+      nearest_label: '[items]'
+      column_header: Item Type
+      loop: items
+    data_source: ''
+  - name: purchaseDate
+    placeholder: $item.TBD_purchaseDate
+    type: loop_field
+    context:
+      parent_tag: td
+      line: 46
+      nearest_label: '[items]'
+      column_header: Purchase Date
+      loop: items
+    data_source: ''
+  - name: purchasePrice
+    placeholder: $item.TBD_purchasePrice
+    type: loop_field
+    context:
+      parent_tag: td
+      line: 47
+      nearest_label: '[items]'
+      column_header: Purchase Price
+      loop: items
+    data_source: ''
+  - name: levelOfCoverCategoryCode
+    placeholder: $item.TBD_levelOfCoverCategoryCode
+    type: loop_field
+    context:
+      parent_tag: td
+      line: 48
+      nearest_label: '[items]'
+      column_header: Cover Level
+      loop: items
+    data_source: ''
+  - name: maxClaimAmount
+    placeholder: $item.TBD_maxClaimAmount
+    type: loop_field
+    context:
+      parent_tag: td
+      line: 49
+      nearest_label: '[items]'
+      column_header: Max Claim
+      loop: items
+    data_source: ''
+- name: coverExclusions
+  placeholder: $TBD_coverExclusions
+  iterator: $coverExclusion
+  detection: mustache
+  context:
+    nearest_heading: Cover Exclusions
+    line: 56
+    container: ul
+  data_source: ''
+  fields:
+  - name: code
+    placeholder: $coverExclusion.TBD_code
+    type: loop_field
+    context:
+      parent_tag: li
+      line: 58
+      nearest_label: '[coverExclusions]'
+      loop: coverExclusions
+    data_source: ''
+  - name: description
+    placeholder: $coverExclusion.TBD_description
+    type: loop_field
+    context:
+      parent_tag: li
+      line: 58
+      nearest_label: '[coverExclusions]'
+      loop: coverExclusions
+    data_source: ''

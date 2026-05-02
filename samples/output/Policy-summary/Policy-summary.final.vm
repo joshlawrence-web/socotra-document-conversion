@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>ItemCare Policy Summary</title>
+</head>
+<body>
+<h1>ItemCare Policy Summary</h1>
+
+<p><strong>Contract Reference:</strong> $data.data.contractId</p>
+
+
+<p><strong>Policy Number:</strong> $data.policyNumber</p>
+
+
+<p><strong>Product:</strong> $data.productName</p>
+
+
+<p><strong>Policy Start:</strong> $data.policyStartTime</p>
+
+
+<p><strong>Policy End:</strong> $data.policyEndTime</p>
+
+
+<p><strong>Channel:</strong> $data.data.channelCode</p>
+
+
+<p><strong>Payment Method:</strong> $data.data.paymentMethodCode</p>
+
+
+<p><strong>Cooling-Off Period:</strong> $data.data.coolingOffPeriod days</p>
+
+<h2>Policyholder</h2>
+
+<p><strong>Name:</strong> $TBD_accountName</p>
+
+
+<p><strong>Email:</strong> $data.account.data.email</p>
+
+<h2>Charges</h2>
+
+<p><strong>Premium:</strong> $TBD_totalPremium</p>
+
+
+<p><strong>Tax:</strong> $TBD_totalTax</p>
+
+<h2>Covered Items</h2>
+<table>
+<thead>
+<tr>
+<th>Brand</th>
+<th>Category</th>
+<th>Item Type</th>
+<th>Purchase Date</th>
+<th>Purchase Price</th>
+<th>Cover Level</th>
+<th>Max Claim</th>
+</tr>
+</thead>
+<tbody>
+      
+#foreach ($item in $data.items)
+
+      <tr>
+<td>$item.TBD_manufacturerBrandCode</td>
+<td>$item.TBD_goodsCategoryCode</td>
+<td>$item.TBD_itemTypeCode</td>
+<td>$item.TBD_purchaseDate</td>
+<td>$item.TBD_purchasePrice</td>
+<td>$item.TBD_levelOfCoverCategoryCode</td>
+<td>$item.TBD_maxClaimAmount</td>
+</tr>
+      
+#end
+
+    </tbody>
+</table>
+<h2>Cover Exclusions</h2>
+<ul>
+    
+#foreach ($coverExclusion in $TBD_coverExclusions)
+
+    <li>$coverExclusion.TBD_code: $coverExclusion.TBD_description</li>
+    
+#end
+
+  </ul>
+</body>
+</html>

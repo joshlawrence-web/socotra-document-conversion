@@ -111,7 +111,7 @@ fixed set of coverages on the exposure.
 Two Leg 1 keys participate here, and they are **not** equivalent:
 
 - **`context.loop`** — emitted on every loop field (a variable whose
-  template occurrence is inside a detected `{{#name}}...{{/name}}` block
+  template occurrence is inside a detected `[name]...[/name]` block
   or an auto-detected sibling-repetition loop). Value is the loop name as
   it appears in the template. **This key _satisfies_ a `requires_scope`
   step** when its value matches that step's iterable (same `name`,

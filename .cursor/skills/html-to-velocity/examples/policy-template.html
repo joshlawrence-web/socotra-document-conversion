@@ -98,9 +98,9 @@
     <hr class="dotted-line">
     <p>
         </p><h6>Named Insured: {{insured_first_name}} {{insured_last_name}} </h6>
-            {{#named_insureds}}
+            [named_insureds]
             <li>{{first_name}} {{last_name}}</li>
-            {{/named_insureds}}
+            [/named_insureds]
     <p></p>
     <hr class="dotted-line">
         <p>
@@ -139,7 +139,7 @@
     </p>
     <div>
         <ul>
-            {{#drivers}}
+            [drivers]
             <li>{{first_name}} {{last_name}}<br>
             Date of birth: {{date_of_birth}}<br>
             Marital Status: {{marital_status}}<br>
@@ -148,12 +148,12 @@
             Principle Vehicle: {{principal_vehicle_year}} {{principal_vehicle_make}} {{principal_vehicle_model}} <br>
             Education level: {{education_level}}<br><br>
             </li>
-            {{/drivers}}
+            [/drivers]
         </ul>
         <hr class="dotted-line">
     </div>
     <h3>Driver filing</h3>
-    {{#driver_filings}}
+    [driver_filings]
     <p>
         <strong>Name</strong><br>
         <span class="placeholder">
@@ -170,7 +170,7 @@
         <strong>Case number:</strong>
         <span class="placeholder">{{case_number}}</span>
     </p>
-    {{/driver_filings}}
+    [/driver_filings]
     <div>
         <h3>Outline of coverage</h3>
         <p> Your insurance policy and any policy endorsements contain a full explanation of your coverage. The policy limits shown for a vehicle may not be combined with the limits for the same coverage on another vehicle.
@@ -185,7 +185,7 @@
                 </tr>
             </thead>
             <tbody>
-                {{#general_coverages}}
+                [general_coverages]
                 <tr>
                     <td>
                         {{coverage_name}}
@@ -201,14 +201,14 @@
                         {{premium}}
                     </td>
                 </tr>
-                {{/general_coverages}}
+                [/general_coverages]
             </tbody>
         </table>
         <hr class="dotted-line">
     </div>
     <div>
         <h3>Vehicles</h3>
-            {{#vehicles}}
+            [vehicles]
             {{year}} {{make}} {{model}} CC: {{cc}} <br>
             VIN: {{vin}} <br>
                 Garaging Zip Code:  {{garaging_zip}} State: {{garaging_state}} <br>
@@ -222,7 +222,7 @@
                     </tr>
                 </thead>
                  <tbody>
-                    {{#coverages}}
+                    [coverages]
                     <tr>
                         <td>
                             {{coverage_name}}
@@ -238,11 +238,11 @@
                             {{premium}}
                         </td>
                     </tr>
-                    {{/coverages}}
+                    [/coverages]
                 </tbody>
             </table>
             <hr class="dotted-line">
-            {{/vehicles}}
+            [/vehicles]
         <br>
     </div>
     <h3>Premium discounts</h3>
@@ -253,20 +253,20 @@
     <hr class="dotted-line">
     <p>
         <strong>Driver</strong><br>
-        {{#discount_drivers}}
+        [discount_drivers]
         <span class="placeholder">
         {{first_name}} {{last_name}}
         </span>
-        {{/discount_drivers}}
+        [/discount_drivers]
     </p>
     <hr class="dotted-line">
     <p>
         <strong>Vehicle</strong><br>
-        {{#discount_vehicles}}
+        [discount_vehicles]
         <span class="placeholder">{{year}}</span>
         <span class="placeholder">{{make}}</span>
         <span class="placeholder">{{model}}</span>
-        {{/discount_vehicles}}
+        [/discount_vehicles]
     </p>
     <h2>Driving history</h2>
     <p>
@@ -289,7 +289,7 @@
             </tr>
         </thead>
         <tbody>
-            {{#lienholders}}
+            [lienholders]
             <tr>
                 <td>
                 <span class="placeholder">
@@ -321,7 +321,7 @@
                 </span>
                 </td>
             </tr>
-            {{/lienholders}}
+            [/lienholders]
         </tbody>
     </table>
     <div>

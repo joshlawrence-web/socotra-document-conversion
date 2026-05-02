@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>ItemCare Policy Summary</title>
+</head>
+<body>
+<h1>ItemCare Policy Summary</h1>
+
+#if($TBD_contractId)
+<p><strong>Contract Reference:</strong> $TBD_contractId</p>
+#end
+
+
+#if($TBD_policyNumber)
+<p><strong>Policy Number:</strong> $TBD_policyNumber</p>
+#end
+
+
+#if($TBD_productName)
+<p><strong>Product:</strong> $TBD_productName</p>
+#end
+
+
+#if($TBD_policyStartTime)
+<p><strong>Policy Start:</strong> $TBD_policyStartTime</p>
+#end
+
+
+#if($TBD_policyEndTime)
+<p><strong>Policy End:</strong> $TBD_policyEndTime</p>
+#end
+
+
+#if($TBD_channelCode)
+<p><strong>Channel:</strong> $TBD_channelCode</p>
+#end
+
+
+#if($TBD_paymentMethodCode)
+<p><strong>Payment Method:</strong> $TBD_paymentMethodCode</p>
+#end
+
+
+#if($TBD_coolingOffPeriod)
+<p><strong>Cooling-Off Period:</strong> $TBD_coolingOffPeriod days</p>
+#end
+
+<h2>Policyholder</h2>
+
+#if($TBD_accountName)
+<p><strong>Name:</strong> $TBD_accountName</p>
+#end
+
+
+#if($TBD_accountEmail)
+<p><strong>Email:</strong> $TBD_accountEmail</p>
+#end
+
+<h2>Charges</h2>
+
+#if($TBD_totalPremium)
+<p><strong>Premium:</strong> $TBD_totalPremium</p>
+#end
+
+
+#if($TBD_totalTax)
+<p><strong>Tax:</strong> $TBD_totalTax</p>
+#end
+
+<h2>Covered Items</h2>
+<table>
+<thead>
+<tr>
+<th>Brand</th>
+<th>Category</th>
+<th>Item Type</th>
+<th>Purchase Date</th>
+<th>Purchase Price</th>
+<th>Cover Level</th>
+<th>Max Claim</th>
+</tr>
+</thead>
+<tbody>
+      
+#foreach ($item in $TBD_items)
+
+      <tr>
+<td>$item.TBD_manufacturerBrandCode</td>
+<td>$item.TBD_goodsCategoryCode</td>
+<td>$item.TBD_itemTypeCode</td>
+<td>$item.TBD_purchaseDate</td>
+<td>$item.TBD_purchasePrice</td>
+<td>$item.TBD_levelOfCoverCategoryCode</td>
+<td>$item.TBD_maxClaimAmount</td>
+</tr>
+      
+#end
+
+    </tbody>
+</table>
+<h2>Cover Exclusions</h2>
+<ul>
+    
+#foreach ($coverExclusion in $TBD_coverExclusions)
+
+    <li>$coverExclusion.TBD_code: $coverExclusion.TBD_description</li>
+    
+#end
+
+  </ul>
+</body>
+</html>
