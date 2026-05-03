@@ -10,5 +10,8 @@ __pycache__/
 # Pipeline actual/ outputs (test run artefacts, not golden)
 conformance/fixtures/*/actual/
 
+# Generated pipeline output — not source, don't track
+samples/output/
+
 # IDE
 .vscode/

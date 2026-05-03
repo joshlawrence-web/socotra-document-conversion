@@ -125,7 +125,7 @@ def build_foreach_map(suggested: dict, high_only: bool = False) -> dict[str, str
 # Template processor
 # ---------------------------------------------------------------------------
 
-_TBD_TOKEN_RE = re.compile(r"\$TBD_\w+")
+_TBD_TOKEN_RE = re.compile(r"\$(?:\w+\.)?TBD_\w+")
 _GUARD_OPEN_RE = re.compile(r"^\s*#if\(\$TBD_\w+\)\s*$")
 _IF_OR_FOREACH_RE = re.compile(r"^\s*#(if|foreach)\b")
 _END_RE = re.compile(r"^\s*#end\s*$")
@@ -473,6 +473,18 @@ def write_report(
         ]
 
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Public functional API (usable without file I/O, for tests and programmatic use)
+# ---------------------------------------------------------------------------
+
+
+def substitute(suggested: dict, vm_text: str, high_only: bool = False) -> str:
+    """Apply leg-3 substitution in memory and return the final .vm text."""
+    smap = build_substitution_map(suggested, high_only=high_only)
+    foreach_map = build_foreach_map(suggested, high_only=high_only)
+    return process_vm(vm_text, smap, foreach_map)
 
 
 # ---------------------------------------------------------------------------
