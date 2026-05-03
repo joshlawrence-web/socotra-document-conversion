@@ -33,13 +33,101 @@ flowchart LR
 
 **Leg 3** (`leg3_substitute.py`) reads the `.suggested.yaml` and writes the final `.final.vm` template, substituting `$TBD_*` placeholders with confirmed Socotra paths. A `.leg3-report.md` summarises what was resolved and what remains unresolved. Use `high_only=true` to substitute only `confidence: high` suggestions, leaving medium/low tokens as `$TBD_*` for human review.
 
+## Using with Claude Code (recommended)
+
+The easiest way to use this tool is as an **MCP server** for [Claude Code](https://claude.ai/code). You install it once, and after that you just describe what you want in plain English from any project on your machine — no commands to memorize, no need to keep this repo open.
+
+> **New to MCP?** MCP (Model Context Protocol) is how Claude Code gets custom tools. You register a server once, and Claude automatically knows what it can do. Think of it like installing an app — run a setup command once, then forget it's there and just use it.
+
+### Setup (one time per machine)
+
+**1. Clone and install dependencies**
+```bash
+git clone https://github.com/your-org/velocity-converter
+cd velocity-converter
+pip3 install -r requirements.txt
+```
+
+**2. Register with Claude Code**
+```bash
+python3 install.py
+```
+
+This writes one entry to `~/.claude/settings.json` — a file Claude Code reads at startup to discover available tools. You won't need to touch it again.
+
+**3. Restart Claude Code**
+
+Open a fresh Claude Code session. The tools are now available in every project on your machine.
+
+### How to use it
+
+Open Claude Code in **any directory** — your Socotra config repo, a scratch folder, anywhere. Then describe what you want in plain English:
+
+```
+convert templates/claim-form.html
+```
+```
+convert templates/claim-form.html, put output in generated/velocity
+```
+```
+convert templates/claim-form.html, only fill the high confidence fields
+```
+```
+run leg 1 on templates/claim-form.html
+```
+```
+suggest paths for velocity-output/claim-form/claim-form.mapping.yaml
+```
+```
+write the final template for velocity-output/claim-form/claim-form.suggested.yaml
+```
+
+Claude figures out which tool to call. You never need to know the tool names or command syntax.
+
+Paths are relative to whichever directory you have open in Claude Code — not the velocity-converter repo.
+
+### What gets written
+
+Output lands in `velocity-output/<filename>/` by default (you can specify a different location):
+
+| File | What it is |
+|------|-----------|
+| `<stem>.vm` | Template with `$TBD_*` placeholders (Leg 1 output) |
+| `<stem>.mapping.yaml` | Token-to-placeholder mapping |
+| `<stem>.suggested.yaml` | Path suggestions with confidence scores (Leg 2 output) |
+| `<stem>.review.md` | Human-readable confidence breakdown |
+| `<stem>.final.vm` | **The production template** — this is what you ship |
+| `<stem>.leg3-report.md` | What resolved and what still needs manual attention |
+
+Always check `<stem>.leg3-report.md` first. It tells you which tokens were matched and which still need work.
+
+### High-confidence mode
+
+If you say *"only fill the high confidence fields"*, the server substitutes only tokens it's certain about. Anything medium or low confidence stays as `$TBD_*` in the output and gets listed in the report for you to review. Useful when you want to ship a partial template and handle the fuzzy matches later.
+
+### Troubleshooting
+
+**The tools don't appear in Claude Code**
+- Run `python3 install.py` again and confirm it prints a success message
+- Open `~/.claude/settings.json` and check that the file path in `args` actually exists on disk
+- Fully restart Claude Code (not just a new chat)
+
+**"Leg 1 failed" error**
+- The path to your HTML file is wrong — it's relative to the directory you have open in Claude Code, not the velocity-converter repo
+- Run `ls templates/claim-form.html` in your terminal to confirm the file is there
+
+**Output goes somewhere unexpected**
+- Tell Claude explicitly: *"convert X, put output in path/to/dir"*
+
+---
+
 ## Prerequisites
 
 - Python 3.10+
-- `beautifulsoup4` and `pyyaml` (`pip install beautifulsoup4 pyyaml`)
-- [Cursor](https://www.cursor.com/) with agent skills enabled
+- `pip3 install -r requirements.txt` (beautifulsoup4, pyyaml, mcp)
+- [Claude Code](https://claude.ai/code) for MCP usage — or [Cursor](https://www.cursor.com/) for the script-based workflow below
 
-## Quick start
+## Quick start (script-based)
 
 1. **Clone and open in Cursor** — skills auto-register via `.cursor/skills/`.
 
@@ -88,6 +176,8 @@ flowchart LR
 
 | Path | Description |
 |---|---|
+| `mcp_server.py` | MCP server — exposes the pipeline as Claude Code tools |
+| `install.py` | One-time setup script — registers the MCP server with Claude Code |
 | `.cursor/skills/html-to-velocity/` | Leg 1 skill — HTML → Velocity converter |
 | `.cursor/skills/mapping-suggester/` | Leg 2 skill — AI path suggester |
 | `scripts/leg3_substitute.py` | Leg 3 — substitutes confirmed paths into `.final.vm` |
