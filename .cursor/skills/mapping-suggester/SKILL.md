@@ -209,9 +209,9 @@ Run `scripts/leg2_fill_mapping.py` to produce all three output artifacts:
 python3 scripts/leg2_fill_mapping.py \
     --mapping <stem>.mapping.yaml \
     --registry registry/path-registry.yaml \
-    --out Samples/Output/<stem>/<stem>.suggested.yaml \
-    --review-out Samples/Output/<stem>/<stem>.review.md \
-    --telemetry-log Samples/Output/<stem>/<stem>.suggester-log.jsonl \
+    --out samples/output/<stem>/<stem>.suggested.yaml \
+    --review-out samples/output/<stem>/<stem>.review.md \
+    --telemetry-log samples/output/<stem>/<stem>.suggester-log.jsonl \
     --mode <mode> \
     [--terminology terminology.yaml] \
     [--base-suggested <prior.suggested.yaml>]
@@ -265,9 +265,9 @@ new `observed` rows for unmatched patterns.  Never flip `status`, author
 ### Step 4 — Print the terminal summary
 
 ```
-Suggested mapping written: Samples/Output/<stem>/<stem>.suggested.yaml
-Review report written:     Samples/Output/<stem>/<stem>.review.md
-Telemetry appended:        Samples/Output/<stem>/<stem>.suggester-log.jsonl (run_id <uuid>)
+Suggested mapping written: samples/output/<stem>/<stem>.suggested.yaml
+Review report written:     samples/output/<stem>/<stem>.review.md
+Telemetry appended:        samples/output/<stem>/<stem>.suggester-log.jsonl (run_id <uuid>)
 Lessons updated:           skill-lessons.yaml (<N> bumped, <M> new) | (absent — skipped)
 Terminology layer:         terminology.yaml (tenant <tenant>, <S> synonyms, <T> matched) | (absent — skipped)
 
@@ -278,7 +278,7 @@ Blockers requiring review: <count>
 Assumptions to confirm:    <count>
 Scope violations:          <count>
 
->>> Open Samples/Output/<stem>/<stem>.review.md to resolve the blockers before running Leg 3. <<<
+>>> Open samples/output/<stem>/<stem>.review.md to resolve the blockers before running Leg 3. <<<
 ```
 
 Counts come from the script-generated review.md Summary table.
@@ -361,7 +361,7 @@ definitions, Step 4d write procedure): see
 ## File output location
 
 Save all three output files (`<stem>.suggested.yaml`, `<stem>.review.md`,
-`<stem>.suggester-log.jsonl`) inside `Samples/Output/<stem>/` — the same
+`<stem>.suggester-log.jsonl`) inside `samples/output/<stem>/` — the same
 per-document subfolder that Leg 1 created. Create the subfolder if absent
 (Leg 1 normally creates it, but Leg 2 must handle the case where it was
 deleted or skipped). If the user has a different project output folder
@@ -373,9 +373,9 @@ confirm with the user.
 ## After output
 
 Tell the user:
-1. The paths to `Samples/Output/<stem>/<stem>.suggested.yaml`,
-   `Samples/Output/<stem>/<stem>.review.md`, and
-   `Samples/Output/<stem>/<stem>.suggester-log.jsonl` (plus the `run_id`
+1. The paths to `samples/output/<stem>/<stem>.suggested.yaml`,
+   `samples/output/<stem>/<stem>.review.md`, and
+   `samples/output/<stem>/<stem>.suggester-log.jsonl` (plus the `run_id`
    of this run — useful if they want to `grep` the log for just this
    invocation).
 2. How many were high / medium / low confidence.

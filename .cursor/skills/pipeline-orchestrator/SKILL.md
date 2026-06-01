@@ -21,7 +21,7 @@ python3 scripts/agent.py --yes "RUN_PIPELINE <operation> [key=value ...]"
 ```
 
 The agent enforces the `RUN_PIPELINE` gate, shows a preflight summary, requires
-`PROCEED` confirmation, and dispatches to Leg 1 / Leg 2.
+`PROCEED` confirmation, and dispatches to Leg 1 / Leg 2 / Leg 3.
 
 ---
 
@@ -29,16 +29,19 @@ The agent enforces the `RUN_PIPELINE` gate, shows a preflight summary, requires
 
 ```bash
 # Leg 1 only
-python3 scripts/agent.py "RUN_PIPELINE leg1 input=samples/input/claim-form.html output=samples/output"
+python3 scripts/agent.py "RUN_PIPELINE leg1 input=samples/input/Simple-form.html output=samples/output"
 
 # Leg 2 only
-python3 scripts/agent.py "RUN_PIPELINE leg2 mode=terse mapping=samples/output/claim-form/claim-form.mapping.yaml"
+python3 scripts/agent.py "RUN_PIPELINE leg2 mode=terse mapping=samples/output/Simple-form/Simple-form.mapping.yaml"
 
-# End-to-end (mode defaults to terse)
-python3 scripts/agent.py "RUN_PIPELINE leg1+leg2 input=samples/input/claim-form.html"
+# End-to-end Leg 1 + Leg 2 (mode defaults to terse)
+python3 scripts/agent.py "RUN_PIPELINE leg1+leg2 input=samples/input/Simple-form.html registry=registry/path-registry.yaml output=samples/output"
+
+# Full pipeline through Leg 3
+python3 scripts/agent.py "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml output=samples/output"
 
 # Batch Leg 2
-python3 scripts/agent.py "RUN_PIPELINE leg2 mode=batch mapping=[samples/output/a/a.mapping.yaml, samples/output/b/b.mapping.yaml]"
+python3 scripts/agent.py "RUN_PIPELINE leg2 mode=batch mapping=[samples/output/Simple-form/Simple-form.mapping.yaml, samples/output/Additional-form/Additional-form.mapping.yaml]"
 ```
 
 ---
@@ -51,12 +54,14 @@ RUN_PIPELINE <operation> [key=value ...]
 
 | Key | Required for | Default |
 |---|---|---|
-| `input` | leg1, leg1+leg2 | — |
-| `mode` | leg2, leg1+leg2 | `terse` for leg1+leg2 |
+| `input` | leg1, leg1+leg2, leg1+leg2+leg3 | — |
+| `mode` | leg2, leg1+leg2, leg1+leg2+leg3 | `terse` for leg1+leg2 / leg1+leg2+leg3 |
 | `mapping` | leg2 | — |
+| `suggested` | leg3 | — |
 | `registry` | all (optional) | `registry/path-registry.yaml` |
 | `output` | all (optional) | `samples/output` |
 | `terminology` | leg2 (optional) | — |
+| `high_only` | leg3, leg1+leg2+leg3 (optional) | `false` |
 
 ---
 
@@ -66,8 +71,8 @@ RUN_PIPELINE <operation> [key=value ...]
 2. Validates inputs (existence, extensions, path safety)
 3. Shows a preflight summary listing every file that will be written
 4. Waits for `PROCEED` — no files touched until confirmed
-5. Runs `convert.py` (Leg 1) and/or `leg2_fill_mapping.py` (Leg 2) as subprocesses
+5. Runs `convert.py` (Leg 1), `leg2_fill_mapping.py` (Leg 2), and/or `leg3_substitute.py` (Leg 3) as subprocesses
 6. Prints a post-run artifact list
 
 For design context see:
-`.cursor/plans/pipeline-improvements/claude-agent-improvements/00-plan.md`
+`.cursor/plans/pipeline-improvements/CompletedPlans/claude-agent-improvements/00-plan.md`

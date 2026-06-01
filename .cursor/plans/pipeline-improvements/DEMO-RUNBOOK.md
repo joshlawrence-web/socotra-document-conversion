@@ -1,15 +1,21 @@
 # Pipeline Demo Runbook
 
-A teammate can run Leg 1 + Leg 2 in under 5 minutes by copy-pasting from this doc.
+A teammate can run the full pipeline in under 5 minutes by copy-pasting from this doc.
+
+**Repository:** [github.com/joshlawrence-web/socotra-document-conversion](https://github.com/joshlawrence-web/socotra-document-conversion)
 
 ---
 
 ## Prerequisites
 
-1. Repo cloned and open in Cursor.
+1. Repo cloned and open in Cursor:
+   ```bash
+   git clone https://github.com/joshlawrence-web/socotra-document-conversion.git
+   cd socotra-document-conversion
+   ```
 2. Python 3 available. Install dependencies if needed:
    ```bash
-   pip install beautifulsoup4 pyyaml --break-system-packages
+   pip3 install -r requirements.txt
    ```
 3. The `pipeline-orchestrator` skill is in `.cursor/skills/pipeline-orchestrator/SKILL.md`.
    Cursor will load it automatically when you open this repo.
@@ -54,6 +60,16 @@ Leg 1 runs first, then Leg 2 (terse mode) runs on the output automatically.
 RUN_PIPELINE leg2 mode=batch mapping=[samples/output/Simple-form/Simple-form.mapping.yaml, samples/output/Additional-form/Additional-form.mapping.yaml] registry=registry/path-registry.yaml
 ```
 
+### Option 5 — Full pipeline through Leg 3
+
+```
+RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml output=samples/output
+```
+
+What you get (in addition to Leg 1 + Leg 2 artifacts):
+- `samples/output/Simple-form/Simple-form.final.vm` — production template
+- `samples/output/Simple-form/Simple-form.leg3-report.md` — resolved vs deferred tokens
+
 ---
 
 ## What "good output" looks like
@@ -92,6 +108,6 @@ The orchestrator will respond with the refusal block and show the correct one-li
 | Symptom | Fix |
 |---|---|
 | `Error: input file not found` | Check the path is repo-relative and the file exists in `samples/input/` |
-| `Error: registry not found` | Regenerate with `python3 scripts/extract_paths.py --config-dir socotra-config/` |
+| `Error: registry not found` | Regenerate with `python3 .cursor/skills/mapping-suggester/scripts/extract_paths.py --config-dir socotra-config/` |
 | Script exits non-zero | Read the stderr output printed by the orchestrator; fix the underlying issue |
 | Mode not recognized | Use: `full`, `terse`, `delta`, or `batch` |

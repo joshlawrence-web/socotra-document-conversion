@@ -1,5 +1,7 @@
 # Velocity Converter — Claude instructions
 
+**Repository:** [github.com/joshlawrence-web/socotra-document-conversion](https://github.com/joshlawrence-web/socotra-document-conversion)
+
 ## Converting HTML files to Velocity templates
 
 When the user asks to convert HTML files, run the full pipeline. No explanation needed — just do it.
@@ -61,13 +63,10 @@ python3 scripts/agent.py --yes "RUN_PIPELINE leg1+leg2 input=<path> registry=reg
 - `<stem>.final.vm` is the production template.
 - `<stem>.review.md` (from Leg 2) is the path-confidence breakdown.
 
-## Future: plugin / MCP migration
+## MCP server (Claude Code)
 
-This CLAUDE.md approach only works because the user's CWD is this repo. When this becomes a plugin, migrate to an MCP server instead:
+The pipeline is also exposed as an MCP server (`mcp_server.py`). Run `python3 install.py`
+once to register it with Claude Code — then you can convert HTML from any project directory
+without keeping this repo open. See [README.md](README.md) § "Using with Claude Code".
 
-- Each pipeline operation (`leg1`, `leg2`, `leg1+leg2`, `leg3`, `leg1+leg2+leg3`) becomes an MCP tool
-- Tool descriptions replace this CLAUDE.md — Claude uses them to decide when to invoke
-- The CLAUDE.md trigger phrases above map directly to tool `description` fields
-- `scripts/agent_tools.py` already has the business logic; MCP layer just wraps it
-
-When the user asks to build the plugin, start here.
+This CLAUDE.md covers the **in-repo script workflow** when working directly in a clone.

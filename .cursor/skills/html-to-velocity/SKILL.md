@@ -79,7 +79,9 @@ A single HTML file. Conventions the user is expected to follow in the source:
 
 ## Outputs
 
-All outputs are written to `Samples/Output/<stem>/` (or to `<output-dir>/<stem>/` if `--output-dir` is specified). The skill creates the subdirectory automatically if it does not exist.
+All outputs are written to `samples/output/<stem>/` when using `--output-dir samples/output`
+(or the orchestrator's `output=samples/output`). Without `--output-dir`, outputs land next
+to the input file. The skill creates the subdirectory automatically if it does not exist.
 
 - `<stem>.vm` — the Velocity template
 - `<stem>.mapping.yaml` — the variable mapping file
@@ -95,7 +97,7 @@ python3 <skill-path>/scripts/convert.py <path-to-input.html> [--output-dir <dir>
 
 ### CLI flags
 
-- `--output-dir <dir>` — write outputs to `<dir>/<stem>/` instead of `Samples/Output/<stem>/`. The `/<stem>/` subfolder is appended automatically.
+- `--output-dir <dir>` — write outputs to `<dir>/<stem>/`. The `/<stem>/` subfolder is appended automatically. Use `samples/output` to match the repo convention.
 - `--no-conditionals` — suppress `#if($TBD_*)` wrapping around variable-bearing blocks.
 - `--auto-detect-loops` — also convert sibling-repetition loops (off by default — Mustache-only is safer).
 - `--registry <path>` — explicit path to the registry YAML. Drives the `context.loop_hint` tagging described below. If omitted, the script walks the input file's directory and its ancestors looking for `registry/path-registry.yaml` then `path-registry.yaml`; if none is found, loop hints are not emitted (graceful degrade).
@@ -124,8 +126,8 @@ python3 .cursor/skills/html-to-velocity/scripts/convert.py \
 Each input file `<stem>.html` produces `samples/output/<stem>/<stem>.vm`, `<stem>.mapping.yaml`, and `<stem>.report.md`. The registry is read once for the entire batch. Terminal output prints one summary line per file, then a combined count:
 
 ```
-✓ claim-form           → samples/output/claim-form/  (12 vars, 3 loops)
-✓ renewal-notice       → samples/output/renewal-notice/  (8 vars, 1 loop)
+✓ Simple-form           → samples/output/Simple-form/  (12 vars, 3 loops)
+✓ Additional-form       → samples/output/Additional-form/  (8 vars, 1 loop)
 Batch complete: 2 files, 20 vars, 4 loops
 ```
 
@@ -279,14 +281,14 @@ See `examples/sample-policy.html`, `examples/sample-policy.vm`, and `examples/sa
 
 After the conversion rules have been applied and before writing any file:
 
-1. **Derive `stem`** from the input filename by stripping the extension (e.g. `claim-form.html` → `claim-form`).
-2. **Create `Samples/Output/<stem>/`** (or `<output-dir>/<stem>/`) if it does not already exist.
+1. **Derive `stem`** from the input filename by stripping the extension (e.g. `Simple-form.html` → `Simple-form`).
+2. **Create `samples/output/<stem>/`** (or `<output-dir>/<stem>/`) if it does not already exist.
 3. **Write `<stem>.vm`** and **`<stem>.mapping.yaml`** into that subfolder.
 4. **Write `README.md`** into that subfolder — but only if the file does not already exist there. The README content is fixed (see template below). Never overwrite an existing README on re-runs.
 
 ### README template
 
-The `README.md` written into `Samples/Output/<stem>/` must use the following content, substituting the actual `<stem>` value throughout:
+The `README.md` written into `samples/output/<stem>/` must use the following content, substituting the actual `<stem>` value throughout:
 
 ```markdown
 # <stem> — pipeline outputs

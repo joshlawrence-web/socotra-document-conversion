@@ -2,6 +2,8 @@
 """Register the Velocity Converter MCP server with Claude Code.
 
 Run once after cloning:
+    git clone https://github.com/joshlawrence-web/socotra-document-conversion.git
+    cd socotra-document-conversion
     python3 install.py
 
 Writes (or updates) the mcpServers.velocity-converter entry in

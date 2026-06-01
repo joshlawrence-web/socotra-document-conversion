@@ -1,5 +1,7 @@
 # Socotra Velocity Converter
 
+**Repository:** [github.com/joshlawrence-web/socotra-document-conversion](https://github.com/joshlawrence-web/socotra-document-conversion)
+
 A three-leg pipeline that turns an HTML mockup into a production-ready Socotra document template.
 
 ## Pipeline overview
@@ -43,8 +45,8 @@ The easiest way to use this tool is as an **MCP server** for [Claude Code](https
 
 **1. Clone and install dependencies**
 ```bash
-git clone https://github.com/your-org/velocity-converter
-cd velocity-converter
+git clone https://github.com/joshlawrence-web/socotra-document-conversion.git
+cd socotra-document-conversion
 pip3 install -r requirements.txt
 ```
 
@@ -84,7 +86,7 @@ write the final template for velocity-output/claim-form/claim-form.suggested.yam
 
 Claude figures out which tool to call. You never need to know the tool names or command syntax.
 
-Paths are relative to whichever directory you have open in Claude Code — not the velocity-converter repo.
+Paths are relative to whichever directory you have open in Claude Code — not the socotra-document-conversion repo.
 
 ### What gets written
 
@@ -113,7 +115,7 @@ If you say *"only fill the high confidence fields"*, the server substitutes only
 - Fully restart Claude Code (not just a new chat)
 
 **"Leg 1 failed" error**
-- The path to your HTML file is wrong — it's relative to the directory you have open in Claude Code, not the velocity-converter repo
+- The path to your HTML file is wrong — it's relative to the directory you have open in Claude Code, not the socotra-document-conversion repo
 - Run `ls templates/claim-form.html` in your terminal to confirm the file is there
 
 **Output goes somewhere unexpected**
@@ -131,26 +133,32 @@ If you say *"only fill the high confidence fields"*, the server substitutes only
 
 1. **Clone and open in Cursor** — skills auto-register via `.cursor/skills/`.
 
+   ```bash
+   git clone https://github.com/joshlawrence-web/socotra-document-conversion.git
+   cd socotra-document-conversion
+   pip3 install -r requirements.txt
+   ```
+
 2. **Run the pipeline** using the orchestrator (`scripts/agent.py`):
 
    ```bash
    # Full pipeline — HTML → .final.vm (most common)
-   python3 scripts/agent.py "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/claim-form.html registry=registry/path-registry.yaml output=samples/output"
+   python3 scripts/agent.py "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml output=samples/output"
 
    # Full pipeline, high-confidence substitutions only (medium/low stay as $TBD_* for review)
-   python3 scripts/agent.py "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/claim-form.html registry=registry/path-registry.yaml output=samples/output high_only=true"
+   python3 scripts/agent.py "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml output=samples/output high_only=true"
 
    # Leg 1 only (HTML → .vm + .mapping.yaml)
-   python3 scripts/agent.py "RUN_PIPELINE leg1 input=samples/input/claim-form.html output=samples/output"
+   python3 scripts/agent.py "RUN_PIPELINE leg1 input=samples/input/Simple-form.html output=samples/output"
 
    # Leg 2 only (suggest paths for an existing .mapping.yaml)
-   python3 scripts/agent.py "RUN_PIPELINE leg2 mode=terse mapping=samples/output/claim-form/claim-form.mapping.yaml"
+   python3 scripts/agent.py "RUN_PIPELINE leg2 mode=terse mapping=samples/output/Simple-form/Simple-form.mapping.yaml"
 
    # Leg 3 only (write final .vm from a reviewed .suggested.yaml)
-   python3 scripts/agent.py "RUN_PIPELINE leg3 suggested=samples/output/claim-form/claim-form.suggested.yaml"
+   python3 scripts/agent.py "RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.suggested.yaml"
 
    # Leg 3 only, high-confidence substitutions only
-   python3 scripts/agent.py "RUN_PIPELINE leg3 suggested=samples/output/claim-form/claim-form.suggested.yaml high_only=true"
+   python3 scripts/agent.py "RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.suggested.yaml high_only=true"
    ```
 
    The orchestrator shows a preflight summary and requires you to type `PROCEED` before running. Add `--yes` to skip confirmation in CI/headless use.
@@ -181,8 +189,8 @@ If you say *"only fill the high confidence fields"*, the server substitutes only
 | `.cursor/skills/html-to-velocity/` | Leg 1 skill — HTML → Velocity converter |
 | `.cursor/skills/mapping-suggester/` | Leg 2 skill — AI path suggester |
 | `scripts/leg3_substitute.py` | Leg 3 — substitutes confirmed paths into `.final.vm` |
-| `samples/input/` | Sample HTML mockups (4 templates) |
-| `samples/output/` | Sample pipeline outputs (`.vm`, `.mapping.yaml`, `.suggested.yaml`, `.review.md`) |
+| `samples/input/` | Sample HTML mockups (`Simple-form`, `Additional-form`, `Policy-summary`) |
+| `samples/output/` | Generated pipeline outputs (gitignored — run the pipeline to populate) |
 | `socotra-config/` | Bundled sample Socotra config — drives the demo registry |
 | `registry/path-registry.yaml` | Pre-generated registry for the bundled config (ready to use) |
 | `skill-lessons.yaml` | Seed ledger for Leg 2's lesson-capture system |
@@ -211,7 +219,7 @@ python3 conformance/run-conformance.py
 The runner fails fast if a legacy root-level `path-registry.yaml` is reintroduced; the canonical registry for this repo lives under `registry/`.
 
 ```bash
-python3 -m unittest tests.test_socotra_config_fingerprint -v
+python3 -m unittest discover -s tests -v
 ```
 
 Use `scripts/suggester_inspect.py` to list runs and inspect provenance inside a `<stem>.suggester-log.jsonl` file.

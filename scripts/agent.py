@@ -35,13 +35,13 @@ from agent_tools import (
 REFUSAL = """\
 This agent requires an explicit invocation token. Examples:
 
-  RUN_PIPELINE leg1 input=samples/input/claim-form.html output=samples/output
-  RUN_PIPELINE leg2 mode=terse mapping=samples/output/claim-form/claim-form.mapping.yaml
-  RUN_PIPELINE leg1+leg2 input=samples/input/claim-form.html registry=registry/path-registry.yaml
-  RUN_PIPELINE leg3 suggested=samples/output/claim-form/claim-form.suggested.yaml
-  RUN_PIPELINE leg3 suggested=samples/output/claim-form/claim-form.suggested.yaml high_only=true
-  RUN_PIPELINE leg1+leg2+leg3 input=samples/input/claim-form.html registry=registry/path-registry.yaml
-  RUN_PIPELINE leg1+leg2+leg3 input=samples/input/claim-form.html registry=registry/path-registry.yaml high_only=true
+  RUN_PIPELINE leg1 input=samples/input/Simple-form.html output=samples/output
+  RUN_PIPELINE leg2 mode=terse mapping=samples/output/Simple-form/Simple-form.mapping.yaml
+  RUN_PIPELINE leg1+leg2 input=samples/input/Simple-form.html registry=registry/path-registry.yaml
+  RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.suggested.yaml
+  RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.suggested.yaml high_only=true
+  RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml
+  RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml high_only=true
 
 Required per operation:
   leg1           : input=<file.html>
