@@ -7,7 +7,7 @@
 # post-terminology match: Rule 1 resolves `octopuses` via step 3 of the
 # name-match precedence and cites the synonym in reasoning.
 #
-# Shape contract: SCHEMA.md → "Artifact: `terminology.yaml`".
+# Shape contract: docs/SCHEMA.md → "Artifact: `terminology.yaml`".
 
 schema_version: '1.0'
 tenant: DeepSeaFleet

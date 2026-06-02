@@ -798,7 +798,7 @@ def load_terminology(path: Path | None, registry_path: Path | None = None) -> di
         candidates.append(path)
     if registry_path:
         candidates.append(registry_path.parent / "terminology.yaml")
-    candidates.append(Path(__file__).resolve().parent.parent / "terminology.yaml")
+    candidates.append(Path(__file__).resolve().parent.parent / "registry" / "terminology.yaml")
 
     for p in candidates:
         if p.exists():
@@ -856,7 +856,7 @@ def main() -> int:
     ap.add_argument("--delta-sidecar", type=Path, default=None)
     ap.add_argument(
         "--terminology", type=Path, default=None,
-        help="Path to terminology.yaml (default: repo-root or registry sibling).",
+        help="Path to terminology.yaml (default: registry sibling or registry/terminology.yaml).",
     )
     args = ap.parse_args()
 

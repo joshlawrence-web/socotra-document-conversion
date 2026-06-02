@@ -178,35 +178,31 @@ If you say *"only fill the high confidence fields"*, the server substitutes only
    ```
 
    Or copy the pre-generated `registry/path-registry.yaml` from this repo as a starting point.
-3. Optionally add a `terminology.yaml` at the repo root to map customer-specific vocabulary (e.g. "Unit" → "Vehicle") to canonical Socotra names. See `SCHEMA.md` for the format.
+3. Optionally add a `terminology.yaml` alongside your registry (e.g. `registry/terminology.yaml`) to map customer-specific vocabulary (e.g. "Unit" → "Vehicle") to canonical Socotra names. See `docs/SCHEMA.md` for the format.
 
 ## Repository layout
 
 | Path | Description |
 |---|---|
-| `mcp_server.py` | MCP server — exposes the pipeline as Claude Code tools |
-| `install.py` | One-time setup script — registers the MCP server with Claude Code |
-| `.cursor/skills/html-to-velocity/` | Leg 1 skill — HTML → Velocity converter |
-| `.cursor/skills/mapping-suggester/` | Leg 2 skill — AI path suggester |
-| `scripts/leg3_substitute.py` | Leg 3 — substitutes confirmed paths into `.final.vm` |
+| `README.md` | This file — setup, usage, and layout |
+| `install.py` / `mcp_server.py` | One-time MCP setup and Claude Code server entrypoint |
+| `scripts/` | Pipeline scripts (`agent.py`, `leg2_fill_mapping.py`, `leg3_substitute.py`, …) |
+| `.cursor/skills/` | Leg 1 and Leg 2 agent skills |
 | `samples/input/` | Sample HTML mockups (`Simple-form`, `Additional-form`, `Policy-summary`) |
 | `samples/output/` | Generated pipeline outputs (gitignored — run the pipeline to populate) |
+| `registry/` | Pre-generated path registry plus Leg 2 config (`terminology.yaml`, `skill-lessons.yaml`) |
 | `socotra-config/` | Bundled sample Socotra config — drives the demo registry |
-| `registry/path-registry.yaml` | Pre-generated registry for the bundled config (ready to use) |
-| `skill-lessons.yaml` | Seed ledger for Leg 2's lesson-capture system |
-| `terminology.yaml` | Sample synonym layer (CommercialAuto vocabulary) |
 | `conformance/` | Adversarial conformance fixture suite + runner |
-| `.cursor/plans/pipeline-improvements/CompletedPlans/alpha-beta-plan/` | Pipeline runbooks and audits (`PIPELINE_EVOLUTION_PLAN.md`, `PIPELINE_IMPROVEMENTS_PLAN.md`, `GENERALISATION_AUDIT.md`) |
-| `SCHEMA.md` | Artifact schema reference (`.mapping.yaml`, `path-registry.yaml`, etc.) |
-| `CONFIG_COVERAGE.md` | Socotra config feature coverage matrix |
+| `tests/` | Unit and integration tests |
+| `docs/` | Design references (`SCHEMA.md`, `CONFIG_COVERAGE.md`) |
 
 ## Design docs
 
 - [PIPELINE_EVOLUTION_PLAN.md](.cursor/plans/pipeline-improvements/CompletedPlans/alpha-beta-plan/PIPELINE_EVOLUTION_PLAN.md) — session-by-session runbook and hard constraints
 - [PIPELINE_IMPROVEMENTS_PLAN.md](.cursor/plans/pipeline-improvements/CompletedPlans/alpha-beta-plan/PIPELINE_IMPROVEMENTS_PLAN.md) — phased improvement roadmap
 - [GENERALISATION_AUDIT.md](.cursor/plans/pipeline-improvements/CompletedPlans/alpha-beta-plan/GENERALISATION_AUDIT.md) — CommercialAuto coupling risk report
-- [SCHEMA.md](SCHEMA.md) — artifact schema reference
-- [CONFIG_COVERAGE.md](CONFIG_COVERAGE.md) — Socotra config feature coverage matrix
+- [SCHEMA.md](docs/SCHEMA.md) — artifact schema reference
+- [CONFIG_COVERAGE.md](docs/CONFIG_COVERAGE.md) — Socotra config feature coverage matrix
 
 ## Testing
 

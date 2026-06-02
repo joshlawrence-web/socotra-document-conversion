@@ -9,7 +9,7 @@ Writes:
   - <stem>.final.vm        — production-ready Velocity template
   - <stem>.leg3-report.md  — remedy form listing resolved and unresolved tokens
 
-Design decisions (DD — recorded here and in SCHEMA.md):
+Design decisions (DD — recorded here and in docs/SCHEMA.md):
   DD-1: #if($TBD_*) guards are stripped from the final output. Tradeoff:
         readability over null-safety. Guards can be added manually or by a
         future leg when the full data contract is known.

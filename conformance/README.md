@@ -4,7 +4,7 @@ This directory hosts the adversarial fixture suite for the HTML →
 Velocity pipeline (Phase C of [PIPELINE_EVOLUTION_PLAN.md](../.cursor/plans/pipeline-improvements/CompletedPlans/alpha-beta-plan/PIPELINE_EVOLUTION_PLAN.md)). Each
 fixture is a minimal `socotra-config/` tree plus a hand-written
 `mapping.yaml` that exercises one or more rows from
-`CONFIG_COVERAGE.md`. Goldens are frozen copies of the outputs an agent
+[CONFIG_COVERAGE.md](../docs/CONFIG_COVERAGE.md). Goldens are frozen copies of the outputs an agent
 produced on a clean run; the runner diffs live outputs against them.
 
 ## Layout
@@ -79,7 +79,7 @@ frozen artifacts).
 ## Adding a new fixture
 
 1. Read [PIPELINE_EVOLUTION_PLAN.md](../.cursor/plans/pipeline-improvements/CompletedPlans/alpha-beta-plan/PIPELINE_EVOLUTION_PLAN.md) §4.1 (seed fixtures) and
-   `CONFIG_COVERAGE.md` §3 (which row you're covering).
+   [CONFIG_COVERAGE.md](../docs/CONFIG_COVERAGE.md) §3 (which row you're covering).
 2. Create `conformance/fixtures/<name>/socotra-config/` with the minimum
    files to exercise the feature. Name tokens deterministically (no
    timestamps, no UUIDs).

@@ -15,7 +15,7 @@
 # without a human review is a test failure, not a style violation.
 # See PIPELINE_EVOLUTION_PLAN.md §7.
 #
-# Shape contract: SCHEMA.md → "Artifact: `skill-lessons.yaml`".
+# Shape contract: docs/SCHEMA.md → "Artifact: `skill-lessons.yaml`".
 
 schema_version: '1.0'
 lessons:

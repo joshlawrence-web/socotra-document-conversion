@@ -8,7 +8,7 @@ Referenced from `SKILL.md` §"Lesson workflow (Phase D)".
 ## Purpose
 
 The mapping-suggester keeps a repo-level lessons ledger at
-`skill-lessons.yaml` (see `SCHEMA.md` → "Artifact: `skill-lessons.yaml`"
+`registry/skill-lessons.yaml` (see `docs/SCHEMA.md` → "Artifact: `skill-lessons.yaml`"
 for the shape). The ledger accumulates patterns that keep surfacing
 across customers and documents, so a human reviewer can decide
 whether the pattern deserves a first-class rule in `SKILL.md`.

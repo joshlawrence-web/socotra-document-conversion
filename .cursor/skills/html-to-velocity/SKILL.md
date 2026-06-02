@@ -210,7 +210,7 @@ If you add a new iterable to the product config (e.g. a `Driver+` data-extension
 The mapping file is designed to be edited by a human. Every
 `<stem>.mapping.yaml` carries `schema_version: '1.0'` as its very
 first key — this is the pipeline-wide artifact contract documented in
-`SCHEMA.md` at the repo root (MAJOR / MINOR compatibility rules apply).
+`docs/SCHEMA.md` (MAJOR / MINOR compatibility rules apply).
 Downstream tools (the mapping suggester) refuse to run against a
 MAJOR they do not support. Top-level structure:
 

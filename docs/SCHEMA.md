@@ -96,7 +96,7 @@ Leg 2 (`scripts/leg2_fill_mapping.py` and the mapping-suggester skill) may recom
 Emitted by `extract_paths.py → detect_features()` via a structural scan
 of `socotra-config/`. Every flag is derived from live config contents
 — not from file or directory presence alone. See `CONFIG_COVERAGE.md`
-at the repo root for the authoritative matrix of what each flag means,
+in this directory for the authoritative matrix of what each flag means,
 which configs have it today, and whether the mapping-suggester has a
 matching rule for it.
 
@@ -432,8 +432,8 @@ optional.
 ## Artifact: `skill-lessons.yaml`
 
 Produced by: human seed (Phase D session D2, 2026-04-22) + incremental
-updates from `mapping-suggester` (Leg 2) Step 4d. Lives at the repo
-root. Current version: **1.0**. Optional — older checkouts may not
+updates from `mapping-suggester` (Leg 2) Step 4d. Lives alongside the
+path registry (e.g. `registry/skill-lessons.yaml`). Current version: **1.0**. Optional — older checkouts may not
 have it; the suggester's Step 0b skips silently when absent.
 
 The ledger accumulates patterns that keep surfacing across customers
@@ -505,10 +505,9 @@ from `null`) without a human review is a test failure.
 ## Artifact: `terminology.yaml`
 
 Produced by: human hand-authoring (Phase E, 2026-04-23). Read by:
-`mapping-suggester` (Leg 2) Step 0c. **Resolution order:** (1) repo /
-project root `terminology.yaml`; (2) sibling of the registry file
-being used (e.g. `registry/terminology.yaml` next to
-`registry/path-registry.yaml`); (3) path from `--terminology <path>`.
+`mapping-suggester` (Leg 2) Step 0c. **Resolution order:** (1) sibling
+of the registry file being used (e.g. `registry/terminology.yaml` next to
+`registry/path-registry.yaml`); (2) path from `--terminology <path>`.
 Current version: **1.0**. Optional — checkouts without the file skip
 synonym matching silently.
 
@@ -574,8 +573,8 @@ precedence (Phase E — terminology layer)". Brief summary:
   <X> not found in registry` row in `<stem>.review.md` §7 at
   shape-probe time and the entry is dropped from the active synonym
   map for that run (it is not used for matching).
-- **No storage under `.cursor/skills/`.** The file lives at the repo
-  / project root so tenant data stays out of the skill.
+- **No storage under `.cursor/skills/`.** The file lives alongside the
+  registry (or a project-specific registry folder) so tenant data stays out of the skill.
 - **No auto-promotion from lessons.** Synonyms enter this file
   through user hand-editing or through a human reviewer promoting a
   `skill-lessons.yaml` row; agents never add a synonym without a

@@ -13,6 +13,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 from leg2_fill_mapping import (  # noqa: E402
     annotate_mapping,
     build_registry_index,
+    load_terminology,
     merge_delta,
     reorder_top_keys,
     suggest_loop_field,
@@ -389,6 +390,23 @@ class TestInvariants(unittest.TestCase):
                 self.assertNotEqual(ds, "")
                 self.assertNotEqual(iterator, "")
                 self.assertNotEqual(foreach, "")
+
+
+class TestLoadTerminology(unittest.TestCase):
+    def test_loads_registry_sibling_by_default(self) -> None:
+        registry = REPO / "registry" / "path-registry.yaml"
+        data = load_terminology(None, registry)
+        self.assertIsNotNone(data)
+        assert data is not None
+        self.assertEqual(data.get("tenant"), "CommercialAuto")
+
+    def test_explicit_flag_wins_over_registry_sibling(self) -> None:
+        fixture_term = REPO / "conformance" / "fixtures" / "custom-naming" / "terminology.yaml"
+        registry = REPO / "registry" / "path-registry.yaml"
+        data = load_terminology(fixture_term, registry)
+        self.assertIsNotNone(data)
+        assert data is not None
+        self.assertEqual(data.get("tenant"), "DeepSeaFleet")
 
 
 if __name__ == "__main__":

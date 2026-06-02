@@ -91,7 +91,7 @@ A `batch` run runs `terse` automatically for every document in the batch.
 |---|---|
 | `<stem>.mapping.yaml` | Run the `html-to-velocity` skill on your HTML file |
 | `registry/path-registry.yaml` | Run `python3 .cursor/skills/mapping-suggester/scripts/extract_paths.py --config-dir <socotra-config/>` (default output; or pass `--output`). |
-| `terminology.yaml` (optional, Phase E) | Repo root first, then sibling of the registry file (e.g. `registry/terminology.yaml`), or `--terminology <path>`. See `SCHEMA.md` → "Artifact: `terminology.yaml`". When absent, skip synonym lookup silently. |
+| `terminology.yaml` (optional, Phase E) | Sibling of the registry file (e.g. `registry/terminology.yaml`), or `--terminology <path>`. See `docs/SCHEMA.md` → "Artifact: `terminology.yaml`". When absent, skip synonym lookup silently. |
 
 Both mapping and registry files must be present before running this
 skill; `terminology.yaml` is optional.
@@ -123,7 +123,7 @@ Any other keys are preserved but unused. The suggester MUST NOT drop
 them. When encountered, they are reported under "Unrecognised inputs"
 in the `.review.md` file with `next_action: needs-skill-update`.
 
-See `SCHEMA.md` at the repo root for the full artifact contract,
+See `docs/SCHEMA.md` for the full artifact contract,
 including the compatibility rules (MAJOR / MINOR) that govern when this
 vocabulary is allowed to grow.
 
@@ -233,7 +233,7 @@ to Step 1 for each stem sequentially.
 Read `<stem>.suggested.yaml` and `<stem>.review.md` produced by Step 0.
 
 **Do NOT re-derive suggestions from scratch.**  The script's output is
-authoritative.  Also locate `skill-lessons.yaml` at the repo root (optional).
+authoritative.  Also locate `registry/skill-lessons.yaml` (optional).
 
 ---
 

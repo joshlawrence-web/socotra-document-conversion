@@ -30,7 +30,7 @@ Every run produces **three** artifacts side by side:
    is **append-only** across runs — every invocation adds a fresh batch
    of placeholder records plus its own summary record; earlier records
    are never rewritten. See "Telemetry file format" below and
-   `SCHEMA.md` for the artifact contract; the JSON Schema lives at
+   `docs/SCHEMA.md` for the artifact contract; the JSON Schema lives at
    `conformance/schemas/suggester-log.schema.json`.
 
 All three files must be written on every run, even when there are zero

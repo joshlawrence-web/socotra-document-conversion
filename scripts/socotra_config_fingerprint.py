@@ -2,7 +2,7 @@
 """
 Deterministic fingerprint of a Socotra config tree for registry ↔ Leg 2 alignment.
 
-Algorithm (must stay in lockstep with SCHEMA.md "Registry config fingerprint"):
+Algorithm (must stay in lockstep with docs/SCHEMA.md "Registry config fingerprint"):
   - Root: resolved ``config_dir``.
   - Collect every ``config.json`` file under these first-level subtrees only:
     ``products/``, ``exposures/``, ``coverages/``, ``charges/``, ``accounts/``,
