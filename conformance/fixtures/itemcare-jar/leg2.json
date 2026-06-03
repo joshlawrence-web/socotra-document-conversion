@@ -1,0 +1,4 @@
+{
+  "mode": "terse",
+  "note": "JAR-backed fixture: the conformance runner runs leg2_fill_mapping.py (deterministic terse mode) against build/customer-config.jar + build/core-datamodel-v*.jar, writing actual/suggested.yaml + actual/review.md, then diffs against the 2.0 goldens. Requires the compiled ItemCare JARs in build/ (see Leg2 plan D1)."
+}

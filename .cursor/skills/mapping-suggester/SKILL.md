@@ -54,11 +54,12 @@ Leg 2 of the HTML → Velocity pipeline. Takes the two artifacts from upstream:
 
 Outputs:
 
-- **`<stem>.suggested.yaml`** — a copy of the mapping YAML with every
-  `data_source:` field pre-filled with the best matching path from the registry,
-  plus `confidence` (high / medium / low) and `reasoning` for each suggestion.
-  Fields the skill cannot match with confidence are left blank with
-  `confidence: low` and a note explaining why.
+- **`<stem>.suggested.yaml`** (schema **2.0**) — a copy of the mapping YAML where
+  each variable/loop carries a root-independent `candidate` (the registry
+  name-match) plus a per-root `verdicts` map. Confidence is graded **per
+  (placeholder × rendering root)** and grounded in the compiled JARs (see
+  "SDK-grounded confidence" below). A top-level `rendering_roots` list records
+  the root(s) the document renders against.
 
 The `.suggested.yaml` is an intermediate artifact for human review. The human
 edits, confirms, or overrides each suggestion before the substitution step.
@@ -78,7 +79,7 @@ proceeding.
 | `full` | "full", "verbose" | Verbose reasoning, full shape probe, full review.md prose. Best for first runs and unfamiliar documents. |
 | `terse` | "terse", "quick pass", "quick run" | Abbreviated outputs. Single-line reasoning, table-only review.md, one-line shape probe. ~50% fewer output tokens. |
 | `batch` | "batch", "run on all files", or multiple `.mapping.yaml` paths given | Read the registry file once; process each mapping file sequentially in `terse` sub-mode; print a combined terminal summary. ~60% fewer total tokens for 4-doc runs. |
-| `delta` | "delta", "re-run", "refresh", "only unconfirmed" | Skip entries whose `data_source` is already non-empty and does not contain `$TBD_`. Merge new suggestions into the existing `.suggested.yaml`. Report `N skipped, M suggested` in terminal summary. |
+| `delta` | "delta", "re-run", "refresh", "only unconfirmed" | **Not supported on schema 2.0** (Leg2 plan D10). The script exits non-zero with a clear message; use `full` / `terse` / `batch`. Per-root delta merge is deferred to a more mature pipeline. |
 
 Mode-specific behavior overrides are listed in each step below where they apply.
 A `batch` run runs `terse` automatically for every document in the batch.
@@ -92,9 +93,41 @@ A `batch` run runs `terse` automatically for every document in the batch.
 | `<stem>.mapping.yaml` | Run the `html-to-velocity` skill on your HTML file |
 | `registry/path-registry.yaml` | Run `python3 .cursor/skills/mapping-suggester/scripts/extract_paths.py --config-dir <socotra-config/>` (default output; or pass `--output`). |
 | `terminology.yaml` (optional, Phase E) | Sibling of the registry file (e.g. `registry/terminology.yaml`), or `--terminology <path>`. See `docs/SCHEMA.md` → "Artifact: `terminology.yaml`". When absent, skip synonym lookup silently. |
+| `build/customer-config.jar` + `build/core-datamodel-v*.jar` (**required, 2.0**) | The compiled SDK that decides which `$data.*` paths exist per rendering root. Defaults: `--customer-jar build/customer-config.jar`, `--datamodel-jar` newest under `build/`. If absent the script fails loud. |
 
 Both mapping and registry files must be present before running this
-skill; `terminology.yaml` is optional.
+skill; `terminology.yaml` is optional; the build JARs are **required** (2.0).
+
+---
+
+## SDK-grounded confidence (schema 2.0)
+
+Confidence is no longer a name-match scalar. It is a verdict per
+**(placeholder × rendering root)**, decided by introspecting the compiled JARs
+with `javap` via `scripts/sdk_introspect.py` (shared with Leg 4).
+
+- **The JARs are the authority.** The registry only proposes a *candidate*
+  `$data.*` path (the `match_step`: exact / ci / terminology / fuzzy). Whether
+  that path is actually navigable is decided per root against the compiled type.
+- **Rendering root from the filename.** A document declares its root(s) in the
+  source filename brackets: `<stem>(<root>).html`, e.g. `Simple-form(segment).html`.
+  Allowed roots: `quote`, `segment`, `invoice` (comma-separate for multiple;
+  first = primary). **No inference** — a missing bracket is a hard blocker and
+  no verdicts are written. Invoice is enumerable but not resolved yet (D5).
+- **`sdk_status` per verdict:** `verified` (navigable → `high`/`medium`),
+  `not_found` (absent everywhere → `low` + supply-from-plugin), `sibling_only`
+  (on `Policy`/`Transaction`, not the root → `low` + supply-from-plugin, with a
+  `sibling_hint` like `Policy.policyNumber()`), `not_navigable` (hits a scalar →
+  `low` + confirm-assumption), `skipped` (invoice / no candidate path).
+- **The JAR can only demote.** A strong name-match needs `verified` to stay
+  `high`; SDK truth never promotes a weak (fuzzy) match above `medium`.
+- **No invented paths.** A verdict's `data_source` is the candidate path only
+  when `verified`; otherwise empty. Alternative method names are report prose
+  in `reasoning`, never a populated `data_source`.
+
+Canonical example: `$data.policyNumber` on the `ItemCare` `segment` root is
+`low` / `sibling_only` / `Policy.policyNumber()` (not a false `high`), while
+`$data.locator` is `high` / `verified`.
 
 ---
 
@@ -186,8 +219,7 @@ Which mode would you like to run?
   2  terse  — Script runs + AI reads and reports. No narrative additions.
               Fastest. Use when you just need the suggested paths quickly.
 
-  3  delta  — Re-run only. Skips confirmed entries; merges into existing
-              .suggested.yaml.
+  3  delta  — NOT supported on schema 2.0 (the script will refuse). Deferred.
 
   4  batch  — Multi-file. Processes several .mapping.yaml files in one go.
 
@@ -209,16 +241,23 @@ Run `scripts/leg2_fill_mapping.py` to produce all three output artifacts:
 python3 scripts/leg2_fill_mapping.py \
     --mapping <stem>.mapping.yaml \
     --registry registry/path-registry.yaml \
+    --customer-jar build/customer-config.jar \
+    --datamodel-jar build/core-datamodel-v1.7.61.jar \
     --out samples/output/<stem>/<stem>.suggested.yaml \
     --review-out samples/output/<stem>/<stem>.review.md \
     --telemetry-log samples/output/<stem>/<stem>.suggester-log.jsonl \
     --mode <mode> \
-    [--terminology terminology.yaml] \
-    [--base-suggested <prior.suggested.yaml>]
+    [--terminology terminology.yaml]
 ```
 
+The `--customer-jar` / `--datamodel-jar` flags are optional (sensible `build/`
+defaults). The mapping's `source:` must carry the rendering-root bracket
+(`<stem>(segment).html`) — otherwise the script writes a blocker review and
+exits non-zero.
+
 The script handles: version checks, shape probe, Rules 1–6, feature flag
-surfacing, provenance stamping, delta merge, and all three output artifacts.
+surfacing, provenance stamping, per-root SDK grounding, and all three output
+artifacts.
 
 If the script exits non-zero: print the error to the user and stop.  Do
 **not** attempt to re-run the matching manually.
@@ -306,8 +345,9 @@ Batch complete — <N> documents processed
 - **Only use paths from the registry.** Never suggest a path you've inferred
   from documentation, training data, or guesswork.
 - **Preserve all existing YAML keys.** The `.suggested.yaml` is a superset of
-  the input — add `data_source`, `confidence`, and `reasoning` but keep
-  every original key intact.
+  the input — add `candidate` + per-root `verdicts` (2.0) but keep every
+  original key intact. (Scalar `data_source`/`confidence`/`reasoning` of 1.x now
+  live inside each root's verdict.)
 - **Cross-scope variables are a warning.** If the same `name` appears in
   multiple loops (flagged in the Leg 1 report), note this in `reasoning` and
   set confidence to `medium` at best.

@@ -1,0 +1,53 @@
+schema_version: '1.0'
+source: itemcare-jar(segment).html
+generated_at: '2026-06-03T00:00:00+00:00'
+variables:
+- name: LOCATOR
+  placeholder: $TBD_LOCATOR
+  type: variable
+  context:
+    parent_tag: p
+    line: 10
+    nearest_label: Locator
+  data_source: ''
+- name: POLICY_NUMBER
+  placeholder: $TBD_POLICY_NUMBER
+  type: variable
+  context:
+    parent_tag: p
+    line: 11
+    nearest_label: Policy Number
+  data_source: ''
+- name: POLICYHOLDER_NAME
+  placeholder: $TBD_POLICYHOLDER_NAME
+  type: variable
+  context:
+    parent_tag: p
+    line: 12
+    nearest_label: Policyholder
+  data_source: ''
+- name: EFFECTIVE_START_DATE
+  placeholder: $TBD_EFFECTIVE_START_DATE
+  type: variable
+  context:
+    parent_tag: p
+    line: 13
+    nearest_label: Effective Start Date
+  data_source: ''
+loops:
+- name: items
+  placeholder: $TBD_items
+  type: loop
+  context:
+    nearest_heading: Items
+    line: 20
+  data_source: ''
+  fields:
+  - name: goods_category_code
+    placeholder: $item.TBD_goods_category_code
+    type: loop_field
+    context:
+      parent_tag: td
+      line: 22
+      nearest_label: Goods Category Code
+    data_source: ''

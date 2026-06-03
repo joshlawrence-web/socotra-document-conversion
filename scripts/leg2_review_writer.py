@@ -44,6 +44,20 @@ def _all_entries(suggested: dict) -> list[dict]:
     return list(suggested.get("variables") or []) + list(suggested.get("loops") or [])
 
 
+# --- 2.0 per-root helpers ---------------------------------------------------
+
+
+def _root_ids(suggested: dict) -> list[str]:
+    rids = suggested.get("_root_ids")
+    if rids:
+        return list(rids)
+    return [r.get("id") for r in (suggested.get("rendering_roots") or []) if r.get("id")]
+
+
+def _verdict(entry: dict, root_id: str) -> dict:
+    return (entry.get("verdicts") or {}).get(root_id) or {}
+
+
 def _check_minor_mismatch(suggested: dict) -> str | None:
     """Return the registry MINOR version string if it exceeds 1.1, else None."""
     rv = str(suggested.get("registry_schema_version") or "1.0")
@@ -73,27 +87,37 @@ def _write_review_md(
     loops = suggested.get("loops") or []
     all_e = list(variables) + list(loops)
 
-    high_v = sum(1 for v in variables if v.get("confidence") == "high")
-    med_v = sum(1 for v in variables if v.get("confidence") == "medium")
-    low_v = sum(1 for v in variables if v.get("confidence") == "low")
-    high_l = sum(1 for L in loops if L.get("confidence") == "high")
-    med_l = sum(1 for L in loops if L.get("confidence") == "medium")
-    low_l = sum(1 for L in loops if L.get("confidence") == "low")
-    high = high_v + high_l
-    med = med_v + med_l
-    low = low_v + low_l
+    roots = _root_ids(suggested) or ["(none)"]
+    primary = roots[0]
 
-    # Next-action counts
+    # Per-root confidence counts.
+    def _counts(root_id: str) -> tuple[int, int, int]:
+        hi = me = lo = 0
+        for e in all_e:
+            c = _verdict(e, root_id).get("confidence")
+            if c == "high":
+                hi += 1
+            elif c == "medium":
+                me += 1
+            elif c == "low":
+                lo += 1
+        return hi, me, lo
+
+    # Next-action counts on the primary root.
     na_counts: dict[str, int] = {}
     for e in all_e:
-        na = _extract_na(e.get("reasoning") or "")
+        na = _extract_na(_verdict(e, primary).get("reasoning") or "")
         if na:
             na_counts[na] = na_counts.get(na, 0) + 1
 
-    dc = suggested.get("delta_changes") or {}
+    rr = suggested.get("rendering_roots") or []
+    roots_label = ", ".join(
+        f"`{r.get('id')}`" + (" (primary)" if r.get("primary") else "")
+        for r in rr
+    ) or ", ".join(f"`{r}`" for r in roots)
 
     lines: list[str] = [
-        "<!-- schema_version: 1.1 -->",
+        "<!-- schema_version: 2.0 -->",
         "",
         f"# Mapping review — {stem}",
         "",
@@ -103,6 +127,7 @@ def _write_review_md(
         f"- Suggested output: `{suggested_path}`",
         f"- Path registry: `{registry_path}`",
         f"- Product: **{suggested.get('product', '')}**",
+        f"- Rendering roots: {roots_label}",
         f"- Generated at: {suggested.get('generated_at', '')}",
         (
             f"- Inputs: mapping sha256 `{suggested.get('input_mapping_sha256', '')[:16]}…`, "
@@ -117,121 +142,85 @@ def _write_review_md(
             f"(verified={'yes' if suggested.get('registry_config_verified') else 'no'})"
         ),
     ]
-    if suggested.get("mode") == "delta":
-        lines.append(
-            f"- Base suggested: `{suggested.get('base_suggested_sha256', '')[:16]}…` "
-            f"(previous_run_id `{suggested.get('previous_run_id', '')}`)"
-        )
     if escape_note:
         lines += ["", f"> **{escape_note}**", ""]
     lines += [
-        f"- Schema: 1.1 (mapping {suggested.get('input_mapping_version')}, "
+        f"- Schema: 2.0 (mapping {suggested.get('input_mapping_version')}, "
         f"registry {suggested.get('input_registry_version')})",
+        "",
+        "> Confidence is graded per **(placeholder × rendering root)**, grounded in the "
+        "compiled JARs. A field can be `high` on one root and a blocker on another.",
         "",
         "---",
         "",
     ]
 
-    # §1 already written above. §2 State summary + counts.
+    # §2 Summary — per rendering root.
     lines += [
-        "## State summary",
+        "## Summary (per rendering root)",
         "",
-        f"- `run_id`: `{suggested.get('run_id', '')}`",
-        f"- `registry_config_check`: {suggested.get('registry_config_check', '')}",
+        f"- Variables: {len(variables)}  ·  Loops: {len(loops)}",
+        "",
+        "| Root | Primary | high | medium | low |",
+        "|---|---|---|---|---|",
     ]
-    if suggested.get("mode") == "delta":
-        lines.append(
-            f"- Delta: changed={len(dc.get('changed') or [])}, "
-            f"cleared={len(dc.get('cleared') or [])}, "
-            f"re-suggested={len(dc.get('re_suggested_unconfirmed') or [])}, "
-            f"carried_confirmed={dc.get('carried_forward_count', 0)}"
-        )
+    primary_set = {r.get("id"): r.get("primary") for r in rr}
+    for root_id in roots:
+        hi, me, lo = _counts(root_id)
+        is_primary = "yes" if primary_set.get(root_id) or root_id == primary else "no"
+        lines.append(f"| `{root_id}` | {is_primary} | {hi} | {me} | {lo} |")
     lines += [
         "",
-        "## Summary",
-        "",
-        "| Metric | Count |",
-        "|---|---|",
-        f"| Variables (total) | {len(variables)} |",
-        f"| Loops (total) | {len(loops)} |",
-        f"| high | {high} |",
-        f"| medium | {med} |",
-        f"| low | {low} |",
-        "",
-        "### Next-action breakdown",
+        f"### Next-action breakdown (primary root: `{primary}`)",
         "",
         "| next-action | Count |",
         "|---|---|",
     ]
     for code in ("pick-one", "supply-from-plugin", "restructure-template",
                  "confirm-assumption", "delete-from-template"):
-        cnt = na_counts.get(code, 0)
-        lines.append(f"| {code} | {cnt} |")
+        lines.append(f"| {code} | {na_counts.get(code, 0)} |")
     lines.append("")
 
-    # Per-confidence breakdown (subsections of Summary)
-    for conf_label, conf_key in (("High", "high"), ("Medium", "medium"), ("Low", "low")):
-        conf_loops = [L for L in loops if L.get("confidence") == conf_key]
-        conf_vars = [v for v in variables if v.get("confidence") == conf_key]
-        if not conf_loops and not conf_vars:
-            continue
-        lines += [
-            f"### {conf_label} confidence",
-            "",
-            "| Type | Count |",
-            "|---|---|",
-            f"| Loops | {len(conf_loops)} |",
-            f"| Fields | {len(conf_vars)} |",
-            "",
-        ]
-        if conf_loops:
-            lines += ["**Loop names**", "", "| Name | Velocity Path |", "|---|---|"]
-            for L in conf_loops:
-                ph = L.get("placeholder") or L.get("name") or ""
-                vel = L.get("data_source") or "—"
-                lines.append(f"| `{ph}` | `{vel}` |")
-            lines.append("")
-        if conf_vars:
-            lines += ["**Field names**", "", "| Name | Velocity Path |", "|---|---|"]
-            for v in conf_vars:
-                ph = v.get("placeholder") or v.get("name") or ""
-                vel = v.get("data_source") or "—"
-                lines.append(f"| `{ph}` | `{vel}` |")
-            lines.append("")
-
-    # §3 Blockers
-    lines += ["---", "", "## Blockers", ""]
-    blockers = sorted([e for e in all_e if e.get("confidence") == "low"], key=_fmt_line)
-    if not blockers:
+    # §3 Blockers — one row per (placeholder, root) with low confidence.
+    lines += ["---", "", "## Blockers (low confidence, per root)", ""]
+    blocker_pairs: list[tuple[dict, str]] = []
+    for e in sorted(all_e, key=_fmt_line):
+        for root_id in roots:
+            if _verdict(e, root_id).get("confidence") == "low":
+                blocker_pairs.append((e, root_id))
+    if not blocker_pairs:
         lines.append("No blockers.")
     elif mode == "terse":
         lines += [
-            "| Placeholder | Line | next-action |",
-            "|---|---|---|",
+            "| Placeholder | Line | Root | sdk_status | next-action |",
+            "|---|---|---|---|---|",
         ]
-        for e in blockers:
+        for e, root_id in blocker_pairs:
             ph = e.get("placeholder") or e.get("name") or ""
             ln = _fmt_line(e)
-            na = _extract_na(e.get("reasoning") or "") or "supply-from-plugin"
-            lines.append(f"| `{ph}` | {ln} | {na} |")
+            vd = _verdict(e, root_id)
+            na = _extract_na(vd.get("reasoning") or "") or "supply-from-plugin"
+            lines.append(
+                f"| `{ph}` | {ln} | `{root_id}` | {vd.get('sdk_status', '')} | {na} |"
+            )
     else:
-        for e in blockers:
+        for e, root_id in blocker_pairs:
             ph = e.get("placeholder") or e.get("name") or ""
             ctx = e.get("context") or {}
             ln = ctx.get("line") or "?"
-            parent_tag = ctx.get("parent_tag") or "—"
-            nearest_label = ctx.get("nearest_label") or ""
-            loop_ctx = ctx.get("loop") or "—"
-            reasoning = e.get("reasoning") or ""
+            vd = _verdict(e, root_id)
+            reasoning = vd.get("reasoning") or ""
             na = _extract_na(reasoning) or "supply-from-plugin"
             cands = _extract_candidates(reasoning)
             lines += [
-                f"### {ph}  _(line {ln})_",
+                f"### {ph} · root `{root_id}`  _(line {ln})_",
                 "",
-                f"- **parent_tag:** `{parent_tag}`",
-                f"- **nearest_label:** \"{nearest_label}\"",
-                f"- **loop:** `{loop_ctx}`",
+                f"- **parent_tag:** `{ctx.get('parent_tag') or '—'}`",
+                f"- **nearest_label:** \"{ctx.get('nearest_label') or ''}\"",
+                f"- **sdk_status:** `{vd.get('sdk_status', '')}`",
             ]
+            if vd.get("sibling_hint"):
+                lines.append(f"- **sibling_hint:** `{vd['sibling_hint']}`")
             if cands:
                 lines.append("- **candidates:**")
                 for c in cands:
@@ -239,44 +228,43 @@ def _write_review_md(
             lines += [
                 f"- **next-action:** `{na}`",
                 f"- **suggested resolution:** {_RESOLUTION.get(na, '')}",
+                f"- **reasoning:** {reasoning}",
                 "",
             ]
     lines.append("")
 
-    # §4 Assumptions to confirm
-    lines += ["---", "", "## Assumptions to confirm", ""]
-    assumptions = sorted(
-        [e for e in all_e if e.get("confidence") == "medium" and "confirm-assumption" in (e.get("reasoning") or "")],
-        key=_fmt_line,
-    )
-    if not assumptions:
+    # §4 Assumptions to confirm — medium-confidence verdicts, per root.
+    lines += ["---", "", "## Assumptions to confirm (medium confidence, per root)", ""]
+    assumption_pairs: list[tuple[dict, str]] = []
+    for e in sorted(all_e, key=_fmt_line):
+        for root_id in roots:
+            if _verdict(e, root_id).get("confidence") == "medium":
+                assumption_pairs.append((e, root_id))
+    if not assumption_pairs:
         lines.append("No assumptions to confirm.")
     elif mode == "terse":
-        lines.append(f"{len(assumptions)} assumption(s) to confirm — see .suggested.yaml")
+        lines.append(f"{len(assumption_pairs)} assumption(s) to confirm — see .suggested.yaml")
     else:
-        for e in assumptions:
+        for e, root_id in assumption_pairs:
             ph = e.get("placeholder") or e.get("name") or ""
-            ds = e.get("data_source") or ""
-            ctx = e.get("context") or {}
-            ln = ctx.get("line") or "?"
-            reasoning = e.get("reasoning") or ""
-            m = re.search(r"confirm-assumption:\s*(.+?)(?:\s*—|$)", reasoning)
-            assumption_text = m.group(1).strip() if m else reasoning
+            vd = _verdict(e, root_id)
+            ds = vd.get("data_source") or ""
+            ln = (e.get("context") or {}).get("line") or "?"
             lines += [
-                f"- [ ] **{assumption_text}**",
-                f"  - `{ph}` (line {ln}) → `{ds}`",
+                f"- [ ] `{ph}` · root `{root_id}` (line {ln}) → `{ds}`",
+                f"  - {vd.get('reasoning') or ''}",
             ]
     lines.append("")
 
-    # §5 Cross-scope warnings
+    # §5 Cross-scope warnings — scanned on the primary root.
     lines += ["---", "", "## Cross-scope warnings", ""]
     scope_warns = sorted(
         [
             e for e in all_e
-            if "scope violation" in (e.get("reasoning") or "").lower()
+            if "scope violation" in (_verdict(e, primary).get("reasoning") or "").lower()
             or (
-                "restructure-template" in (e.get("reasoning") or "")
-                and "registry candidate" in (e.get("reasoning") or "")
+                "restructure-template" in (_verdict(e, primary).get("reasoning") or "")
+                and "registry candidate" in (_verdict(e, primary).get("reasoning") or "")
             )
         ],
         key=_fmt_line,
@@ -290,7 +278,7 @@ def _write_review_md(
         ]
         for e in scope_warns:
             ph = e.get("placeholder") or e.get("name") or ""
-            reasoning = e.get("reasoning") or ""
+            reasoning = _verdict(e, primary).get("reasoning") or ""
             cand_m = _CANDIDATE_RE.search(reasoning)
             matched_path = cand_m.group(1) if cand_m else ""
             req_m = re.search(r"`(#foreach[^`]+)`", reasoning)
@@ -298,32 +286,27 @@ def _write_review_md(
             lines.append(f"| `{ph}` | `{matched_path}` | `{req_scope}` | restructure-template |")
     lines.append("")
 
-    # §6 Done
-    lines += ["---", "", "## Done", ""]
-    done = [e for e in all_e if e.get("confidence") == "high"]
-    if mode == "terse":
-        lines += [
-            "<details>",
-            f"<summary><strong>{len(done)}</strong> high-confidence mapping(s)</summary>",
-            "",
-        ]
-        for e in done:
-            ph = e.get("placeholder") or e.get("name") or ""
-            ds = e.get("data_source") or ""
-            lines.append(f"- `{ph}` → `{ds}`")
-        lines += ["", "</details>"]
-    else:
-        lines += [
-            "<details>",
-            f"<summary><strong>{len(done)}</strong> high-confidence mapping(s)</summary>",
-            "",
-        ]
-        for e in done:
-            ph = e.get("placeholder") or e.get("name") or ""
-            ds = e.get("data_source") or ""
-            reason = e.get("reasoning") or ""
-            lines.append(f"- `{ph}` → `{ds}`  _{reason}_")
-        lines += ["", "</details>"]
+    # §6 Done — high-confidence verdicts, per root.
+    lines += ["---", "", "## Done (high confidence, per root)", ""]
+    done_pairs: list[tuple[dict, str]] = []
+    for e in all_e:
+        for root_id in roots:
+            if _verdict(e, root_id).get("confidence") == "high":
+                done_pairs.append((e, root_id))
+    lines += [
+        "<details>",
+        f"<summary><strong>{len(done_pairs)}</strong> high-confidence (placeholder × root) verdict(s)</summary>",
+        "",
+    ]
+    for e, root_id in done_pairs:
+        ph = e.get("placeholder") or e.get("name") or ""
+        vd = _verdict(e, root_id)
+        ds = vd.get("data_source") or ""
+        if mode == "terse":
+            lines.append(f"- `{ph}` · `{root_id}` → `{ds}`")
+        else:
+            lines.append(f"- `{ph}` · `{root_id}` → `{ds}`  _{vd.get('reasoning') or ''}_")
+    lines += ["", "</details>"]
     lines.append("")
 
     # §7 Unrecognised inputs

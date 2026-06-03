@@ -22,6 +22,15 @@ from pathlib import Path
 import yaml
 
 from leg2_review_writer import _write_review_md
+from sdk_introspect import (
+    ALLOWED_ROOTS,
+    _class_exists,
+    _default_datamodel_jar,
+    classify_path,
+    request_fqcn,
+    resolve_element_type,
+    roots_for_product,
+)
 from suggester_state import (
     compute_delta_change_set,
     entry_locked,
@@ -331,18 +340,90 @@ def _charge_path(entry: dict, label: str | None) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _confidence_from_step(step: str) -> str:
-    if step in ("exact", "ci", "terminology"):
-        return "high"
-    if step == "fuzzy":
-        return "medium"
+# ---------------------------------------------------------------------------
+# Rendering-root parsing (Leg 2 plan §8, D2) + confidence grading (§6.3, D8)
+# ---------------------------------------------------------------------------
+
+
+_ROOT_BRACKET_RE = re.compile(r"\(([^()]*)\)")
+
+
+def parse_rendering_roots(source: str | None) -> tuple[list[str], str | None]:
+    """Parse declared rendering roots from a filename like
+    ``Simple-form(segment).html`` or ``X(quote,segment).html`` (plan §8, D2).
+
+    Returns ``(root_ids, error)``. ``error`` is a human-readable blocker string
+    when brackets are missing or a token is unknown; ``root_ids`` is then empty.
+    No inference — absence of brackets is an explicit blocker.
+    """
+    name = (source or "").strip()
+    if not name:
+        return [], (
+            "rendering root not declared — no source filename to parse; "
+            "rename input to <stem>(segment).html"
+        )
+    # Strip a trailing extension so '(segment)' in 'X(segment).html' is found.
+    stem = name.rsplit("/", 1)[-1]
+    matches = _ROOT_BRACKET_RE.findall(stem)
+    if not matches:
+        return [], (
+            f"rendering root not declared in filename `{name}` — "
+            "rename to <stem>(segment).html (allowed roots: "
+            f"{', '.join(ALLOWED_ROOTS)})"
+        )
+    tokens = [t.strip().lower() for t in matches[-1].split(",") if t.strip()]
+    if not tokens:
+        return [], (
+            f"empty rendering-root bracket in filename `{name}` — "
+            f"declare one of: {', '.join(ALLOWED_ROOTS)}"
+        )
+    unknown = [t for t in tokens if t not in ALLOWED_ROOTS]
+    if unknown:
+        return [], (
+            f"unknown rendering root(s) {unknown} in filename `{name}` — "
+            f"allowed roots: {', '.join(ALLOWED_ROOTS)}"
+        )
+    # De-dupe, preserve order (first listed = primary).
+    seen: list[str] = []
+    for t in tokens:
+        if t not in seen:
+            seen.append(t)
+    return seen, None
+
+
+# next-action vocabulary is closed (plan D9) — no new codes.
+NEXT_ACTION_FOR_STATUS: dict[str, str] = {
+    "not_found": "supply-from-plugin",
+    "sibling_only": "supply-from-plugin",
+    "not_navigable": "confirm-assumption",
+}
+
+
+def confidence_grade(match_step: str, sdk_status: str) -> str:
+    """Grade a (placeholder × root) verdict (plan §6.3, D8). The JAR can only
+    *demote*: a strong name-match needs `verified` to stay `high`, and SDK truth
+    never promotes a weak (fuzzy) match above `medium`."""
+    if sdk_status == "verified":
+        return "high" if match_step in ("exact", "ci", "terminology") else "medium"
     return "low"
 
 
-def suggest_variable(
+# ---------------------------------------------------------------------------
+# Root-independent candidate derivation (name-match only — plan §5 step 1)
+# ---------------------------------------------------------------------------
+
+
+def derive_variable_candidate(
     v: dict, idx: dict, terminology: dict | None
-) -> tuple[str, str, str]:
-    """Returns (data_source, confidence, reasoning)."""
+) -> dict:
+    """Name-match a variable to a registry candidate path (root-independent).
+
+    Returns a dict: ``{path, match_step, registry_field, base_reason, terminal,
+    fallback_confidence}``. ``terminal`` candidates carry no single $data path
+    (no match / scope violation / ambiguous) — there is nothing for the JAR to
+    check, so the same verdict is replicated across roots with
+    ``sdk_status: skipped``.
+    """
     name = v.get("name") or ""
     context = v.get("context") or {}
     label = context.get("nearest_label") or None
@@ -352,10 +433,20 @@ def suggest_variable(
     name_snake = normalize_mapping_field_name(name)
     name_camel = snake_to_camel(name_snake)
 
-    if not entries:
-        return "", "low", f"no registry match for {name_camel} — next-action: supply-from-plugin"
+    def cand(path="", match_step="none", registry_field="", base_reason="",
+             terminal=False, fallback="low") -> dict:
+        return {
+            "path": path, "match_step": match_step, "registry_field": registry_field,
+            "base_reason": base_reason, "terminal": terminal,
+            "fallback_confidence": fallback,
+        }
 
-    # Apply scope filter
+    if not entries:
+        return cand(
+            base_reason=f"no registry match for {name_camel} — next-action: supply-from-plugin",
+            terminal=True, fallback="low",
+        )
+
     ok: list[dict] = []
     violated: list[tuple[dict, str]] = []
     for e in entries:
@@ -366,7 +457,6 @@ def suggest_variable(
             violated.append((e, s))
 
     if not ok:
-        # All matches are scope violations
         e, scope_stat = violated[0]
         vel = e.get("velocity") or ""
         req = e.get("requires_scope") or []
@@ -382,20 +472,20 @@ def suggest_variable(
                 f"registry candidate `{vel}` requires scope `{foreach_str}` "
                 f"but no loop signal in Leg 1 output — next-action: restructure-template"
             )
-        return "", "low", reason
+        return cand(base_reason=reason, terminal=True, fallback="low")
 
-    # Multiple unambiguous matches → pick-one
     if len(ok) > 1:
         paths = " | ".join(e.get("velocity") or e.get("velocity_amount") or "" for e in ok)
-        return "", "medium", f"{name_camel} has multiple registry candidates — next-action: pick-one: {paths}"
+        return cand(
+            base_reason=f"{name_camel} has multiple registry candidates — next-action: pick-one: {paths}",
+            terminal=True, fallback="medium",
+        )
 
-    # Single match
     e = ok[0]
     vel = e.get("velocity") or ""
     if not vel:
         vel = _charge_path(e, label)
 
-    confidence = _confidence_from_step(step)
     field = e.get("field") or ""
     dn = e.get("display_name") or ""
 
@@ -410,16 +500,78 @@ def suggest_variable(
         else:
             reason = f"case-insensitive match: {name_camel} → {vel}"
     elif step == "terminology":
-        reason = (
-            f"matched via terminology.yaml synonym `{alias}` → canonical `{field}` → {vel}"
-        )
+        reason = f"matched via terminology.yaml synonym `{alias}` → canonical `{field}` → {vel}"
     elif step == "fuzzy":
-        reason = f"fuzzy match: {name_camel} → {vel} — next-action: confirm-assumption"
+        reason = f"fuzzy match: {name_camel} → {vel}"
     else:
-        reason = f"no match for {name_camel} — next-action: supply-from-plugin"
+        reason = f"no match for {name_camel}"
 
     reason += _quantifier_note(e)
-    return vel, confidence, reason
+    return cand(path=vel, match_step=step, registry_field=field, base_reason=reason)
+
+
+def _last_segment(path: str) -> str:
+    return (path or "").rstrip(".").rsplit(".", 1)[-1]
+
+
+def variable_verdict_for_root(candidate: dict, root: dict, classpath: str) -> dict:
+    """Build one ``(variable × root)`` verdict from a candidate + the root's
+    compiled Java type (plan §6.2/§6.3). SDK truth can only demote (D8)."""
+    rid = root["id"]
+    java_type = root.get("java_type")
+    base = candidate["base_reason"]
+
+    # Invoice / unresolved root (D5): schema can hold it, Leg 2 does not resolve.
+    if java_type is None:
+        return {
+            "data_source": "",
+            "confidence": "low",
+            "sdk_status": "skipped",
+            "reasoning": f"root `{rid}` not resolved (D5: invoice deferred); {base}",
+        }
+
+    # No single $data path to check — replicate the name-match verdict.
+    if candidate["terminal"]:
+        return {
+            "data_source": "",
+            "confidence": candidate["fallback_confidence"],
+            "sdk_status": "skipped",
+            "reasoning": base,
+        }
+
+    req = request_fqcn(root["request"])
+    status, detail, hint = classify_path(classpath, java_type, candidate["path"], req)
+    grade = confidence_grade(candidate["match_step"], status)
+    short = java_type.rsplit(".", 1)[-1]
+    last = _last_segment(candidate["path"])
+    step = candidate["match_step"]
+
+    if status == "verified":
+        reasoning = f"{base} — verified {last}() on {short}"
+    elif status == "sibling_only":
+        reasoning = (
+            f"name-match {step} ({candidate['registry_field']}), but {short} has no "
+            f"{last}(); field exists on sibling {hint} — next-action: supply-from-plugin"
+        )
+    elif status == "not_found":
+        reasoning = (
+            f"{short} has no {last}() (name-match {step}: {candidate['path']}) "
+            "— next-action: supply-from-plugin"
+        )
+    elif status == "not_navigable":
+        reasoning = f"{detail} (name-match {step}: {candidate['path']}) — next-action: confirm-assumption"
+    else:  # skipped (no candidate path reached classify)
+        reasoning = base
+
+    out = {
+        "data_source": candidate["path"] if status == "verified" else "",
+        "confidence": grade,
+        "sdk_status": status,
+        "reasoning": reasoning,
+    }
+    if hint:
+        out["sibling_hint"] = hint
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -434,8 +586,9 @@ def suggest_loop_root(
     reg: dict,
 ) -> tuple[str, str, str, str | None, str | None, list[dict]]:
     """
-    Returns (data_source, confidence, reasoning, iterator, foreach, available_coverages).
-    available_coverages is a list (may be empty).
+    Returns (list_velocity, match_step, reasoning, iterator, foreach, available_coverages).
+    ``match_step`` is one of exact|ci|terminology|fuzzy|none (root-independent;
+    the per-root SDK verdict is graded later). available_coverages may be empty.
     """
     ln = loop_name.lower()
     iby_name = idx["iterables_by_name"]
@@ -471,7 +624,7 @@ def suggest_loop_root(
 
     if it is None:
         return (
-            "", "low",
+            "", "none",
             f"loop `{loop_name}` has no matching iterable in registry — next-action: supply-from-plugin",
             None, None, [],
         )
@@ -480,7 +633,6 @@ def suggest_loop_root(
     iterator = str(it.get("iterator") or "")
     foreach = str(it.get("foreach") or "")
     it_name = str(it.get("name") or "")
-    confidence = "high" if step in ("exact", "ci", "terminology") else "medium"
 
     if step == "terminology":
         reasoning = f"matched via terminology.yaml synonym `{alias}` → canonical `{it_name}` → {list_vel}"
@@ -501,7 +653,7 @@ def suggest_loop_root(
                     })
             break
 
-    return list_vel, confidence, reasoning, iterator, foreach, cov_manifest
+    return list_vel, step, reasoning, iterator, foreach, cov_manifest
 
 
 # ---------------------------------------------------------------------------
@@ -577,9 +729,11 @@ def suggest_loop_field(
     idx: dict,
     reg: dict,
 ) -> tuple[str, str, str]:
+    """Returns (velocity, match_step, reasoning). ``match_step`` is
+    exact|fuzzy|none (root-independent; per-root SDK verdict graded later)."""
     m = re.match(r"\$(\w+)\.TBD_(\w+)", ph)
     if not m:
-        return "", "low", "unparseable loop_field placeholder — next-action: needs-skill-update"
+        return "", "none", "unparseable loop_field placeholder — next-action: needs-skill-update"
 
     it_raw, fld_raw = m.group(1), m.group(2)
     fld_snake = normalize_mapping_field_name(fld_raw)
@@ -596,7 +750,7 @@ def suggest_loop_field(
         or iby_plural.get(loop_name.lower())
     )
     if it_entry is None:
-        return "", "low", f"iterator `{it_raw}` not mapped to any iterable — next-action: supply-from-plugin"
+        return "", "none", f"iterator `{it_raw}` not mapped to any iterable — next-action: supply-from-plugin"
 
     it_name = str(it_entry.get("name") or "")
 
@@ -618,23 +772,23 @@ def suggest_loop_field(
     if target in exp_fields:
         e = exp_fields[target]
         vel = e.get("velocity") or ""
-        return vel, "high", f"{fld_snake} → {vel} ({it_name} exposure)"
+        return vel, "exact", f"{fld_snake} → {vel} ({it_name} exposure)"
 
     # Step 4: fuzzy last token on exposure data fields
     tokens = fld_snake.split("_")
     if tokens and tokens[-1] in exp_fields:
         e = exp_fields[tokens[-1]]
         vel = e.get("velocity") or ""
-        return vel, "medium", f"{fld_snake} → {vel} ({it_name} exposure, fuzzy) — next-action: confirm-assumption"
+        return vel, "fuzzy", f"{fld_snake} → {vel} ({it_name} exposure, fuzzy)"
 
     # Coverage field fallback: decompose '<prefix>_<field>' against any coverage
     cov_result = _match_coverage_field(fld_snake, exp_coverages)
     if cov_result:
         vel, cov_q, cov_name = cov_result
         note = _quantifier_note({"quantifier": cov_q, "velocity": vel.rsplit(".data.", 1)[0] if ".data." in vel else vel})
-        return vel, "high", f"{fld_snake} → {vel} ({it_name} {cov_name} coverage){note}"
+        return vel, "exact", f"{fld_snake} → {vel} ({it_name} {cov_name} coverage){note}"
 
-    return "", "low", f"{fld_snake} not found in {it_name} exposure — next-action: supply-from-plugin"
+    return "", "none", f"{fld_snake} not found in {it_name} exposure — next-action: supply-from-plugin"
 
 
 # ---------------------------------------------------------------------------
@@ -652,7 +806,7 @@ def reorder_top_keys(d: dict) -> dict:
         "registry_config_check", "previous_run_id",
         "base_suggested_sha256", "input_mapping_version",
         "input_registry_version", "source", "path_registry",
-        "product", "tooling", "delta_changes",
+        "product", "rendering_roots", "tooling", "delta_changes",
     ]
     out: dict = {}
     for k in head:
@@ -669,52 +823,165 @@ def reorder_top_keys(d: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def loop_root_verdict_for_root(
+    list_vel: str, match_step: str, base_reason: str, root: dict, classpath: str
+) -> dict:
+    """Verdict for a loop's list root (e.g. ``$data.items``) on one root (§6.4)."""
+    rid = root["id"]
+    jt = root.get("java_type")
+    if jt is None:
+        return {"data_source": "", "confidence": "low", "sdk_status": "skipped",
+                "reasoning": f"root `{rid}` not resolved (D5: invoice deferred); {base_reason}"}
+    if match_step == "none" or not list_vel:
+        return {"data_source": "", "confidence": "low", "sdk_status": "skipped",
+                "reasoning": base_reason}
+    status, detail, _ = classify_path(classpath, jt, list_vel)
+    grade = confidence_grade(match_step, status)
+    short = jt.rsplit(".", 1)[-1]
+    last = _last_segment(list_vel)
+    if status == "verified":
+        reasoning = f"{base_reason} — verified {last}() on {short}"
+    elif status == "not_found":
+        reasoning = f"{short} has no {last}() ({base_reason}) — next-action: supply-from-plugin"
+    elif status == "not_navigable":
+        reasoning = f"{detail} — next-action: confirm-assumption"
+    else:
+        reasoning = base_reason
+    return {"data_source": list_vel if status == "verified" else "",
+            "confidence": grade, "sdk_status": status, "reasoning": reasoning}
+
+
+def loop_field_verdict_for_root(
+    field_vel: str, match_step: str, base_reason: str, iterator: str,
+    list_vel: str, root: dict, classpath: str, elem_cache: dict,
+) -> dict:
+    """Verdict for a loop field (e.g. ``$item.data.purchasePrice``) validated
+    against the iterator element type resolved from the root (§6.4)."""
+    rid = root["id"]
+    jt = root.get("java_type")
+    if jt is None:
+        return {"data_source": "", "confidence": "low", "sdk_status": "skipped",
+                "reasoning": f"root `{rid}` not resolved (D5: invoice deferred); {base_reason}"}
+    if match_step == "none" or not field_vel:
+        return {"data_source": "", "confidence": "low", "sdk_status": "skipped",
+                "reasoning": base_reason}
+
+    key = (jt, list_vel)
+    if key not in elem_cache:
+        elem_cache[key] = resolve_element_type(classpath, jt, list_vel) or ""
+    elem = elem_cache[key]
+    short = jt.rsplit(".", 1)[-1]
+    if not elem:
+        return {"data_source": "", "confidence": "low", "sdk_status": "not_navigable",
+                "reasoning": f"cannot resolve iterator element type from {list_vel} on {short} "
+                             f"({base_reason}) — next-action: confirm-assumption"}
+
+    prefix = iterator if iterator.startswith("$") else f"${iterator}"
+    status, detail, _ = classify_path(classpath, elem, field_vel, None, root_prefix=prefix)
+    grade = confidence_grade(match_step, status)
+    elem_short = elem.rsplit(".", 1)[-1]
+    last = _last_segment(field_vel)
+    if status == "verified":
+        reasoning = f"{base_reason} — verified {last}() on {elem_short}"
+    elif status == "not_found":
+        reasoning = f"{elem_short} has no {last}() ({base_reason}) — next-action: supply-from-plugin"
+    elif status == "not_navigable":
+        reasoning = f"{detail} ({base_reason}) — next-action: confirm-assumption"
+    else:
+        reasoning = base_reason
+    return {"data_source": field_vel if status == "verified" else "",
+            "confidence": grade, "sdk_status": status, "reasoning": reasoning}
+
+
 def annotate_mapping(
     mapping: dict,
     reg: dict,
     path_registry_rel: str,
     terminology: dict | None = None,
+    *,
+    roots: list[dict],
+    classpath: str,
 ) -> dict:
+    """Produce the ``.suggested.yaml`` **2.0** shape: top-level ``rendering_roots``
+    plus, per variable/loop, a root-independent ``candidate`` and a per-root
+    ``verdicts`` map grounded in the compiled JARs (plan §6)."""
     idx = build_registry_index(reg)
 
     out = copy.deepcopy(mapping)
-    out["schema_version"] = out.get("schema_version") or "1.0"
-    out["input_mapping_version"] = str(out.get("schema_version", "1.0"))
+    out["schema_version"] = "2.0"
+    out["input_mapping_version"] = str(mapping.get("schema_version", "1.0"))
     out["input_registry_version"] = str(reg.get("schema_version", "1.0"))
     out["path_registry"] = path_registry_rel
     out["product"] = str((reg.get("meta") or {}).get("product", ""))
 
-    for v in out.get("variables") or []:
-        ds, conf, reason = suggest_variable(v, idx, terminology)
-        v["data_source"] = ds
-        v["confidence"] = conf
-        v["reasoning"] = reason
+    out["rendering_roots"] = [
+        {
+            "id": r["id"],
+            "java_type": r.get("java_type"),
+            "request": r.get("request"),
+            "primary": (i == 0),
+        }
+        for i, r in enumerate(roots)
+    ]
 
+    root_ids = [r["id"] for r in roots]
+
+    for v in out.get("variables") or []:
+        cand = derive_variable_candidate(v, idx, terminology)
+        v.pop("data_source", None)
+        v.pop("confidence", None)
+        v.pop("reasoning", None)
+        v["candidate"] = {
+            "path": cand["path"],
+            "match_step": cand["match_step"],
+            "registry_field": cand["registry_field"],
+        }
+        v["verdicts"] = {
+            r["id"]: variable_verdict_for_root(cand, r, classpath) for r in roots
+        }
+
+    elem_cache: dict = {}
     for loop in out.get("loops") or []:
         ln = loop["name"]
-        ds, conf, reason, iterator, foreach, cov_manifest = suggest_loop_root(
+        list_vel, lstep, lreason, iterator, foreach, cov_manifest = suggest_loop_root(
             ln, idx, terminology, reg
         )
-        loop["data_source"] = ds
-        loop["confidence"] = conf
-        loop["reasoning"] = reason
+        loop.pop("data_source", None)
+        loop.pop("confidence", None)
+        loop.pop("reasoning", None)
         loop["type"] = "loop"
         if iterator:
             loop["iterator"] = iterator
         if foreach:
             loop["foreach"] = foreach
+        loop["candidate"] = {
+            "list_velocity": list_vel,
+            "match_step": lstep,
+        }
+        loop["verdicts"] = {
+            r["id"]: loop_root_verdict_for_root(list_vel, lstep, lreason, r, classpath)
+            for r in roots
+        }
         if cov_manifest:
             loop["available_coverages"] = cov_manifest
 
         for fld in loop.get("fields") or []:
             ph = fld.get("placeholder") or ""
-            fds, fconf, freason = suggest_loop_field(ph, ln, idx, reg)
-            fld["data_source"] = fds
-            fld["confidence"] = fconf
-            fld["reasoning"] = freason
+            fvel, fstep, freason = suggest_loop_field(ph, ln, idx, reg)
+            fld.pop("data_source", None)
+            fld.pop("confidence", None)
+            fld.pop("reasoning", None)
+            fld["candidate"] = {"velocity": fvel, "match_step": fstep}
+            fld["verdicts"] = {
+                r["id"]: loop_field_verdict_for_root(
+                    fvel, fstep, freason, iterator or "", list_vel, r, classpath, elem_cache
+                )
+                for r in roots
+            }
 
-    # Stash index metadata for review generation (stripped before write)
+    # Stash index + root metadata for review generation (stripped before write)
     out["_idx"] = idx
+    out["_root_ids"] = root_ids
     return out
 
 
@@ -844,9 +1111,18 @@ def main() -> int:
         choices=("full", "terse", "delta", "batch"),
         default="terse",
         help="Output mode. 'terse' emits condensed review; 'full' adds narrative. "
-             "'delta' requires --base-suggested.",
+             "'delta' is not supported for schema 2.0 (see Leg2 plan D10).",
     )
     ap.add_argument("--base-suggested", type=Path, default=None)
+    ap.add_argument(
+        "--customer-jar", type=Path, default=None,
+        help="customer-config.jar with {Product}Quote/{Product}Segment + request types "
+             "(default: build/customer-config.jar).",
+    )
+    ap.add_argument(
+        "--datamodel-jar", type=Path, default=None,
+        help="core-datamodel-v*.jar (default: newest under build/).",
+    )
     ap.add_argument("--config-dir", type=Path, default=None)
     ap.add_argument("--allow-stale-registry", action="store_true")
     ap.add_argument("--allow-missing-registry-fingerprint", action="store_true")
@@ -860,11 +1136,76 @@ def main() -> int:
     )
     args = ap.parse_args()
 
+    # Delta mode is shape-incompatible with the 2.0 per-root verdicts (D10) —
+    # fail loud rather than silently mis-merge a 1.x base.
+    if args.mode == "delta":
+        print(
+            "ERROR: delta mode not supported for schema 2.0 yet (see Leg2 plan D10); "
+            "use --mode full/terse/batch",
+            file=sys.stderr,
+        )
+        return 2
+
+    repo_root_early = _repo_root().resolve()
+    customer_jar = (
+        args.customer_jar.resolve() if args.customer_jar
+        else (repo_root_early / "build" / "customer-config.jar")
+    )
+    if not customer_jar.exists():
+        print(f"ERROR: customer jar not found: {customer_jar}", file=sys.stderr)
+        return 1
+    datamodel_jar = (
+        args.datamodel_jar.resolve() if args.datamodel_jar
+        else _default_datamodel_jar(repo_root_early)
+    )
+    if datamodel_jar is None or not datamodel_jar.exists():
+        print("ERROR: no core-datamodel jar found (pass --datamodel-jar)", file=sys.stderr)
+        return 1
+    classpath = f"{customer_jar}:{datamodel_jar}"
+
     mapping_text = args.mapping.read_text(encoding="utf-8")
     registry_text = args.registry.read_text(encoding="utf-8")
     mapping = yaml.safe_load(mapping_text)
     reg = yaml.safe_load(registry_text)
     meta = reg.get("meta") if isinstance(reg.get("meta"), dict) else {}
+
+    # --- Rendering roots from the filename brackets (D2, §8) -----------------
+    product = str(meta.get("product", "")).strip()
+    source_value = mapping.get("source") if isinstance(mapping, dict) else None
+    if not source_value:
+        source_value = args.mapping.name
+    root_ids, root_err = parse_rendering_roots(source_value)
+
+    out_stem = args.out.name.replace(".suggested.yaml", "").replace(".yaml", "")
+    if root_err or not product:
+        blocker = root_err or "registry meta.product is empty — cannot resolve rendering roots"
+        review_path = args.review_out or (args.out.parent / f"{out_stem}.review.md")
+        review_path.parent.mkdir(parents=True, exist_ok=True)
+        review_path.write_text(
+            f"# {out_stem}.review.md\n\n"
+            "## Blockers\n\n"
+            f"- **Rendering root**: {blocker}\n\n"
+            "No verdicts were produced. SDK-grounded confidence requires a declared "
+            "rendering root (plan D2/§8). Rename the source to `<stem>(segment).html` "
+            "(or quote/invoice) and re-run.\n",
+            encoding="utf-8",
+        )
+        print(f"BLOCKER: {blocker}", file=sys.stderr)
+        print(f"Wrote {review_path}", file=sys.stderr)
+        return 2
+
+    roots = roots_for_product(product, root_ids)
+    missing_types = [
+        r["java_type"] for r in roots
+        if r.get("java_type") and not _class_exists(classpath, r["java_type"])
+    ]
+    if missing_types:
+        print(
+            "ERROR: declared rendering root type(s) not found in JARs: "
+            + ", ".join(missing_types),
+            file=sys.stderr,
+        )
+        return 1
 
     gate = evaluate_registry_config_gate(
         config_dir=args.config_dir,
@@ -903,10 +1244,10 @@ def main() -> int:
         base_bytes = args.base_suggested.read_bytes()
         base_suggested = yaml.safe_load(base_bytes.decode("utf-8"))
 
-    if args.mode == "delta" and base_suggested is not None:
-        suggested = merge_delta(base_suggested, mapping, reg, path_registry_rel, terminology)
-    else:
-        suggested = annotate_mapping(mapping, reg, path_registry_rel, terminology)
+    suggested = annotate_mapping(
+        mapping, reg, path_registry_rel, terminology,
+        roots=roots, classpath=classpath,
+    )
 
     # Strip volatile keys before stamping
     for k in (
@@ -961,7 +1302,7 @@ def main() -> int:
     else:
         emb_fp = None
 
-    suggested["schema_version"] = "1.1"
+    suggested["schema_version"] = "2.0"
     suggested["run_id"] = run_id
     suggested["mode"] = args.mode
     suggested["generated_at"] = gen_at
@@ -988,6 +1329,7 @@ def main() -> int:
 
     # Strip internal index from YAML output
     idx_for_review = suggested.pop("_idx", {})
+    root_ids_for_review = suggested.pop("_root_ids", root_ids)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     stem = args.out.name.replace(".suggested.yaml", "").replace(".yaml", "")
@@ -1003,8 +1345,9 @@ def main() -> int:
     args.out.write_text(header + body, encoding="utf-8")
     result_sha = sha256_file(args.out)
 
-    # Re-attach idx for review generation (not written to YAML)
+    # Re-attach idx + root ids for review generation (not written to YAML)
     suggested["_idx"] = idx_for_review
+    suggested["_root_ids"] = root_ids_for_review
 
     review_path = args.review_out or (args.out.parent / f"{stem}.review.md")
     _write_review_md(

@@ -1,0 +1,174 @@
+# suggested.suggested.yaml
+# Suggested mapping — review and confirm each data_source before running the
+# substitution step. Edit any data_source value, then save as policy-template.mapping.yaml.
+
+schema_version: '2.0'
+run_id: 49b2b991-8986-4a47-9ef7-0d04452fc5cd
+mode: terse
+generated_at: '2026-06-03T09:40:48Z'
+input_mapping_sha256: 65a0c09c42522d9d248307d7ec51ec0ea2d84aa2756e007ca459046547a6c1b3
+input_registry_sha256: 893e6663286078d487a889a4342e70090bf13143656a5edc5c857e3af5561898
+registry_schema_version: '1.1'
+registry_generated_at: '2026-06-03T09:40:06.316465+00:00'
+registry_config_dir: /Users/joshualawrence/Projects/Cursor/Experiments/VelocityConverter1stLeg/conformance/fixtures/itemcare-jar/socotra-config
+registry_source_config_sha256: 79f8ffedc7298f7e039dc5d6d25f6148f56f8147195c8d998115d4148936b56d
+live_source_config_sha256: null
+registry_config_verified: false
+registry_config_check: skipped_no_config_dir
+input_mapping_version: '1.0'
+input_registry_version: '1.1'
+source: itemcare-jar(segment).html
+path_registry: path-registry.yaml
+product: ItemCare
+rendering_roots:
+- id: segment
+  java_type: com.socotra.deployment.customer.ItemCareSegment
+  request: ItemCareRequest
+  primary: true
+tooling:
+  mapping_suggester:
+    version: leg2_fill_mapping.py
+    ruleset_id: generic_registry_v2
+variables:
+- name: LOCATOR
+  placeholder: $TBD_LOCATOR
+  type: variable
+  context:
+    parent_tag: p
+    line: 10
+    nearest_label: Locator
+  candidate:
+    path: $data.locator
+    match_step: exact
+    registry_field: locator
+  verdicts:
+    segment:
+      data_source: $data.locator
+      confidence: high
+      sdk_status: verified
+      reasoning: 'exact match: locator → $data.locator — verified locator() on ItemCareSegment'
+- name: POLICY_NUMBER
+  placeholder: $TBD_POLICY_NUMBER
+  type: variable
+  context:
+    parent_tag: p
+    line: 11
+    nearest_label: Policy Number
+  candidate:
+    path: $data.policyNumber
+    match_step: exact
+    registry_field: policyNumber
+  verdicts:
+    segment:
+      data_source: ''
+      confidence: low
+      sdk_status: sibling_only
+      reasoning: 'name-match exact (policyNumber), but ItemCareSegment has no policyNumber(); field exists on sibling Policy.policyNumber()
+        — next-action: supply-from-plugin'
+      sibling_hint: Policy.policyNumber()
+- name: POLICYHOLDER_NAME
+  placeholder: $TBD_POLICYHOLDER_NAME
+  type: variable
+  context:
+    parent_tag: p
+    line: 12
+    nearest_label: Policyholder
+  candidate:
+    path: $data.account.data.name
+    match_step: fuzzy
+    registry_field: name
+  verdicts:
+    segment:
+      data_source: ''
+      confidence: low
+      sdk_status: not_found
+      reasoning: 'ItemCareSegment has no name() (name-match fuzzy: $data.account.data.name) — next-action: supply-from-plugin'
+- name: EFFECTIVE_START_DATE
+  placeholder: $TBD_EFFECTIVE_START_DATE
+  type: variable
+  context:
+    parent_tag: p
+    line: 13
+    nearest_label: Effective Start Date
+  candidate:
+    path: ''
+    match_step: none
+    registry_field: ''
+  verdicts:
+    segment:
+      data_source: ''
+      confidence: low
+      sdk_status: skipped
+      reasoning: 'no registry match for effectiveStartDate — next-action: supply-from-plugin'
+loops:
+- name: items
+  placeholder: $TBD_items
+  type: loop
+  context:
+    nearest_heading: Items
+    line: 20
+  fields:
+  - name: goods_category_code
+    placeholder: $item.TBD_goods_category_code
+    type: loop_field
+    context:
+      parent_tag: td
+      line: 22
+      nearest_label: Goods Category Code
+    candidate:
+      velocity: $item.data.goodsCategoryCode
+      match_step: exact
+    verdicts:
+      segment:
+        data_source: $item.data.goodsCategoryCode
+        confidence: high
+        sdk_status: verified
+        reasoning: goods_category_code → $item.data.goodsCategoryCode (Item exposure) — verified goodsCategoryCode() on ItemPolicy
+  iterator: $item
+  foreach: '#foreach ($item in $data.items)'
+  candidate:
+    list_velocity: $data.items
+    match_step: ci
+  verdicts:
+    segment:
+      data_source: $data.items
+      confidence: high
+      sdk_status: verified
+      reasoning: loop `items` → iterable `Item` → $data.items — verified items() on ItemCareSegment
+  available_coverages:
+  - name: Accessories
+    velocity: $item.Accessories
+    quantifier: '?'
+    cardinality: zero_or_one
+  - name: AccidentalDamage
+    velocity: $item.AccidentalDamage
+    quantifier: '?'
+    cardinality: zero_or_one
+  - name: Breakdown
+    velocity: $item.Breakdown
+    quantifier: '?'
+    cardinality: zero_or_one
+  - name: Loss
+    velocity: $item.Loss
+    quantifier: '?'
+    cardinality: zero_or_one
+  - name: RepeatFaultThree
+    velocity: $item.RepeatFaultThree
+    quantifier: '?'
+    cardinality: zero_or_one
+  - name: Replacement
+    velocity: $item.Replacement
+    quantifier: '?'
+    cardinality: zero_or_one
+  - name: ReplacementRepair
+    velocity: $item.ReplacementRepair
+    quantifier: '?'
+    cardinality: zero_or_one
+  - name: ReplacementWO
+    velocity: $item.ReplacementWO
+    quantifier: '?'
+    cardinality: zero_or_one
+  - name: Theft
+    velocity: $item.Theft
+    quantifier: '?'
+    cardinality: zero_or_one

@@ -258,15 +258,34 @@ mapping-suggester reports them under "Unrecognised inputs" in
 
 ## Artifact: `<stem>.suggested.yaml`
 
-Produced by: `mapping-suggester` (Leg 2). Current version: **1.1** (MINOR: run linkage + provenance + optional delta audit).
+Produced by: `mapping-suggester` (Leg 2). Current version: **2.0** (MAJOR: per-(placeholder × rendering-root) verdicts grounded in the compiled JARs).
+
+> **MAJOR break (2.0).** The scalar `data_source` / `confidence` / `reasoning`
+> on each variable/loop is **replaced** by a root-independent `candidate` plus a
+> per-root `verdicts` map, and a new top-level `rendering_roots` list is added.
+> Confidence is now decided by introspecting `build/*.jar` (`javap`) per
+> rendering root — the JARs are the authority (Leg2 plan D1/D4). Downstream
+> consumers that only support `1.x` (Leg 3, Leg 4) MUST halt with an
+> upgrade-path message until the §14 harmonisation lands; until then they read a
+> 2.0 file as having no high-confidence scalar fields. Delta mode is **not
+> supported** on 2.0 (Leg2 plan D10) — `--mode delta` exits non-zero.
+
+### Rendering roots (2.0)
+
+A document renders against the root(s) declared in its source filename brackets
+(`<stem>(<root>[,<root>...]).html`, e.g. `Simple-form(segment).html`). Leg 2
+parses this from the mapping's `source:` value; absence is a hard blocker
+surfaced in `<stem>.review.md` (no verdicts written). Allowed roots: `quote`,
+`segment`, `invoice` (invoice is enumerable but **not resolved** in the first
+cut — D5). The first listed root is primary.
 
 ### Top-level sections
 
 | Key | Type | Description |
 |---|---|---|
-| `schema_version` | string | `'1.1'`. First key. |
+| `schema_version` | string | `'2.0'`. First key. |
 | `run_id` | string | UUID for this run; matches JSONL `run_id`. |
-| `mode` | string | `full` \| `terse` \| `delta` \| `batch`. |
+| `mode` | string | `full` \| `terse` \| `batch`. `delta` is rejected on 2.0 (D10). |
 | `generated_at` | string | ISO-8601 UTC timestamp. |
 | `input_mapping_sha256` | string | SHA-256 of mapping file bytes read. |
 | `input_registry_sha256` | string | SHA-256 of registry file bytes read. |
@@ -281,29 +300,63 @@ Produced by: `mapping-suggester` (Leg 2). Current version: **1.1** (MINOR: run l
 | `base_suggested_sha256` | string? | SHA-256 of base `.suggested.yaml` bytes for delta. |
 | `input_mapping_version` | string | `schema_version` read from `<stem>.mapping.yaml`. |
 | `input_registry_version` | string | `schema_version` read from `path-registry.yaml`. |
-| `source` | string | Copied from mapping. |
+| `source` | string | Copied from mapping (carries the `(root)` bracket Leg 2 parses). |
 | `path_registry` | string | Path to the registry file used (relative to suggested output when under the repo, else absolute). |
 | `product` | string | `meta.product` from the registry. |
+| `rendering_roots` | list of map | **2.0** — declared roots: `{id, java_type, request, primary}`. `java_type` is `null` for invoice (deferred). |
 | `tooling` | map? | Optional `{ mapping_suggester: { version, ruleset_id } }`. |
-| `delta_changes` | map? | When `mode: delta`, audit object (`added`, `changed`, `cleared`, …). |
 | `variables` | list of map | Variable entries (see below). |
 | `loops` | list of map | Loop entries. |
 
 Every key from the input mapping YAML is preserved verbatim. Any
 unrecognised keys pass through unchanged.
 
-### Variable-entry keys (suggested)
+### `rendering_roots` entry keys (2.0)
 
-Superset of the mapping entry:
+| Key | Type | Description |
+|---|---|---|
+| `id` | enum | `quote` \| `segment` \| `invoice`. |
+| `java_type` | string? | Fully-qualified `renderingData` type (e.g. `com.socotra.deployment.customer.ItemCareSegment`); `null` for invoice (D5). |
+| `request` | string | Plugin request type simple name (`ItemCareRequest`, `ItemCareQuoteRequest`, `InvoiceDetailsRequest`). |
+| `primary` | bool | `true` for the first declared root. |
+
+### Variable-entry keys (suggested 2.0)
+
+Superset of the mapping entry. The scalar `data_source`/`confidence`/`reasoning`
+of 1.x is replaced by `candidate` + `verdicts`:
 
 | Key | Type | Description |
 |---|---|---|
 | `name` / `placeholder` / `type` / `context` | — | Copied from mapping, verbatim. |
-| `data_source` | string | Suggested Velocity path (or empty when confidence is low). Copied verbatim from the registry's `velocity` / `velocity_amount` / `list_velocity`. |
-| `confidence` | enum | `high` / `medium` / `low`. |
-| `reasoning` | string | Prose explaining the suggestion. For `medium` and `low` entries, includes exactly one next-action from the Ambiguity bubble-up vocabulary. |
+| `candidate` | map | Root-independent name-match: `{path, match_step, registry_field}`. `path` is the registry `velocity` (empty when no single match). `match_step` ∈ `exact` \| `ci` \| `terminology` \| `fuzzy` \| `none`. |
+| `verdicts` | map | One entry per root id in `rendering_roots`. Each verdict is the per-root grading below. |
 
-### Loop-entry keys (suggested)
+#### Verdict shape (per root, 2.0)
+
+| Key | Type | Description |
+|---|---|---|
+| `data_source` | string | The candidate path **only when `sdk_status: verified`**; empty otherwise (no invented paths). |
+| `confidence` | enum | `high` / `medium` / `low`. Graded by `confidence_grade(match_step, sdk_status)`. |
+| `sdk_status` | enum | `verified` \| `not_found` \| `sibling_only` \| `not_navigable` \| `skipped` (see table below). |
+| `sibling_hint` | string? | Present on `sibling_only` — e.g. `Policy.policyNumber()` (the request-reachable sibling that exposes the field). |
+| `reasoning` | string | Prose; carries exactly one next-action for non-`high` verdicts. |
+
+#### `sdk_status` enum + grading (2.0)
+
+| `sdk_status` | Meaning | Confidence given `match_step` |
+|---|---|---|
+| `verified` | path navigable on this root via `javap` | `high` if exact/ci/terminology; `medium` if fuzzy |
+| `not_found` | no such accessor on the root, nor on a sibling | `low` + `supply-from-plugin` |
+| `sibling_only` | absent on root, present on `Policy`/`Transaction` (request sibling) | `low` + `supply-from-plugin` (+ `sibling_hint`) |
+| `not_navigable` | a path segment returns a scalar/`java.*` and can't be walked further | `low` + `confirm-assumption` |
+| `skipped` | invoice root (D5), or no candidate path to check | `low` |
+
+**The JAR can only demote** (D8): a `fuzzy` name-match that happens to be
+`verified` stays `medium`; SDK truth never promotes a weak match to `high`.
+Method resolution is case-insensitive to mirror Velocity property access
+(`$item.Accessories` → `accessories()`).
+
+### Loop-entry keys (suggested 2.0)
 
 Superset of the mapping loop entry plus:
 
@@ -311,8 +364,10 @@ Superset of the mapping loop entry plus:
 |---|---|---|
 | `iterator` | string | Copied from the registry iterables index. |
 | `foreach` | string | Literal `#foreach (…)` directive. |
-| `confidence` / `reasoning` | — | Same grading as variables. |
+| `candidate` | map | `{list_velocity, match_step}` (root-independent). |
+| `verdicts` | map | Per-root verdict for the loop list root (`list_velocity` validated against each root's Java type). |
 | `available_coverages` | list of map? | Emitted on exposure loops. Lists the coverages on the exposure with their `velocity`, `quantifier`, `cardinality`. |
+| `fields` | list of map | Each loop field carries `candidate: {velocity, match_step}` + per-root `verdicts`, validated against the **iterator element type** resolved from the root via `javap` (e.g. `ItemCareSegment.items()` → `ItemPolicy`). |
 
 ### Next-action vocabulary (used inside `reasoning`)
 
@@ -330,21 +385,24 @@ bubble-up" for semantics.
 
 ## Artifact: `<stem>.review.md`
 
-Produced by: `mapping-suggester` (Leg 2). Current version: **1.1**.
+Produced by: `mapping-suggester` (Leg 2). Current version: **2.0** (per-root rendering, tracks the `.suggested.yaml` MAJOR bump).
 
 ### Required layout
 
 | Position | Content | Description |
 |---|---|---|
-| Line 1 | `<!-- schema_version: 1.1 -->` | HTML comment carrying the **review document** MINOR version. Parseable without loading the body. |
+| Line 1 | `<!-- schema_version: 2.0 -->` | HTML comment carrying the **review document** version. Parseable without loading the body. |
 | Line 2 | (blank) | |
-| Section 1 | `# Mapping review — <stem>` | Metadata bullets. Must include `Schema:` bullet with `<supported> (mapping <M>.<N>, registry <M>.<N>)` where `<supported>` is this review layout version (aligns with `scripts/leg2_fill_mapping.py` output). |
-| Section 2 | `## Summary` | Counts table + next-action breakdown. |
-| Section 3 | `## Blockers` | One entry per `low` item. Always render the heading; print "No blockers." when empty. |
-| Section 4 | `## Assumptions to confirm` | Grouped checklist of `confirm-assumption` items. |
-| Section 5 | `## Cross-scope warnings` | Table of name-match-but-scope-wrong variables. |
-| Section 6 | `## Done` | Collapsed `<details>` list of high-confidence mappings. |
+| Section 1 | `# Mapping review — <stem>` | Metadata bullets, incl. a `Rendering roots:` bullet and a `Schema:` bullet `2.0 (mapping <M>.<N>, registry <M>.<N>)`. |
+| Section 2 | `## Summary (per rendering root)` | Per-root high/medium/low table + next-action breakdown (primary root). |
+| Section 3 | `## Blockers (low confidence, per root)` | One row per `(placeholder × root)` low verdict, with `sdk_status` + next-action. A field can be a blocker on one root and `Done` on another. |
+| Section 4 | `## Assumptions to confirm (medium confidence, per root)` | Per-root medium verdicts. |
+| Section 5 | `## Cross-scope warnings` | Table of name-match-but-scope-wrong variables (primary root). |
+| Section 6 | `## Done (high confidence, per root)` | Collapsed `<details>` list of high-confidence `(placeholder × root)` verdicts. |
 | Section 7 | `## Unrecognised inputs` | Table of keys the shape probe flagged. Always render; print "No unrecognised inputs." when empty. |
+
+A missing/invalid rendering-root declaration short-circuits to a `## Blockers`
+review with no verdicts (Leg2 plan §8).
 
 **v1.1 extensions (tool-emitted; optional in frozen conformance goldens):**
 between Section 1 and `## Summary`, `scripts/leg2_fill_mapping.py` may emit
@@ -660,6 +718,30 @@ After editing, the reviewer copies the `data_source` value into the
 
 ## Change log
 
+- **2.0 — 2026-06-03 — Root-aware, SDK-grounded confidence (MAJOR on
+  `.suggested.yaml` + `.review.md`).** Leg 2 now grades confidence per
+  **(placeholder × rendering root)** by introspecting the compiled
+  `build/*.jar` via `javap` — the JARs are the authority for which `$data.*`
+  paths exist on the quote / segment / invoice root a document renders against
+  (Leg2 plan D1). The scalar `data_source`/`confidence`/`reasoning` on each
+  variable/loop is **replaced** by a root-independent `candidate` plus a per-root
+  `verdicts` map; a new top-level `rendering_roots` list is added; the rendering
+  root is declared in the source filename brackets `<stem>(<root>).html` (D2,
+  no inference — missing brackets are a hard blocker). New `sdk_status` enum
+  (`verified` / `not_found` / `sibling_only` / `not_navigable` / `skipped`) with
+  a "JAR can only demote" grading rule (D8). The canonical fix: `$data.policyNumber`
+  on the `ItemCare` segment root is now `low` + `sibling_only` +
+  `Policy.policyNumber()` instead of a false `high`. Added shared
+  `scripts/sdk_introspect.py` (factored from Leg 4's `javap` helpers; Leg 4
+  imports them back, behaviour unchanged). `--mode delta` is blocked on 2.0
+  (D10). Invoice-root resolution is out of the first cut (D5). **Downstream
+  impact:** Leg 3 / Leg 4 support only `1.x` and MUST halt with an upgrade
+  message until the §14 harmonisation lands; until then they read a 2.0 file as
+  having no high-confidence scalar fields. Conformance `suggested`/`review`
+  goldens for products **without** build JARs cannot be regenerated to true 2.0
+  (SDK grounding requires the compiled product JARs) — they remain at 1.x and
+  the conformance runner does not auto-run Leg 2, so the registry checks are
+  unaffected. See `.cursor/plans/pipeline-improvements/Leg2-root-aware-confidence/`.
 - **1.0 — 2026-04-22 — Initial contract.** Introduced `schema_version`
   on all artifacts, the recognised context-signal vocabulary, the
   Step 2a shape probe, and the `needs-skill-update` next-action code.

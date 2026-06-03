@@ -22,19 +22,26 @@ Per fixture, the runner:
    result to <fixture>/actual/path-registry.yaml.
 3. Canonicalises both the actual and the golden registries (strips
    volatile fields — see IGNORED_REGISTRY_PATHS below) and diffs.
-4. If the agent has re-run the suggester and left
-   <fixture>/actual/suggested.yaml and/or actual/review.md next to
-   the mapping, diffs those against their goldens too (suggested is
-   canonicalised against a small volatile-key list; review is diffed
-   as text with the Generated-at bullet and a couple of schema bullet
-   date fragments normalised).
-5. Reports pass/fail and exits non-zero on any diff.
+4. JAR-backed fixtures only (those with a leg2.json marker): runs
+   leg2_fill_mapping.py in deterministic terse mode against the frozen
+   golden registry + the build/*.jar set, writing actual/suggested.yaml
+   + actual/review.md. This is the schema-2.0, SDK-grounded confidence
+   path (Leg2-root-aware-confidence plan, D1) — it needs the compiled
+   product JARs, which only exist for the real ItemCare product, so it
+   is opt-in rather than run on every (synthetic) fixture.
+5. If actual/suggested.yaml and/or actual/review.md exist (from step 4
+   or left by an agent), diffs them against their goldens (suggested is
+   canonicalised against a volatile-key list; review is text-diffed with
+   the volatile bullets — run id, paths, sha, timestamps, registry
+   lineage — normalised).
+6. Reports pass/fail and exits non-zero on any diff.
 
 What the runner does NOT automate
 ---------------------------------
 
-The runner never invokes the mapping-suggester skill. That is an
-agent-driven step. To refresh suggested/review goldens:
+The runner never invokes the mapping-suggester skill's *narrative* (full
+mode) step. For non-JAR fixtures it does not run Leg 2 at all. To refresh
+suggested/review goldens for a fixture without a leg2.json marker:
 
 1. Have an agent run the suggester on a fixture's mapping.yaml with
    the fixture's golden path-registry.yaml.
@@ -77,7 +84,16 @@ except ImportError:
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURES_DIR = REPO_ROOT / "conformance" / "fixtures"
 EXTRACT_SCRIPT = REPO_ROOT / ".cursor" / "skills" / "mapping-suggester" / "scripts" / "extract_paths.py"
+LEG2_SCRIPT = REPO_ROOT / "scripts" / "leg2_fill_mapping.py"
 LEGACY_ROOT_REGISTRY = REPO_ROOT / "path-registry.yaml"
+
+# A fixture opts in to a JAR-backed Leg 2 run (schema 2.0, SDK-grounded
+# confidence) by dropping a leg2.json marker beside its mapping. The runner
+# then runs leg2_fill_mapping.py in deterministic terse mode against the
+# build/*.jar set and diffs the actual suggested/review against the 2.0
+# goldens. Fixtures without the marker keep registry-only behaviour: their
+# suggested/review goldens are only compared if an agent leaves an actual/.
+LEG2_MARKER = "leg2.json"
 
 
 # ---------------------------------------------------------------------------
@@ -103,12 +119,25 @@ IGNORED_SUGGESTED_PATHS: tuple[str, ...] = (
     "previous_run_id",
     "delta_changes",
     "registry_config_check",
+    # Relative path from the suggested.yaml's dir to the registry input; differs
+    # between an in-place golden (path-registry.yaml) and the runner writing to
+    # actual/ (../golden/path-registry.yaml). Layout-dependent, not output.
+    "path_registry",
 )
 
 # Review-file prefixes whose body after the colon gets normalised to a
-# fixed sentinel. Compared as text, not YAML.
+# fixed sentinel. Compared as text, not YAML. These carry run-to-run volatile
+# content (uuids, timestamps, sha digests, machine-absolute paths, and the
+# golden-vs-actual output path) that must not count as a diff — the meaningful
+# review content (summary tables, blockers, per-root verdicts) is left intact.
 NORMALISED_REVIEW_PREFIXES: tuple[str, ...] = (
     "- Generated at:",
+    "- Run id:",
+    "- Source mapping:",
+    "- Suggested output:",
+    "- Path registry:",
+    "- Inputs:",
+    "- Registry lineage:",
 )
 
 
@@ -218,6 +247,41 @@ def _run_extract_paths(fixture: Path) -> Path:
     return actual_registry
 
 
+def _run_leg2(fixture: Path) -> None:
+    """Run leg2_fill_mapping.py for a JAR-backed fixture (opt-in via leg2.json).
+
+    Deterministic terse mode against the frozen golden registry + the build/*.jar
+    set; writes <fixture>/actual/suggested.yaml + actual/review.md so the existing
+    diff logic compares them against the 2.0 goldens. All paths are repo-root
+    relative so the review's path bullets are stable (and normalised regardless).
+    Raises RuntimeError on a non-zero exit (e.g. missing JARs — Leg2 plan D1).
+    """
+    marker = fixture / LEG2_MARKER
+    cfg = yaml.safe_load(marker.read_text(encoding="utf-8")) or {}
+    mode = str(cfg.get("mode", "terse"))
+
+    actual_dir = fixture / "actual"
+    actual_dir.mkdir(exist_ok=True)
+    rel = lambda p: str(p.relative_to(REPO_ROOT))
+    cmd = [
+        sys.executable,
+        rel(LEG2_SCRIPT),
+        "--mapping",    rel(fixture / "mapping.yaml"),
+        "--registry",   rel(fixture / "golden" / "path-registry.yaml"),
+        "--out",        rel(actual_dir / "suggested.yaml"),
+        "--review-out", rel(actual_dir / "review.md"),
+        "--mode",       mode,
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=str(REPO_ROOT))
+    if proc.returncode != 0:
+        raise RuntimeError(
+            "leg2_fill_mapping.py failed for fixture {} (exit {}):\n"
+            "stdout:\n{}\nstderr:\n{}".format(
+                fixture.name, proc.returncode, proc.stdout, proc.stderr,
+            )
+        )
+
+
 def _diff_yaml(actual_path: Path, golden_path: Path,
                ignored: tuple[str, ...]) -> str | None:
     if not golden_path.exists():
@@ -260,6 +324,11 @@ def _evaluate_fixture(fixture: Path) -> FixtureResult:
     registry_status = "pass" if registry_diff is None else "fail"
     if registry_diff:
         diffs["path-registry.yaml"] = registry_diff
+
+    # JAR-backed fixtures (leg2.json marker): run Leg 2 now so the suggested/
+    # review diffs below exercise SDK-grounded 2.0 output end-to-end.
+    if (fixture / LEG2_MARKER).exists():
+        _run_leg2(fixture)
 
     actual_suggested = fixture / "actual" / "suggested.yaml"
     golden_suggested = fixture / "golden" / "suggested.yaml"

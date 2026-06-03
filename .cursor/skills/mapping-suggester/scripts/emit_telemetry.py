@@ -74,14 +74,31 @@ def extract_next_action(reasoning: str, confidence: str) -> str | None:
     return None
 
 
-def build_placeholder_record(entry: dict, *, ts: str, run_id: str) -> dict:
+def build_placeholder_record(
+    entry: dict, *, ts: str, run_id: str, root_id: str | None = None
+) -> dict:
+    """One telemetry record. Schema 2.0: pass ``root_id`` to read that root's
+    verdict and stamp ``root`` + ``sdk_status``. Schema 1.x: omit ``root_id``
+    and read the legacy scalar fields off the entry."""
     ctx = entry.get("context") or {}
     unknown = sorted(k for k in ctx.keys() if k not in V1_RECOGNISED_CONTEXT_KEYS)
-    data_source = entry.get("data_source")
+
+    verdicts = entry.get("verdicts")
+    if root_id is not None and isinstance(verdicts, dict):
+        verdict = verdicts.get(root_id) or {}
+        data_source = verdict.get("data_source")
+        confidence = verdict.get("confidence", "low")
+        reasoning = verdict.get("reasoning", "") or ""
+        sdk_status = verdict.get("sdk_status")
+    else:
+        data_source = entry.get("data_source")
+        confidence = entry.get("confidence", "low")
+        reasoning = entry.get("reasoning", "") or ""
+        sdk_status = None
+
     chosen = data_source if (isinstance(data_source, str) and data_source) else None
-    confidence = entry.get("confidence", "low")
-    next_action = extract_next_action(entry.get("reasoning", "") or "", confidence)
-    return {
+    next_action = extract_next_action(reasoning, confidence)
+    rec = {
         "ts": ts,
         "run_id": run_id,
         "kind": "placeholder",
@@ -98,6 +115,11 @@ def build_placeholder_record(entry: dict, *, ts: str, run_id: str) -> dict:
         "rejected_candidates": [],
         "unknown_context_keys": unknown,
     }
+    if root_id is not None:
+        rec["root"] = root_id
+        if sdk_status is not None:
+            rec["sdk_status"] = sdk_status
+    return rec
 
 
 def collect_registry_paths(registry: dict) -> list[str]:
@@ -209,15 +231,23 @@ def derive_run(
     suggested = yaml.safe_load(suggested_path.read_text())
     registry = yaml.safe_load(registry_path.read_text())
 
+    # Schema 2.0: one record per (placeholder × rendering root). Schema 1.x:
+    # one record per placeholder (root_ids == [None]).
+    root_ids = [r.get("id") for r in (suggested.get("rendering_roots") or []) if r.get("id")]
+    if not root_ids:
+        root_ids = [None]
+
     placeholder_records: list[dict] = []
     for entry in suggested.get("variables") or []:
-        placeholder_records.append(
-            build_placeholder_record(entry, ts=ts, run_id=run_id)
-        )
+        for rid in root_ids:
+            placeholder_records.append(
+                build_placeholder_record(entry, ts=ts, run_id=run_id, root_id=rid)
+            )
     for entry in suggested.get("loops") or []:
-        placeholder_records.append(
-            build_placeholder_record(entry, ts=ts, run_id=run_id)
-        )
+        for rid in root_ids:
+            placeholder_records.append(
+                build_placeholder_record(entry, ts=ts, run_id=run_id, root_id=rid)
+            )
 
     summary = build_summary_record(
         ts=ts,

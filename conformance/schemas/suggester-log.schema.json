@@ -22,6 +22,11 @@
       "type": "string",
       "enum": ["high", "medium", "low"]
     },
+    "sdk_status": {
+      "type": "string",
+      "description": "Schema 2.0 — per-root JAR introspection outcome for this placeholder.",
+      "enum": ["verified", "not_found", "sibling_only", "not_navigable", "skipped"]
+    },
     "next_action": {
       "description": "Closed vocabulary from mapping-suggester SKILL.md. `null` only on high-confidence rows where no follow-up is required.",
       "oneOf": [
@@ -41,7 +46,7 @@
     },
     "placeholder": {
       "type": "object",
-      "description": "One record per variable or loop observed in the mapping YAML.",
+      "description": "Schema 1.x: one record per variable or loop. Schema 2.0: one record per (variable/loop × rendering root), carrying `root` + `sdk_status`.",
       "required": [
         "ts",
         "run_id",
@@ -92,6 +97,11 @@
         },
         "confidence": { "$ref": "#/$defs/confidence" },
         "next_action": { "$ref": "#/$defs/next_action" },
+        "root": {
+          "type": "string",
+          "description": "Schema 2.0 — rendering root this verdict is for (one placeholder record per (placeholder × root))."
+        },
+        "sdk_status": { "$ref": "#/$defs/sdk_status" },
         "rejected_candidates": {
           "type": "array",
           "description": "Registry paths considered but not chosen, each with a machine-readable rejection reason.",
