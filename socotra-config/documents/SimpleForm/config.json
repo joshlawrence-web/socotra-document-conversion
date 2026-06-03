@@ -1,0 +1,9 @@
+{
+  "displayName" : "SimpleForm",
+  "scope" : "quote",
+  "format" : "pdf",
+  "rendering" : "dynamic",
+  "trigger" : "accepted",
+  "portrait" : true,
+  "pageSize" : "letter"
+}

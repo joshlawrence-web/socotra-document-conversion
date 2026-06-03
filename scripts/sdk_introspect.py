@@ -58,6 +58,13 @@ def _default_datamodel_jar(repo_root: Path) -> Path | None:
     return max(candidates, key=_version_key) if candidates else None
 
 
+def _default_slf4j_jar(repo_root: Path) -> Path | None:
+    """Any slf4j-api-*.jar under build/."""
+    build = repo_root / "build"
+    candidates = list(build.glob("slf4j-api-*.jar"))
+    return candidates[0] if candidates else None
+
+
 # ---------------------------------------------------------------------------
 # JAR introspection via javap
 # ---------------------------------------------------------------------------
@@ -153,16 +160,18 @@ def _lookup_method(methods: dict[str, str], part: str) -> tuple[str, str] | None
 # ---------------------------------------------------------------------------
 
 
-def validate_path(classpath: str, segment_fqcn: str, data_source: str) -> tuple[str, str]:
-    """Walk a `$data.*` path against the segment type. Returns (status, detail)
+def validate_path(
+    classpath: str, segment_fqcn: str, data_source: str, root_prefix: str = "$data"
+) -> tuple[str, str]:
+    """Walk a path against the given type. Returns (status, detail)
     where status is 'ok', 'warning', or 'skipped'. Never raises.
 
     This is the **Leg 4** contract — kept byte-for-byte so the plugin report is
     unchanged. Leg 2 uses the richer :func:`classify_path` instead."""
     src = (data_source or "").strip()
-    if not src.startswith("$data"):
-        return "skipped", f"not a $data path: {src or '(empty)'}"
-    rest = src[len("$data"):].lstrip(".")
+    if not src.startswith(root_prefix):
+        return "skipped", f"not a {root_prefix} path: {src or '(empty)'}"
+    rest = src[len(root_prefix):].lstrip(".")
     if not rest:
         return "ok", "resolves to renderingData root"
     parts = rest.split(".")
@@ -227,6 +236,60 @@ def roots_for_product(product: str, root_ids: list[str]) -> list[dict]:
     return out
 
 
+def jar_candidate(
+    classpath: str,
+    root_fqcn: str,
+    name_camel: str,
+    label: str | None = None,
+    root_prefix: str = "$data",
+) -> dict | None:
+    """Probe the root's zero-arg methods when the registry has no candidate.
+
+    Tries exact → case-insensitive → prefix-fuzzy → label-word-fuzzy against
+    ``name_camel`` (and optionally ``label``).  Only top-level paths are produced;
+    nested navigation belongs in the registry.
+
+    Returns ``{method_name, path, match_step}`` or ``None``.
+    """
+    methods = _zero_arg_methods(classpath, root_fqcn)
+    if not methods:
+        return None
+
+    nl = name_camel.lower()
+
+    # Step 1 — exact
+    if name_camel in methods:
+        return {"method_name": name_camel, "path": f"{root_prefix}.{name_camel}", "match_step": "exact"}
+
+    # Step 2 — case-insensitive
+    for m in methods:
+        if m.lower() == nl:
+            return {"method_name": m, "path": f"{root_prefix}.{m}", "match_step": "ci"}
+
+    # Step 3 — prefix fuzzy (one is a leading prefix of the other; min-length guard)
+    fuzzy: list[str] = []
+    for m in methods:
+        ml = m.lower()
+        if (ml.startswith(nl) or nl.startswith(ml)) and min(len(ml), len(nl)) >= 4:
+            fuzzy.append(m)
+
+    if len(fuzzy) == 1:
+        return {"method_name": fuzzy[0], "path": f"{root_prefix}.{fuzzy[0]}", "match_step": "fuzzy"}
+
+    # Step 4 — label-word probe (only when no prefix hits)
+    if not fuzzy and label:
+        words = [w.lower() for w in re.split(r"\W+", label) if len(w) > 3]
+        label_hits: list[str] = []
+        for m in methods:
+            ml = m.lower()
+            if any(ml.startswith(w) or w.startswith(ml) for w in words):
+                label_hits.append(m)
+        if len(label_hits) == 1:
+            return {"method_name": label_hits[0], "path": f"{root_prefix}.{label_hits[0]}", "match_step": "fuzzy"}
+
+    return None
+
+
 def sibling_probe(
     classpath: str, request_fqcn_value: str, root_fqcn: str, field: str
 ) -> str | None:
@@ -254,17 +317,19 @@ def sibling_probe(
 # ---------------------------------------------------------------------------
 
 
-def resolve_element_type(classpath: str, root_fqcn: str, list_velocity: str) -> str | None:
+def resolve_element_type(
+    classpath: str, root_fqcn: str, list_velocity: str, root_prefix: str = "$data"
+) -> str | None:
     """Resolve a loop's iterator element type from the root (plan §6.4).
 
-    e.g. ``ItemCareSegment`` + ``$data.items`` → ``items()`` returns
+    e.g. ``ItemCareSegment`` + ``$segment.items`` → ``items()`` returns
     ``Collection<ItemPolicy>`` → element ``...ItemPolicy``. Returns the element
     FQCN, or ``None`` if the list path isn't navigable / isn't a collection.
     """
     src = (list_velocity or "").strip()
-    if not src.startswith("$data"):
+    if not src.startswith(root_prefix):
         return None
-    rest = src[len("$data"):].lstrip(".")
+    rest = src[len(root_prefix):].lstrip(".")
     if not rest:
         return None
     parts = rest.split(".")

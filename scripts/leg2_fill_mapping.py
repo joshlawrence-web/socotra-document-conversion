@@ -27,6 +27,7 @@ from sdk_introspect import (
     _class_exists,
     _default_datamodel_jar,
     classify_path,
+    jar_candidate,
     request_fqcn,
     resolve_element_type,
     roots_for_product,
@@ -38,6 +39,49 @@ from suggester_state import (
     sha256_bytes,
     sha256_file,
 )
+
+# ---------------------------------------------------------------------------
+# Root-prefix helpers (A4/A5 from renderingData-alignment plan)
+# ---------------------------------------------------------------------------
+
+_ROOT_VEL_PREFIX: dict[str, str] = {
+    "quote": "$quote",
+    "segment": "$segment",
+}
+
+_SIBLING_ROOT: dict[str, str] = {
+    "policy": "$policy",
+    "transaction": "$transaction",
+    "account": "$account",
+}
+
+
+def _vel_prefix(root_id: str) -> str:
+    return _ROOT_VEL_PREFIX.get(root_id, "$data")
+
+
+def _reprefix(path: str, new_prefix: str) -> str:
+    """Rewrite a $data.* registry path to use the root-specific prefix."""
+    if path == "$data":
+        return new_prefix
+    if path.startswith("$data."):
+        return new_prefix + path[5:]  # len("$data") = 5
+    return path
+
+
+def _sibling_data_source(hint: str | None) -> str:
+    """Convert a sibling hint like 'Policy.policyNumber()' → '$policy.policyNumber'."""
+    if not hint:
+        return ""
+    m = re.match(r"(\w+)\.(\w+)\(\)", hint)
+    if not m:
+        return ""
+    cls, method = m.group(1).lower(), m.group(2)
+    prefix = _SIBLING_ROOT.get(cls)
+    if not prefix:
+        return ""
+    return f"{prefix}.{method}"
+
 
 # ---------------------------------------------------------------------------
 # Basic helpers
@@ -210,56 +254,40 @@ def check_scope(entry: dict, context: dict, idx: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _step1_exact(name_camel: str, label: str | None, idx: dict) -> list[dict]:
+def _step1_exact(name_camel: str, idx: dict) -> list[dict]:
     hits: list[dict] = []
     for e in idx["by_field"].get(name_camel.lower(), []):
         if e.get("field") == name_camel and e not in hits:
             hits.append(e)
-    if label:
-        for e in idx["by_display_name"].get(label.lower(), []):
-            if e.get("display_name") == label and e not in hits:
-                hits.append(e)
     return hits
 
 
-def _step2_ci(name_camel: str, label: str | None, idx: dict) -> list[dict]:
+def _step2_ci(name_camel: str, idx: dict) -> list[dict]:
     hits: list[dict] = []
     for e in idx["by_field"].get(name_camel.lower(), []):
         if e not in hits:
             hits.append(e)
-    if label:
-        for e in idx["by_display_name"].get(label.lower(), []):
-            if e not in hits:
-                hits.append(e)
     return hits
 
 
 def _step3_terminology(
-    name_snake: str, label: str | None, idx: dict, terminology: dict
+    name_snake: str, idx: dict, terminology: dict
 ) -> list[tuple[dict, str]]:
     """Returns (entry, alias_used) pairs from terminology synonyms."""
     syns = terminology.get("synonyms") or {}
-    aliases_map = terminology.get("display_name_aliases") or {}
     hits: list[tuple[dict, str]] = []
 
     for canonical, aliases in (syns.get("fields") or {}).items():
         for alias in aliases:
-            if alias.lower() in (name_snake.lower(), (label or "").lower()):
+            if alias.lower() == name_snake.lower():
                 for e in idx["by_field"].get(canonical.lower(), []):
-                    if (e, alias) not in hits:
-                        hits.append((e, alias))
-
-    for canonical_dn, aliases in aliases_map.items():
-        for alias in aliases:
-            if alias.lower() in (name_snake.lower(), (label or "").lower()):
-                for e in idx["by_display_name"].get(canonical_dn.lower(), []):
                     if (e, alias) not in hits:
                         hits.append((e, alias))
 
     return hits
 
 
-def _step4_fuzzy(name_snake: str, label: str | None, idx: dict) -> list[dict]:
+def _step4_fuzzy(name_snake: str, idx: dict) -> list[dict]:
     """Fuzzy: last-token of name matches a field key."""
     hits: list[dict] = []
     tokens = [t for t in name_snake.split("_") if t]
@@ -286,20 +314,20 @@ def match_name(
     name_snake = normalize_mapping_field_name(name)
     name_camel = snake_to_camel(name_snake)
 
-    hits = _step1_exact(name_camel, label, idx)
+    hits = _step1_exact(name_camel, idx)
     if hits:
         return hits, "exact", None
 
-    hits = _step2_ci(name_camel, label, idx)
+    hits = _step2_ci(name_camel, idx)
     if hits:
         return hits, "ci", None
 
     if terminology:
-        term_hits = _step3_terminology(name_snake, label, idx, terminology)
+        term_hits = _step3_terminology(name_snake, idx, terminology)
         if term_hits:
             return [e for e, _ in term_hits], "terminology", term_hits[0][1]
 
-    hits = _step4_fuzzy(name_snake, label, idx)
+    hits = _step4_fuzzy(name_snake, idx)
     if hits:
         return hits, "fuzzy", None
 
@@ -442,10 +470,12 @@ def derive_variable_candidate(
         }
 
     if not entries:
-        return cand(
+        c = cand(
             base_reason=f"no registry match for {name_camel} — next-action: supply-from-plugin",
             terminal=True, fallback="low",
         )
+        c.update({"jar_fallback_ok": True, "name_camel": name_camel, "label": label})
+        return c
 
     ok: list[dict] = []
     violated: list[tuple[dict, str]] = []
@@ -520,6 +550,7 @@ def variable_verdict_for_root(candidate: dict, root: dict, classpath: str) -> di
     rid = root["id"]
     java_type = root.get("java_type")
     base = candidate["base_reason"]
+    rp = _vel_prefix(rid)
 
     # Invoice / unresolved root (D5): schema can hold it, Leg 2 does not resolve.
     if java_type is None:
@@ -530,8 +561,28 @@ def variable_verdict_for_root(candidate: dict, root: dict, classpath: str) -> di
             "reasoning": f"root `{rid}` not resolved (D5: invoice deferred); {base}",
         }
 
-    # No single $data path to check — replicate the name-match verdict.
+    # No single path to check — try JAR fallback first, then replicate.
     if candidate["terminal"]:
+        if candidate.get("jar_fallback_ok") and java_type:
+            jc = jar_candidate(
+                classpath, java_type,
+                candidate.get("name_camel", ""),
+                candidate.get("label"),
+                root_prefix=rp,
+            )
+            if jc:
+                grade = confidence_grade(jc["match_step"], "verified")
+                short = java_type.rsplit(".", 1)[-1]
+                return {
+                    "data_source": jc["path"],
+                    "confidence": grade,
+                    "sdk_status": "verified",
+                    "reasoning": (
+                        f"no registry entry for {candidate['name_camel']}; "
+                        f"JAR probe: {short}.{jc['method_name']}() — "
+                        f"{jc['match_step']} match → {jc['path']}"
+                    ),
+                }
         return {
             "data_source": "",
             "confidence": candidate["fallback_confidence"],
@@ -539,33 +590,43 @@ def variable_verdict_for_root(candidate: dict, root: dict, classpath: str) -> di
             "reasoning": base,
         }
 
+    path = _reprefix(candidate["path"], rp)
     req = request_fqcn(root["request"])
-    status, detail, hint = classify_path(classpath, java_type, candidate["path"], req)
+    status, detail, hint = classify_path(classpath, java_type, path, req, root_prefix=rp)
     grade = confidence_grade(candidate["match_step"], status)
     short = java_type.rsplit(".", 1)[-1]
-    last = _last_segment(candidate["path"])
+    last = _last_segment(path)
     step = candidate["match_step"]
 
     if status == "verified":
         reasoning = f"{base} — verified {last}() on {short}"
     elif status == "sibling_only":
+        sib_path = _sibling_data_source(hint)
         reasoning = (
             f"name-match {step} ({candidate['registry_field']}), but {short} has no "
-            f"{last}(); field exists on sibling {hint} — next-action: supply-from-plugin"
+            f"{last}(); field exists on sibling {hint}"
+            + (f" → {sib_path}" if sib_path else " — next-action: supply-from-plugin")
         )
     elif status == "not_found":
         reasoning = (
-            f"{short} has no {last}() (name-match {step}: {candidate['path']}) "
+            f"{short} has no {last}() (name-match {step}: {path}) "
             "— next-action: supply-from-plugin"
         )
     elif status == "not_navigable":
-        reasoning = f"{detail} (name-match {step}: {candidate['path']}) — next-action: confirm-assumption"
+        reasoning = f"{detail} (name-match {step}: {path}) — next-action: confirm-assumption"
     else:  # skipped (no candidate path reached classify)
         reasoning = base
 
+    if status == "verified":
+        data_source = path
+    elif status == "sibling_only":
+        data_source = _sibling_data_source(hint)
+    else:
+        data_source = ""
+
     out = {
-        "data_source": candidate["path"] if status == "verified" else "",
-        "confidence": grade,
+        "data_source": data_source,
+        "confidence": grade if status == "verified" else ("medium" if status == "sibling_only" and data_source else "low"),
         "sdk_status": status,
         "reasoning": reasoning,
     }
@@ -826,19 +887,21 @@ def reorder_top_keys(d: dict) -> dict:
 def loop_root_verdict_for_root(
     list_vel: str, match_step: str, base_reason: str, root: dict, classpath: str
 ) -> dict:
-    """Verdict for a loop's list root (e.g. ``$data.items``) on one root (§6.4)."""
+    """Verdict for a loop's list root (e.g. ``$segment.items``) on one root (§6.4)."""
     rid = root["id"]
     jt = root.get("java_type")
+    rp = _vel_prefix(rid)
     if jt is None:
         return {"data_source": "", "confidence": "low", "sdk_status": "skipped",
                 "reasoning": f"root `{rid}` not resolved (D5: invoice deferred); {base_reason}"}
     if match_step == "none" or not list_vel:
         return {"data_source": "", "confidence": "low", "sdk_status": "skipped",
                 "reasoning": base_reason}
-    status, detail, _ = classify_path(classpath, jt, list_vel)
+    list_vel_rp = _reprefix(list_vel, rp)
+    status, detail, _ = classify_path(classpath, jt, list_vel_rp, root_prefix=rp)
     grade = confidence_grade(match_step, status)
     short = jt.rsplit(".", 1)[-1]
-    last = _last_segment(list_vel)
+    last = _last_segment(list_vel_rp)
     if status == "verified":
         reasoning = f"{base_reason} — verified {last}() on {short}"
     elif status == "not_found":
@@ -847,7 +910,7 @@ def loop_root_verdict_for_root(
         reasoning = f"{detail} — next-action: confirm-assumption"
     else:
         reasoning = base_reason
-    return {"data_source": list_vel if status == "verified" else "",
+    return {"data_source": list_vel_rp if status == "verified" else "",
             "confidence": grade, "sdk_status": status, "reasoning": reasoning}
 
 
@@ -866,9 +929,11 @@ def loop_field_verdict_for_root(
         return {"data_source": "", "confidence": "low", "sdk_status": "skipped",
                 "reasoning": base_reason}
 
-    key = (jt, list_vel)
+    rp = _vel_prefix(rid)
+    list_vel_rp = _reprefix(list_vel, rp)
+    key = (jt, list_vel_rp)
     if key not in elem_cache:
-        elem_cache[key] = resolve_element_type(classpath, jt, list_vel) or ""
+        elem_cache[key] = resolve_element_type(classpath, jt, list_vel_rp, root_prefix=rp) or ""
     elem = elem_cache[key]
     short = jt.rsplit(".", 1)[-1]
     if not elem:

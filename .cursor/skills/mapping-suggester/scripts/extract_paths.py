@@ -42,6 +42,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+def _relative_display(p: Path) -> str:
+    """Return a path relative to CWD for registry metadata; absolute as fallback."""
+    try:
+        return str(p.relative_to(Path.cwd()))
+    except ValueError:
+        return str(p)
+
+
 def _compute_source_config_sha256(config_dir: Path) -> str:
     """Load ``scripts/socotra_config_fingerprint.py`` from the repo root (any ancestor)."""
     here = Path(__file__).resolve()
@@ -667,7 +675,7 @@ def build_registry(config_dir: Path) -> dict:
     return {
         "schema_version": "1.1",
         "meta": {
-            "config_dir":   str(config_dir.resolve()),
+            "config_dir":   _relative_display(config_dir),
             "product":      product_name,
             "display_name": display_name,
             "generated_at": datetime.now(timezone.utc).isoformat(),
