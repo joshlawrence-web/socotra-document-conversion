@@ -2,7 +2,7 @@
 """Pipeline orchestrator — no API key required.
 
 Parses a structured RUN_PIPELINE invocation, validates inputs, shows a preflight
-summary, requires PROCEED confirmation, then dispatches to Leg 1 / Leg 2 / Leg 3 scripts.
+summary, requires PROCEED confirmation, then dispatches to Leg 1 / Leg 2 / Leg 3 / Leg 4 scripts.
 
 Usage:
     python3 scripts/agent.py "RUN_PIPELINE leg1 input=samples/input/Simple-form.html"
@@ -11,7 +11,9 @@ Usage:
     python3 scripts/agent.py "RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.suggested.yaml high_only=true"
     python3 scripts/agent.py "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml"
     python3 scripts/agent.py "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml high_only=true"
-    python3 scripts/agent.py --yes "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html"
+    python3 scripts/agent.py "RUN_PIPELINE leg4 suggested=samples/output/Simple-form/Simple-form.suggested.yaml"
+    python3 scripts/agent.py "RUN_PIPELINE leg1+leg2+leg3+leg4 input=samples/input/Simple-form.html registry=registry/path-registry.yaml"
+    python3 scripts/agent.py --yes "RUN_PIPELINE leg1+leg2+leg3+leg4 input=samples/input/Simple-form.html"
     python3 scripts/agent.py          # interactive stdin mode
 """
 
@@ -28,6 +30,7 @@ from agent_tools import (
     run_leg1,
     run_leg2,
     run_leg3,
+    run_leg4,
     validate_inputs,
     _find_repo_root,
 )
@@ -42,21 +45,26 @@ This agent requires an explicit invocation token. Examples:
   RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.suggested.yaml high_only=true
   RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml
   RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml high_only=true
+  RUN_PIPELINE leg4 suggested=samples/output/Simple-form/Simple-form.suggested.yaml
+  RUN_PIPELINE leg1+leg2+leg3+leg4 input=samples/input/Simple-form.html registry=registry/path-registry.yaml
 
 Required per operation:
-  leg1           : input=<file.html>
-  leg2           : mode=<full|terse|delta|batch>  mapping=<file.mapping.yaml>
-  leg1+leg2      : input=<file.html>  [mode defaults to terse]
-  leg3           : suggested=<file.suggested.yaml>
-  leg1+leg2+leg3 : input=<file.html>  [mode defaults to terse]
+  leg1               : input=<file.html>
+  leg2               : mode=<full|terse|delta|batch>  mapping=<file.mapping.yaml>
+  leg1+leg2          : input=<file.html>  [mode defaults to terse]
+  leg3               : suggested=<file.suggested.yaml>
+  leg1+leg2+leg3     : input=<file.html>  [mode defaults to terse]
+  leg4               : suggested=<file.suggested.yaml>
+  leg1+leg2+leg3+leg4: input=<file.html>  [mode defaults to terse]
 
 Optional for all:           output=<dir>  registry=<path>  terminology=<path>
 Optional for leg3 variants: high_only=true  (substitute only confidence:high tokens;
                             medium/low remain as $TBD_* and appear in the deferred
                             section of the leg3-report.md)
+Optional for leg4 variants: compile_check=false  (skip javac after generating plugin)
 """
 
-VALID_OPS = {"leg1", "leg2", "leg1+leg2", "leg3", "leg1+leg2+leg3"}
+VALID_OPS = {"leg1", "leg2", "leg1+leg2", "leg3", "leg1+leg2+leg3", "leg4", "leg1+leg2+leg3+leg4"}
 VALID_MODES = {"full", "terse", "delta", "batch"}
 
 
@@ -71,7 +79,7 @@ def parse_invocation(text: str) -> dict | None:
     # Strip the token and leading operation from the string
     # Match: RUN_PIPELINE <operation> [key=value ...]
     m = re.search(
-        r"run_pipeline\s+(leg1\+leg2\+leg3|leg1\+leg2|leg1|leg2\+leg3|leg3|leg2)(.*)",
+        r"run_pipeline\s+(leg1\+leg2\+leg3\+leg4|leg1\+leg2\+leg3|leg1\+leg2|leg1|leg2\+leg3|leg3|leg2|leg4)(.*)",
         text,
         re.IGNORECASE,
     )
@@ -157,9 +165,11 @@ def run(invocation: str, auto_yes: bool) -> int:
     terminology = parsed.get("terminology")
     suggested = parsed.get("suggested")
     high_only = parsed.get("high_only", "").lower() in ("true", "1", "yes")
+    compile_check_raw = parsed.get("compile_check", "true")
+    compile_check = compile_check_raw.lower() not in ("false", "0", "no")
 
     # Apply defaults
-    if operation in ("leg1+leg2", "leg1+leg2+leg3") and not mode:
+    if operation in ("leg1+leg2", "leg1+leg2+leg3", "leg1+leg2+leg3+leg4") and not mode:
         mode = "terse"
 
     # --- Validate ---
@@ -206,6 +216,7 @@ def run(invocation: str, auto_yes: bool) -> int:
         terminology=terminology,
         suggested=suggested,
         high_only=high_only,
+        compile_check=compile_check,
     )
     print(preflight)
 
@@ -280,7 +291,7 @@ def run(invocation: str, auto_yes: bool) -> int:
                 print(f"  {a}")
             leg2_suggested_path = this_suggested
 
-    if operation in ("leg3", "leg1+leg2+leg3"):
+    if operation in ("leg3", "leg1+leg2+leg3", "leg1+leg2+leg3+leg4"):
         if operation == "leg3":
             # suggested provided directly
             leg3_suggested = suggested
@@ -307,6 +318,30 @@ def run(invocation: str, auto_yes: bool) -> int:
         for a in r.get("artifacts", []):
             print(f"  {a}")
 
+    if operation in ("leg4", "leg1+leg2+leg3+leg4"):
+        if operation == "leg4":
+            leg4_suggested = suggested
+        else:
+            leg4_suggested = leg2_suggested_path
+
+        if not leg4_suggested:
+            print("ERROR: could not determine suggested.yaml path for Leg 4", file=sys.stderr)
+            return 1
+
+        print(f"\nRunning Leg 4 for {leg4_suggested}…")
+        r = run_leg4(
+            suggested=leg4_suggested,
+            compile_check=compile_check,
+        )
+        if not r["ok"]:
+            print(f"Leg 4 failed (rc={r['returncode']}):\n{r.get('stderr', '')}", file=sys.stderr)
+            if r.get("stdout"):
+                print(r["stdout"], file=sys.stderr)
+            return 1
+        print("Leg 4 artifacts:")
+        for a in r.get("artifacts", []):
+            print(f"  {a}")
+
     print("\nDone.")
     return 0
 
@@ -329,24 +364,28 @@ def guided_mode() -> str:
 
     # Operation
     print("What do you want to run?")
-    print("  1) leg1          — HTML → .vm + .mapping.yaml")
-    print("  2) leg2          — suggest paths for an existing .mapping.yaml")
-    print("  3) leg1+leg2     — end-to-end through Leg 2 (default)")
-    print("  4) leg3          — write final .vm from an existing .suggested.yaml")
-    print("  5) leg1+leg2+leg3 — full pipeline\n")
-    op_choice = _ask("Choose [1/2/3/4/5]", default="3")
+    print("  1) leg1               — HTML → .vm + .mapping.yaml")
+    print("  2) leg2               — suggest paths for an existing .mapping.yaml")
+    print("  3) leg1+leg2          — end-to-end through Leg 2 (default)")
+    print("  4) leg3               — write final .vm from an existing .suggested.yaml")
+    print("  5) leg1+leg2+leg3     — full pipeline")
+    print("  6) leg4               — generate DocumentDataSnapshotPlugin from .suggested.yaml")
+    print("  7) leg1+leg2+leg3+leg4 — full pipeline including plugin\n")
+    op_choice = _ask("Choose [1/2/3/4/5/6/7]", default="3")
     op_map = {
         "1": "leg1", "2": "leg2", "3": "leg1+leg2",
         "4": "leg3", "5": "leg1+leg2+leg3",
+        "6": "leg4", "7": "leg1+leg2+leg3+leg4",
         "leg1": "leg1", "leg2": "leg2", "leg1+leg2": "leg1+leg2",
         "leg3": "leg3", "leg1+leg2+leg3": "leg1+leg2+leg3",
+        "leg4": "leg4", "leg1+leg2+leg3+leg4": "leg1+leg2+leg3+leg4",
     }
     operation = op_map.get(op_choice, "leg1+leg2")
 
     parts = [f"RUN_PIPELINE {operation}"]
 
-    # Input HTML (leg1 / leg1+leg2)
-    if operation in ("leg1", "leg1+leg2"):
+    # Input HTML (leg1 / leg1+leg2 / combos)
+    if operation in ("leg1", "leg1+leg2", "leg1+leg2+leg3", "leg1+leg2+leg3+leg4"):
         candidates = sorted((repo_root / "samples" / "input").glob("*.html"))
         if candidates:
             print("\nAvailable input files:")
@@ -377,8 +416,8 @@ def guided_mode() -> str:
             mapping = _ask("Path to .mapping.yaml file")
         parts.append(f"mapping={mapping}")
 
-    # Suggested (leg3 only)
-    if operation == "leg3":
+    # Suggested (leg3 / leg4 standalone only)
+    if operation in ("leg3", "leg4"):
         candidates = sorted((repo_root / "samples" / "output").rglob("*.suggested.yaml"))
         if candidates:
             print("\nAvailable suggested files:")
@@ -393,8 +432,8 @@ def guided_mode() -> str:
             suggested = _ask("Path to .suggested.yaml file")
         parts.append(f"suggested={suggested}")
 
-    # Mode (leg2 / leg1+leg2 / leg1+leg2+leg3)
-    if operation in ("leg2", "leg1+leg2", "leg1+leg2+leg3"):
+    # Mode (leg2 / leg1+leg2 / combos that include leg2)
+    if operation in ("leg2", "leg1+leg2", "leg1+leg2+leg3", "leg1+leg2+leg3+leg4"):
         print("\nSuggester mode:")
         print("  terse — concise review.md (default)")
         print("  full  — detailed reasoning per field")
@@ -402,14 +441,22 @@ def guided_mode() -> str:
         mode_val = _ask("Mode", default="terse")
         parts.append(f"mode={mode_val}")
 
-    # High-only mode (leg3 / leg1+leg2+leg3)
-    if operation in ("leg3", "leg1+leg2+leg3"):
+    # High-only mode (leg3 / combos with leg3)
+    if operation in ("leg3", "leg1+leg2+leg3", "leg1+leg2+leg3+leg4"):
         print("\nHigh-only mode: substitute only confidence:high tokens.")
         print("  Medium/low tokens stay as $TBD_* and appear in the deferred")
         print("  section of the leg3-report.md for human review.")
         high_only_val = _ask("Enable high-only mode? [y/N]", default="n")
         if high_only_val.lower() in ("y", "yes"):
             parts.append("high_only=true")
+
+    # Compile check (leg4 / combos with leg4)
+    if operation in ("leg4", "leg1+leg2+leg3+leg4"):
+        print("\nCompile check: run javac against the generated plugin after codegen.")
+        print("  Requires JDK javac on PATH.")
+        compile_val = _ask("Run compile check? [Y/n]", default="y")
+        if compile_val.lower() in ("n", "no"):
+            parts.append("compile_check=false")
 
     # Optional overrides
     output = _ask("\nOutput directory", default="samples/output")

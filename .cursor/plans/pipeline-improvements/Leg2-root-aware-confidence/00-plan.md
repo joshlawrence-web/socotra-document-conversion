@@ -1,38 +1,36 @@
 # Leg 2 — Root-aware, SDK-grounded confidence
 
-**Status:** Planning complete — decisions locked, no code yet (2026-06-03)
+**Status:** **COMPLETE** — Phases 0–2 shipped (2026-06-03) · Phase 3 spec-only (§14)
 **Created:** 2026-06-03
 **Plan index:** [README.md](./README.md) · **History:** [history.md](./history.md) (append-only)
 **Problem brief:** [problem.md](./problem.md) (read first for the SDK evidence)
 
 ---
 
-## START HERE (implementing agent)
+## START HERE (future agent)
 
-You are making **Leg 2** (`scripts/leg2_fill_mapping.py`, the mapping-suggester /
-"high-confidence rater") **root-aware and SDK-grounded**. Today confidence is a
-scalar derived from a name-match against the config-only registry. After this work
-it is a **verdict per (placeholder × rendering root)**, where *availability and
-confidence are decided by introspecting the compiled JARs* (`build/*.jar`), not the
-config registry alone.
+**This plan is complete for in-scope work.** Leg 2 (`scripts/leg2_fill_mapping.py`) is
+now **root-aware and SDK-grounded**: confidence is a **verdict per (placeholder ×
+rendering root)**, decided by introspecting `build/*.jar` via
+`scripts/sdk_introspect.py`, not the config registry alone. Output is
+`.suggested.yaml` **schema 2.0**.
+
+| If you are… | Do this |
+|-------------|---------|
+| **Using** root-aware Leg 2 | Run the verification block in §12 / [README.md](./README.md). Filenames must declare roots: `Simple-form(segment).html`. |
+| **Fixing a regression** | Read [history.md](./history.md) (newest first), reproduce with §12, fix, append a handoff. |
+| **Extending downstream** (Leg 1/3/4, delta mode) | Read §14 — spec is written; implementation belongs in **separate efforts** (see [Leg 4 plan](../Leg4-document-snapshot-plugin/)). **Do not** expand §14 here without user approval. |
 
 **Read in this order:**
 
-1. [problem.md](./problem.md) — the `Simple-form` / `policyNumber` evidence and the
-   `javap` repro. This is *why* we are doing this.
-2. This file — §3 (locked decisions), §6 (new `.suggested.yaml` v2.0 schema),
-   §7 (JAR introspection), §9 (task list), §12 (definition of done).
-3. [history.md](./history.md) — latest handoff.
-4. Reference code: `scripts/leg4_generate_plugin.py` (`_javap`, `_zero_arg_methods`,
-   `_unwrap_type`, `validate_path` — **reuse these**) and `scripts/leg2_fill_mapping.py`
-   (the rater you are extending).
+1. [README.md](./README.md) — status table + verification commands.
+2. [problem.md](./problem.md) — the `policyNumber` bug and `javap` repro (historical context).
+3. [history.md](./history.md) — implementation handoffs.
+4. This file — §3 (decisions), §6 (2.0 schema), §9 (task checklist), §14 (downstream spec).
+5. Reference code: `scripts/sdk_introspect.py`, `scripts/leg2_fill_mapping.py`,
+   `scripts/leg2_review_writer.py`.
 
-**Do not** implement the downstream-leg changes in §14 — they are *described* here so
-Legs 1/3/4 can be harmonised in a later effort, but they are **out of scope** for this
-plan's implementation. **Do not** touch `socotra-config/`.
-
-**When finished:** check off §9 tasks, append a handoff to [history.md](./history.md),
-run the verification block in §12.
+**Do not** touch `socotra-config/` as part of this plan.
 
 ---
 
@@ -322,9 +320,11 @@ Check boxes when done; log completion in [history.md](./history.md).
 
 ### Phase 3 — Downstream harmonisation (DESCRIBE ONLY — do not build) — §14
 
-- [ ] **P3.1** Spec Leg 1 filename parsing + `rendering_roots:` emission.
-- [ ] **P3.2** Spec Leg 3 consuming per-root verdicts (which root drives `.final.vm`?).
-- [ ] **P3.3** Spec Leg 4 using v2.0 + lifting sibling fields onto `renderingData`.
+**Status:** Spec written in §14. **Implementation deferred** to separate plans/efforts.
+
+- [x] **P3.1** Spec Leg 1 filename parsing + `rendering_roots:` emission (§14.1).
+- [x] **P3.2** Spec Leg 3 consuming per-root verdicts (§14.2).
+- [x] **P3.3** Spec Leg 4 using v2.0 + lifting sibling fields onto `renderingData` (§14.3).
 - [ ] **P3.4** (deferred — D10) Port delta mode to per-root verdicts when the pipeline
   matures; until then `--mode delta` stays blocked (P1.6).
 

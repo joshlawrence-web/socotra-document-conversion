@@ -6,7 +6,7 @@ or the mapping-suggester's shape probe will fire and block the run.
 
 ## Purpose
 
-The HTML → Velocity pipeline flows data between three skills:
+The HTML → Velocity pipeline flows data between four skills:
 
 1. `html-to-velocity` (Leg 1) — reads an HTML mockup, writes
    `<stem>.vm`, `<stem>.mapping.yaml`, `<stem>.report.md`.
@@ -14,6 +14,10 @@ The HTML → Velocity pipeline flows data between three skills:
    `registry/path-registry.yaml` by default (or `--output`).
 3. `mapping-suggester` (Leg 2) — reads the mapping YAML + the registry,
    writes `<stem>.suggested.yaml`, `<stem>.review.md`.
+4. `leg4_generate_plugin.py` (Leg 4) — reads `<stem>.suggested.yaml` + JARs,
+   writes `{Product}DocumentDataSnapshotPluginImpl.java` and
+   `<stem>.plugin-report.md`. No `schema_version` — Java output is not a
+   versioned YAML artifact.
 
 Each of the four YAML/Markdown artifacts (mapping, registry, suggested,
 review) carries a `schema_version` string at its root. The fifth
@@ -834,6 +838,15 @@ After editing, the reviewer copies the `data_source` value into the
   `terminology.yaml` that lifts the `octopuses` loop from `low` +
   `supply-from-plugin` to `high` via an exposure alias `Octopus →
   [octopuses, octopi]`.
+- **1.0 — 2026-06-02 — Leg 4 / plugin-builder (additive, two new
+  artifacts).** Introduced `{Product}DocumentDataSnapshotPluginImpl.java`
+  and `<stem>.plugin-report.md` as the tenth and eleventh pipeline
+  artifacts. Added `scripts/leg4_generate_plugin.py` (deterministic Java
+  codegen via `javap` introspection) and
+  `.cursor/skills/plugin-builder/SKILL.md` (skill registration). Java
+  output is not a versioned YAML artifact — no `schema_version` key.
+  `CLAUDE.md` updated with Leg 4 trigger phrases. No existing artifact's
+  shape changed.
 - **1.0 — 2026-05-01 — Leg 3 / substitution-writer (additive, two new
   artifacts).** Introduced `<stem>.final.vm` and `<stem>.leg3-report.md`
   as the eighth and ninth pipeline artifacts. Added

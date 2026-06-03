@@ -8,6 +8,21 @@ import sys
 from pathlib import Path
 
 
+def _try_read_product(suggested_path: "str | Path") -> "str | None":
+    """Best-effort: read product: from a .suggested.yaml. Returns None on failure."""
+    try:
+        import yaml  # noqa: PLC0415
+        p = Path(suggested_path)
+        if not p.exists():
+            return None
+        text = p.read_text(encoding="utf-8")
+        filtered = "\n".join(ln for ln in text.splitlines() if not ln.startswith("#"))
+        data = yaml.safe_load(filtered) or {}
+        return (data.get("product") or "").strip() or None
+    except Exception:
+        return None
+
+
 def _find_repo_root() -> Path:
     """Walk up from CWD until a directory containing .cursor/ is found."""
     p = Path.cwd().resolve()
@@ -49,7 +64,7 @@ def validate_inputs(
     errors: list[str] = []
     missing: list[str] = []
 
-    valid_ops = {"leg1", "leg2", "leg1+leg2", "leg3", "leg1+leg2+leg3"}
+    valid_ops = {"leg1", "leg2", "leg1+leg2", "leg3", "leg1+leg2+leg3", "leg4", "leg1+leg2+leg3+leg4"}
     if operation not in valid_ops:
         errors.append(
             f"Invalid operation {operation!r}. Must be one of: {', '.join(sorted(valid_ops))}"
@@ -83,7 +98,7 @@ def validate_inputs(
                 except ValueError as e:
                     errors.append(str(e))
 
-    if operation == "leg3":
+    if operation in ("leg3", "leg4"):
         if not suggested:
             missing.append("suggested")
         else:
@@ -96,7 +111,7 @@ def validate_inputs(
             except ValueError as e:
                 errors.append(str(e))
 
-    if operation in ("leg2", "leg1+leg2", "leg1+leg2+leg3"):
+    if operation in ("leg2", "leg1+leg2", "leg1+leg2+leg3", "leg1+leg2+leg3+leg4"):
         valid_modes = {"full", "terse", "delta", "batch"}
         if not mode:
             missing.append("mode")
@@ -155,14 +170,14 @@ def _predict_writes(
     suggested: str | None = None,
 ) -> list[str]:
     writes = []
-    if operation in ("leg1", "leg1+leg2", "leg1+leg2+leg3") and input_html:
+    if operation in ("leg1", "leg1+leg2", "leg1+leg2+leg3", "leg1+leg2+leg3+leg4") and input_html:
         stem = Path(input_html).stem
         base = f"{out_dir}/{stem}"
         writes += [f"{base}/{stem}.vm", f"{base}/{stem}.mapping.yaml", f"{base}/{stem}.report.md"]
-    if operation in ("leg2", "leg1+leg2", "leg1+leg2+leg3"):
+    if operation in ("leg2", "leg1+leg2", "leg1+leg2+leg3", "leg1+leg2+leg3+leg4"):
         if operation == "leg2" and mapping:
             mappings = mapping if isinstance(mapping, list) else [mapping]
-        elif operation in ("leg1+leg2", "leg1+leg2+leg3") and input_html:
+        elif operation in ("leg1+leg2", "leg1+leg2+leg3", "leg1+leg2+leg3+leg4") and input_html:
             stem = Path(input_html).stem
             mappings = [f"{out_dir}/{stem}/{stem}.mapping.yaml"]
         else:
@@ -177,13 +192,13 @@ def _predict_writes(
                 f"{base}/{stem}.review.md",
                 f"{base}/{stem}.suggester-log.jsonl",
             ]
-    if operation in ("leg3", "leg1+leg2+leg3"):
+    if operation in ("leg3", "leg1+leg2+leg3", "leg1+leg2+leg3+leg4"):
         if operation == "leg3" and suggested:
             stem = Path(suggested).stem
             if stem.endswith(".suggested"):
                 stem = stem[: -len(".suggested")]
             base = str(Path(suggested).parent)
-        elif operation == "leg1+leg2+leg3" and input_html:
+        elif operation in ("leg1+leg2+leg3", "leg1+leg2+leg3+leg4") and input_html:
             stem = Path(input_html).stem
             base = f"{out_dir}/{stem}"
         else:
@@ -192,6 +207,29 @@ def _predict_writes(
             writes += [
                 f"{base}/{stem}.final.vm",
                 f"{base}/{stem}.leg3-report.md",
+            ]
+    if operation in ("leg4", "leg1+leg2+leg3+leg4"):
+        if operation == "leg4" and suggested:
+            leg4_base_path = suggested
+        elif operation == "leg1+leg2+leg3+leg4" and input_html:
+            s = Path(input_html).stem
+            leg4_base_path = f"{out_dir}/{s}/{s}.suggested.yaml"
+        else:
+            leg4_base_path = None
+        if leg4_base_path:
+            stem4 = Path(leg4_base_path).stem
+            if stem4.endswith(".suggested"):
+                stem4 = stem4[: -len(".suggested")]
+            base4 = str(Path(leg4_base_path).parent)
+            product = _try_read_product(leg4_base_path)
+            java_name = (
+                f"{product}DocumentDataSnapshotPluginImpl.java"
+                if product
+                else "<Product>DocumentDataSnapshotPluginImpl.java"
+            )
+            writes += [
+                f"{base4}/{java_name}",
+                f"{base4}/{stem4}.plugin-report.md",
             ]
     return writes
 
@@ -206,6 +244,7 @@ def build_preflight(
     terminology: str | None = None,
     suggested: str | None = None,
     high_only: bool = False,
+    compile_check: bool = True,
 ) -> str:
     """Return the formatted preflight block as a string. Does not write anything."""
     reg_path = registry or "registry/path-registry.yaml"
@@ -226,6 +265,8 @@ def build_preflight(
         lines.append(row(f"  Mode      : {mode}"))
     if high_only:
         lines.append(row(f"  High-only : yes (medium/low confidence deferred)"))
+    if operation in ("leg4", "leg1+leg2+leg3+leg4"):
+        lines.append(row(f"  Compile   : {'yes' if compile_check else 'no (--compile-check disabled)'}"))
     if input_html:
         lines.append(row(f"  Input HTML: {input_html}"))
     if mapping:
@@ -370,4 +411,46 @@ def run_leg2(
         p = _resolve_safe(p_str, repo_root)
         if p.exists():
             artifacts.append(str(p.relative_to(repo_root)))
+    return {"ok": True, "artifacts": artifacts, "stdout": result.stdout, "stderr": result.stderr}
+
+
+def run_leg4(
+    suggested: str,
+    customer_jar: str | None = None,
+    datamodel_jar: str | None = None,
+    compile_check: bool = True,
+) -> dict:
+    """Run leg4_generate_plugin.py for Leg 4. Returns ok/artifacts/stdout/stderr."""
+    repo_root = _find_repo_root()
+    script = repo_root / "scripts" / "leg4_generate_plugin.py"
+    cmd = [
+        sys.executable,
+        str(script),
+        "--suggested",
+        str(_resolve_safe(suggested, repo_root)),
+    ]
+    if customer_jar:
+        cmd += ["--customer-jar", str(_resolve_safe(customer_jar, repo_root))]
+    if datamodel_jar:
+        cmd += ["--datamodel-jar", str(_resolve_safe(datamodel_jar, repo_root))]
+    if compile_check:
+        cmd.append("--compile-check")
+
+    result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(repo_root))
+    if result.returncode != 0:
+        return {"ok": False, "returncode": result.returncode, "stderr": result.stderr, "stdout": result.stdout}
+
+    suggested_path = _resolve_safe(suggested, repo_root)
+    stem = suggested_path.name
+    for suffix in (".suggested.yaml", ".yaml"):
+        if stem.endswith(suffix):
+            stem = stem[: -len(suffix)]
+            break
+    out_dir = suggested_path.parent
+    artifacts = []
+    report = out_dir / f"{stem}.plugin-report.md"
+    if report.exists():
+        artifacts.append(str(report.relative_to(repo_root)))
+    for java_f in sorted(out_dir.glob("*DocumentDataSnapshotPluginImpl.java")):
+        artifacts.append(str(java_f.relative_to(repo_root)))
     return {"ok": True, "artifacts": artifacts, "stdout": result.stdout, "stderr": result.stderr}

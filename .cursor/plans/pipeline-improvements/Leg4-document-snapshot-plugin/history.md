@@ -4,6 +4,67 @@ Append-only. **Newest session first.** Link from [00-plan.md](./00-plan.md).
 
 ---
 
+## 2026-06-03 — Leg 4 Phase 3 complete
+
+### Summary
+- P3.1: `run_leg4()` added to `scripts/agent_tools.py` — mirrors `run_leg3()`;
+  dispatches `leg4_generate_plugin.py` with `--suggested`, optional `--customer-jar`,
+  `--datamodel-jar`, and `--compile-check`. Artifacts discovered by globbing
+  `*DocumentDataSnapshotPluginImpl.java` and `{stem}.plugin-report.md`.
+- P3.1: `scripts/agent.py` extended — `leg4` and `leg1+leg2+leg3+leg4` added to
+  `VALID_OPS`; parse regex updated (longest match first); `compile_check` param
+  parsed (default `true`); preflight updated to show compile flag and leg4 artifact
+  predictions (product read from YAML via `_try_read_product`); full dispatch block
+  added; `guided_mode` updated with options 6 and 7.
+- P3.2: `.cursor/skills/pipeline-orchestrator/SKILL.md` — added leg4 / full-pipeline
+  examples, `compile_check` to invocation table, Leg 4 in "How it works" list.
+
+### Files touched
+- `scripts/agent_tools.py` (amended: `_try_read_product`, valid_ops, leg4 predict, `build_preflight`, `run_leg4`)
+- `scripts/agent.py` (amended: import, VALID_OPS, REFUSAL, parse regex, compile_check, preflight, dispatch, guided_mode)
+- `.cursor/skills/pipeline-orchestrator/SKILL.md` (amended)
+- `00-plan.md` (Phase 3 checked, status updated)
+
+### Verification
+```bash
+# Leg 4 standalone
+python3 scripts/agent.py --yes "RUN_PIPELINE leg4 suggested=samples/output/Simple-form/Simple-form.suggested.yaml"
+# → Leg 4 artifacts: Simple-form.plugin-report.md, ItemCareDocumentDataSnapshotPluginImpl.java
+
+# Full pipeline preflight (type anything other than PROCEED to cancel)
+python3 scripts/agent.py "RUN_PIPELINE leg1+leg2+leg3+leg4 input=samples/input/Simple-form.html registry=registry/path-registry.yaml output=samples/output"
+# → 10 artifacts listed including plugin + report
+```
+
+### Open items / next
+- Phase 4 enrichment (§16) — deferred.
+
+---
+
+## 2026-06-03 — Leg 4 Phase 2 complete
+
+### Summary
+- P2.1: `.cursor/skills/plugin-builder/SKILL.md` — full skill card with CLI
+  reference, design decisions table, output shape, and constraints.
+- P2.2: `docs/SCHEMA.md` — updated Purpose section (three→four skills),
+  added Leg 4 changelog entry (tenth + eleventh pipeline artifacts).
+- P2.3: `CLAUDE.md` — new "Generating the DocumentDataSnapshotPlugin (Leg 4)"
+  section with trigger phrases and the direct `leg4_generate_plugin.py` command.
+- P0.4: `README.md` — one-line Leg 4 pointer after the Leg 3 description.
+
+### Files touched
+- `.cursor/skills/plugin-builder/SKILL.md` (new)
+- `docs/SCHEMA.md` (amended)
+- `CLAUDE.md` (amended)
+- `README.md` (amended)
+- `00-plan.md` (P0.4 + P2.1–P2.3 checked)
+
+### Open items / next
+- Phase 3 pipeline integration (`RUN_PIPELINE leg4`, `agent_tools.py`, `agent.py`) — deferred.
+- Phase 4 enrichment — deferred.
+
+---
+
 ## 2026-06-02 — Leg 4 Phase 1 complete
 
 ### Summary

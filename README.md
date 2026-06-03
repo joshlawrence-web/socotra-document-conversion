@@ -35,6 +35,8 @@ flowchart LR
 
 **Leg 3** (`leg3_substitute.py`) reads the `.suggested.yaml` and writes the final `.final.vm` template, substituting `$TBD_*` placeholders with confirmed Socotra paths. A `.leg3-report.md` summarises what was resolved and what remains unresolved. Use `high_only=true` to substitute only `confidence: high` suggestions, leaving medium/low tokens as `$TBD_*` for human review.
 
+**Leg 4** (`leg4_generate_plugin.py`) reads the `.suggested.yaml` and emits a compile-correct `{Product}DocumentDataSnapshotPluginImpl.java` plus a `<stem>.plugin-report.md` validation summary. See `.cursor/skills/plugin-builder/SKILL.md`.
+
 ## Using with Claude Code (recommended)
 
 The easiest way to use this tool is as an **MCP server** for [Claude Code](https://claude.ai/code). You install it once, and after that you just describe what you want in plain English from any project on your machine — no commands to memorize, no need to keep this repo open.

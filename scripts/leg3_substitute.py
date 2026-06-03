@@ -67,6 +67,47 @@ def _load_yaml(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _primary_root_id(suggested: dict) -> str | None:
+    """Return the primary rendering root id from a schema 2.0 suggested.yaml, else None."""
+    roots = suggested.get("rendering_roots") or []
+    for r in roots:
+        if r.get("primary"):
+            return r.get("id")
+    if roots:
+        return roots[0].get("id")
+    return None
+
+
+def _flatten_to_primary_root(suggested: dict) -> dict:
+    """Normalise schema 2.0 per-root verdicts to flat scalar fields on each entry.
+
+    Uses the primary rendering root (first entry with primary:true, or first overall).
+    For schema 1.x files (no rendering_roots), returns the dict unchanged.
+    The returned dict shares the input's top-level keys; only variable/loop entries
+    are shallow-copied with the verdict fields promoted.
+    """
+    root_id = _primary_root_id(suggested)
+    if not root_id:
+        return suggested
+
+    def _promote(entry: dict) -> dict:
+        verdict = (entry.get("verdicts") or {}).get(root_id) or {}
+        return {
+            **entry,
+            "data_source": verdict.get("data_source") or "",
+            "confidence": verdict.get("confidence") or "",
+            "reasoning": verdict.get("reasoning") or "",
+        }
+
+    new_vars = [_promote(v) for v in (suggested.get("variables") or [])]
+    new_loops = []
+    for loop in (suggested.get("loops") or []):
+        new_fields = [_promote(f) for f in (loop.get("fields") or [])]
+        new_loops.append({**_promote(loop), "fields": new_fields})
+
+    return {**suggested, "variables": new_vars, "loops": new_loops}
+
+
 # ---------------------------------------------------------------------------
 # Build substitution tables from suggested.yaml
 # ---------------------------------------------------------------------------
@@ -77,7 +118,9 @@ def build_substitution_map(suggested: dict, high_only: bool = False) -> dict[str
     {placeholder: data_source} for every variable and loop field.
     Entries with empty data_source map to '' — caller decides what to do.
     When high_only=True, non-high-confidence entries also map to '' (DD-4).
+    Accepts both schema 1.x (flat fields) and 2.0 (per-root verdicts).
     """
+    suggested = _flatten_to_primary_root(suggested)
     smap: dict[str, str] = {}
     for v in suggested.get("variables") or []:
         ph = v.get("placeholder") or ""
@@ -108,7 +151,9 @@ def build_foreach_map(suggested: dict, high_only: bool = False) -> dict[str, str
     {loop_placeholder: foreach_directive} for loops that have both
     a data_source and a foreach directive from Leg 2.
     When high_only=True, only high-confidence loops are included (DD-4).
+    Accepts both schema 1.x (flat fields) and 2.0 (per-root verdicts).
     """
+    suggested = _flatten_to_primary_root(suggested)
     fmap: dict[str, str] = {}
     for loop in suggested.get("loops") or []:
         ph = loop.get("placeholder") or ""
@@ -545,7 +590,7 @@ def main() -> int:
     high_only = args.high_only
 
     # --- Load ----------------------------------------------------------------
-    suggested = _load_yaml(suggested_path)
+    suggested = _flatten_to_primary_root(_load_yaml(suggested_path))
     vm_text = vm_path.read_text(encoding="utf-8")
 
     # --- Build maps ----------------------------------------------------------

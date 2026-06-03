@@ -1,6 +1,6 @@
 # Leg 4 — Document Data Snapshot Plugin Generator
 
-**Status:** Phase 1 complete — script + pilot pass §12 (2026-06-02)  
+**Status:** Phase 3 complete — pipeline integration (2026-06-03)  
 **Created:** 2026-06-02  
 **Plan index:** [README.md](./README.md) · **History:** [history.md](./history.md) (append-only)
 
@@ -163,7 +163,7 @@ Check boxes when done; log completion in [history.md](./history.md).
 - [x] **P0.1** Capture requirements (this file)
 - [x] **P0.2** [history.md](./history.md)
 - [x] **P0.3** Plan index [README.md](./README.md)
-- [ ] **P0.4** Root `README.md` one-line Leg 4 pointer (optional)
+- [x] **P0.4** Root `README.md` one-line Leg 4 pointer (optional)
 
 ### Phase 1 — Core script (MVP) — **COMPLETE 2026-06-02**
 
@@ -176,16 +176,16 @@ Check boxes when done; log completion in [history.md](./history.md).
 - [x] **P1.7** `--compile-check` (§14)
 - [x] **P1.8** Pilot run on Simple-form; §12 definition of done
 
-### Phase 2 — Skill + docs
+### Phase 2 — Skill + docs — **COMPLETE 2026-06-03**
 
-- [ ] **P2.1** `.cursor/skills/plugin-builder/SKILL.md`
-- [ ] **P2.2** `docs/SCHEMA.md` — plugin artifacts section
-- [ ] **P2.3** `CLAUDE.md` Leg 4 one-liner
+- [x] **P2.1** `.cursor/skills/plugin-builder/SKILL.md`
+- [x] **P2.2** `docs/SCHEMA.md` — plugin artifacts section
+- [x] **P2.3** `CLAUDE.md` Leg 4 one-liner
 
-### Phase 3 — Pipeline integration (deferred)
+### Phase 3 — Pipeline integration — **COMPLETE 2026-06-03**
 
-- [ ] **P3.1** `run_leg4()` in `scripts/agent_tools.py`; dispatch in `scripts/agent.py`
-- [ ] **P3.2** `.cursor/skills/pipeline-orchestrator/SKILL.md` — `RUN_PIPELINE leg4`
+- [x] **P3.1** `run_leg4()` in `scripts/agent_tools.py`; dispatch in `scripts/agent.py`
+- [x] **P3.2** `.cursor/skills/pipeline-orchestrator/SKILL.md` — `RUN_PIPELINE leg4`
 
 ### Phase 4 — Enrichment (deferred)
 

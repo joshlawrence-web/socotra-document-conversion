@@ -63,6 +63,32 @@ python3 scripts/agent.py --yes "RUN_PIPELINE leg1+leg2 input=<path> registry=reg
 - `<stem>.final.vm` is the production template.
 - `<stem>.review.md` (from Leg 2) is the path-confidence breakdown.
 
+## Generating the DocumentDataSnapshotPlugin (Leg 4)
+
+**Trigger phrases** (not exhaustive — use judgment):
+- "generate the plugin"
+- "build the snapshot plugin"
+- "run leg 4"
+- "create the DocumentDataSnapshotPlugin"
+- "wire up renderingData"
+
+**Leg 4** (`.suggested.yaml` → Java plugin + report):
+```
+python3 scripts/leg4_generate_plugin.py \
+  --suggested samples/output/<stem>/<stem>.suggested.yaml \
+  --customer-jar build/customer-config.jar \
+  --datamodel-jar build/core-datamodel-v1.7.61.jar \
+  --compile-check
+```
+
+Output lands in `samples/output/<stem>/`:
+- `{Product}DocumentDataSnapshotPluginImpl.java` — deploy to `socotra-config/plugins/java/` manually.
+- `<stem>.plugin-report.md` — path validation + compile result.
+
+**Pipeline integration** (`RUN_PIPELINE leg4`) is Phase 3 — not yet wired into `agent.py`.
+
+---
+
 ## MCP server (Claude Code)
 
 The pipeline is also exposed as an MCP server (`mcp_server.py`). Run `python3 install.py`

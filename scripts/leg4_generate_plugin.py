@@ -67,6 +67,35 @@ def _load_yaml(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _flatten_to_segment_root(suggested: dict) -> dict:
+    """Normalise schema 2.0 per-root verdicts to flat scalar fields using the segment root.
+
+    Leg 4 specifically validates paths against the segment root (D5 — MVP). For schema
+    1.x files (no rendering_roots), returns the dict unchanged.
+    """
+    roots = suggested.get("rendering_roots") or []
+    if not roots:
+        return suggested
+
+    seg_id = next((r.get("id") for r in roots if r.get("id") == "segment"), None)
+    if seg_id is None:
+        seg_id = roots[0].get("id")
+    if not seg_id:
+        return suggested
+
+    def _promote(entry: dict) -> dict:
+        verdict = (entry.get("verdicts") or {}).get(seg_id) or {}
+        return {
+            **entry,
+            "data_source": verdict.get("data_source") or "",
+            "confidence": verdict.get("confidence") or "",
+            "reasoning": verdict.get("reasoning") or "",
+        }
+
+    new_vars = [_promote(v) for v in (suggested.get("variables") or [])]
+    return {**suggested, "variables": new_vars}
+
+
 # JAR introspection (_javap / _zero_arg_methods / _unwrap_type / validate_path /
 # _default_datamodel_jar / _class_exists) now lives in scripts/sdk_introspect.py
 # and is imported above — single source of truth shared with Leg 2 (plan P1.1).
@@ -320,7 +349,7 @@ def main() -> int:
         print("ERROR: no core-datamodel jar found (pass --datamodel-jar)", file=sys.stderr)
         return 1
 
-    suggested = _load_yaml(suggested_path)
+    suggested = _flatten_to_segment_root(_load_yaml(suggested_path))
     product = (suggested.get("product") or "").strip()
     if not product:
         print(f"ERROR: 'product' missing from {suggested_path.name}", file=sys.stderr)

@@ -2,6 +2,25 @@
 
 Append-only. **Newest session first.** Link from [00-plan.md](./00-plan.md).
 
+**Plan status (canonical):** [README.md](./README.md) — **COMPLETE** for Phases 0–2;
+Phase 3 (Leg 1/3/4 harmonisation, delta mode) is spec-only / deferred.
+
+---
+
+## 2026-06-03 — Plan status harmonised (documentation)
+
+### Summary
+
+- Aligned [README.md](./README.md), [00-plan.md](./00-plan.md), [problem.md](./problem.md),
+  and this file so future agents see one consistent status: **Phases 0–2 complete**,
+  **Phase 3 spec-only / not implemented here**.
+- Updated stale "no code yet" / "planning agent" language left over from the planning session.
+- Marked P3.1–P3.3 as spec-complete (§14 written); P3.4 (delta mode) remains deferred.
+
+### No code changes
+
+Documentation-only session.
+
 ---
 
 ## 2026-06-03 — Planning session (user + agent)
@@ -237,6 +256,51 @@ python3 conformance/run-conformance.py   # 12/12 PASS (registry; suggested/revie
   entry — unchanged by this work.
 
 ---
+
+## 2026-06-03 — Phase 3 harmonisation: Leg 3 + Leg 4 consume schema 2.0
+
+### Summary
+
+- Added `_flatten_to_primary_root()` to `leg3_substitute.py`: normalises 2.0 per-root
+  verdicts to flat scalar fields using the primary rendering root before all downstream
+  logic. Applied in `build_substitution_map`, `build_foreach_map`, and `main()`.
+- Added `_flatten_to_segment_root()` to `leg4_generate_plugin.py`: same pattern, uses
+  the segment root (Leg 4's MVP scope per D5). Applied after `_load_yaml` in `main()`.
+- Both legs are backward-compatible: 1.x files (no `rendering_roots`) pass through
+  unchanged. The flatten step is a no-op when `_primary_root_id` returns `None`.
+- Leg 3 now correctly resolves segment-resident fields (e.g. `LOCATOR → $data.locator`
+  / `high`) and leaves non-navigable tokens as `$TBD_*`. Previously returned all-empty.
+- Leg 4 `high=1` (was `high=0`) on the 2.0 Simple-form pilot; compile-check still PASS.
+- **§14.1 (Leg 1 emitting `rendering_roots:` in `.mapping.yaml`)** deferred: Leg 2
+  already re-parses roots from `source:`, so this is non-blocking.
+
+### Files touched
+
+- `scripts/leg3_substitute.py` — `_primary_root_id`, `_flatten_to_primary_root`, updated `build_substitution_map`, `build_foreach_map`, `main`
+- `scripts/leg4_generate_plugin.py` — `_flatten_to_segment_root`, updated `main`
+
+### Verification
+
+```bash
+python3 conformance/run-conformance.py  # 13/13 PASS
+python3 scripts/leg3_substitute.py \
+  --suggested samples/output/Simple-form/Simple-form.suggested.yaml \
+  --vm samples/output/Simple-form/Simple-form.vm \
+  --out /tmp/Simple-form.final.vm
+# → Resolved (1): LOCATOR / $data.locator / high  ✅; 4 unresolved ✅
+
+python3 scripts/leg4_generate_plugin.py \
+  --suggested samples/output/Simple-form/Simple-form.suggested.yaml \
+  --compile-check
+# → high=1, compile=PASS  ✅
+```
+
+### Open items
+
+- §14.1 (Leg 1 filename → `rendering_roots:` in `.mapping.yaml`): non-blocking since
+  Leg 2 already parses roots from `source:`; deferred to a separate effort.
+- §14.3 sibling field lifting (D6): Leg 4 still reports `sibling_only` as ignored/low;
+  actual plugin codegen for sibling fields is future Leg 4 rework.
 
 <!-- Template for future entries:
 

@@ -1,15 +1,13 @@
 # Problem brief — Root-aware confidence for the Leg 2 mapping-suggester
 
-**Status:** Problem definition only — no plan yet. **For the planning agent.**
+**Status:** Problem **resolved** — fix shipped in Phases 0–2 (2026-06-03). See [README.md](./README.md).
 **Created:** 2026-06-03
 **Author:** handoff from a Leg 4 pilot run that exposed the gap.
 
-> **Planning agent: start here.** This file describes *what is wrong and why*, with
-> reproducible SDK evidence. It does **not** prescribe an implementation. Your job is
-> to turn this into a plan (locked decisions, design, task list, definition of done)
-> following the house style in
-> [`../Leg4-document-snapshot-plugin/00-plan.md`](../Leg4-document-snapshot-plugin/00-plan.md).
-> Do **not** start coding. Confirm scope and open questions (§7) with the user first.
+> **Future agents:** This file is the *historical problem statement* — why we built
+> root-aware, SDK-grounded confidence. For current status, commands, and remaining work,
+> start at [README.md](./README.md). For implementation details, see
+> [00-plan.md](./00-plan.md) and [history.md](./history.md).
 
 ---
 
@@ -156,6 +154,9 @@ The planning agent should pick one (or a hybrid), justify it, and lock it as a d
 
 ## 7. Open questions to resolve with the user before planning
 
+> **Resolved 2026-06-03** — answers locked as D1–D10 in [00-plan.md §3](./00-plan.md).
+> Kept here for historical context.
+
 1. Direction A vs. B (or hybrid) for where SDK truth lives.
 2. How a document/template declares its target root(s): inferred from product +
    transaction context, or explicit in the mapping?
@@ -167,6 +168,9 @@ The planning agent should pick one (or a hybrid), justify it, and lock it as a d
 ---
 
 ## 8. Definition of done (for the *plan*, not the implementation)
+
+> **Met 2026-06-03** — implementation acceptance in [00-plan.md §12](./00-plan.md) also met.
+> Verify today with the commands in [README.md](./README.md).
 
 - A plan folder mirroring the Leg 4 layout (`00-plan.md`, `README.md`, `history.md`).
 - Locked decisions table answering §7.
