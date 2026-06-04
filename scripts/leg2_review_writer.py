@@ -181,13 +181,41 @@ def _write_review_md(
         lines.append(f"| {code} | {na_counts.get(code, 0)} |")
     lines.append("")
 
-    # §3 Blockers — one row per (placeholder, root) with low confidence.
+    # §3 Blockers — one row per (placeholder, root) with low confidence (non-lifecycle).
+    all_low_pairs: list[tuple[dict, str]] = [
+        (e, root_id)
+        for e in sorted(all_e, key=_fmt_line)
+        for root_id in roots
+        if _verdict(e, root_id).get("confidence") == "low"
+    ]
+    lifecycle_pairs = [(e, r) for e, r in all_low_pairs
+                       if _verdict(e, r).get("sdk_status") == "lifecycle_violation"]
+    blocker_pairs = [(e, r) for e, r in all_low_pairs
+                     if _verdict(e, r).get("sdk_status") != "lifecycle_violation"]
+
+    lines += ["---", "", "## Lifecycle violations (DataFetcher method unavailable on root)", ""]
+    if not lifecycle_pairs:
+        lines.append("No lifecycle violations.")
+    else:
+        lines += [
+            "These fields matched a DataFetcher registry entry but the DataFetcher method is "
+            "not available on that rendering root (e.g. `getQuotePricing()` on a segment root). "
+            "They are low confidence on that root only — check the valid_roots annotation.",
+            "",
+            "| Placeholder | Line | Root | Method | Reasoning |",
+            "|---|---|---|---|---|",
+        ]
+        for e, root_id in lifecycle_pairs:
+            ph = e.get("placeholder") or e.get("name") or ""
+            ln = _fmt_line(e)
+            vd = _verdict(e, root_id)
+            cand = e.get("candidate") or {}
+            method = cand.get("datafetcher_method", "—")
+            reasoning = (vd.get("reasoning") or "")[:120]
+            lines.append(f"| `{ph}` | {ln} | `{root_id}` | `{method}` | {reasoning} |")
+    lines.append("")
+
     lines += ["---", "", "## Blockers (low confidence, per root)", ""]
-    blocker_pairs: list[tuple[dict, str]] = []
-    for e in sorted(all_e, key=_fmt_line):
-        for root_id in roots:
-            if _verdict(e, root_id).get("confidence") == "low":
-                blocker_pairs.append((e, root_id))
     if not blocker_pairs:
         lines.append("No blockers.")
     elif mode == "terse":

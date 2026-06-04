@@ -13,9 +13,9 @@ Writes:
 Deterministic Java codegen (no LLM). renderingData is a HashMap<String, Object>
 with named keys per request type:
 
-  quote request   → keys: "quote" ($quote.*), "pricing" (enriched), "productType"
-  policy request  → keys: "policy" ($policy.*), "transaction" ($transaction.*),
-                          "segment" ($segment.*), "todayAsString", "productType"
+  quote request   → keys: "quote" ($data.quote.*), "pricing" (enriched), "productType"
+  policy request  → keys: "policy" ($data.policy.*), "transaction" ($data.transaction.*),
+                          "segment" ($data.segment.*), "todayAsString", "productType"
 
 Only high-confidence variables are validated; medium/low are reported as ignored (D5).
 Missing segment on a policy request fails soft — logs an error, segment key is null.
@@ -35,11 +35,14 @@ import yaml
 # Shared SDK-introspection helpers (Leg 2 plan P1.1 — single source of JAR truth).
 from sdk_introspect import (
     CUSTOMER_PACKAGE,
+    DATAFETCHER_INTERFACE,
     INVOICE_REQUEST,
     PLUGIN_INTERFACE,
     _class_exists,
     _default_datamodel_jar,
     _default_slf4j_jar,
+    _method_return_type,
+    _unwrap_type,
     validate_path,
 )
 
@@ -120,7 +123,7 @@ import com.socotra.coremodel.Policy;
 import com.socotra.coremodel.QuotePricing;
 import com.socotra.coremodel.Transaction;
 import com.socotra.deployment.DataFetcherFactory;
-import com.socotra.deployment.customer.DocumentDataSnapshotPlugin.%(invoice_request)s;
+%(dynamic_imports)simport com.socotra.deployment.customer.DocumentDataSnapshotPlugin.%(invoice_request)s;
 import com.socotra.deployment.customer.DocumentDataSnapshotPlugin.%(quote_request)s;
 import com.socotra.deployment.customer.DocumentDataSnapshotPlugin.%(policy_request)s;
 
@@ -180,7 +183,7 @@ public class %(class_name)s implements DocumentDataSnapshotPlugin {
         renderingData.put("quote", quote);
         renderingData.put("pricing", enhancedPricing);
         renderingData.put("productType", "%(product)s");
-
+%(quote_datafetcher_extras)s
         return DocumentDataSnapshot.builder()
                 .renderingData(renderingData)
                 .build();
@@ -207,7 +210,7 @@ public class %(class_name)s implements DocumentDataSnapshotPlugin {
         renderingData.put("transaction", transaction);
         renderingData.put("segment", segment);
         renderingData.put("productType", "%(product)s");
-
+%(policy_datafetcher_extras)s
         return DocumentDataSnapshot.builder()
                 .renderingData(renderingData)
                 .build();
@@ -225,7 +228,89 @@ public class %(class_name)s implements DocumentDataSnapshotPlugin {
 """
 
 
-def render_java(product: str, suggested_name: str) -> str:
+_LEGACY_PRICING_KEYS = frozenset({"pricing"})
+
+
+def _collect_datafetcher_calls(
+    suggested: dict, root_id: str, classpath: str, skip_keys: frozenset = frozenset()
+) -> list[dict]:
+    """Return deduplicated DataFetcher calls for the given root from the suggested mapping.
+
+    Only includes entries where candidate.source == 'datafetcher' AND the verdict for
+    root_id is high or medium confidence. Keys in skip_keys are excluded (used to avoid
+    duplicating legacy hardcoded puts like 'pricing').
+    """
+    seen: dict[str, dict] = {}
+    for v in (suggested.get("variables") or []):
+        cand = v.get("candidate") or {}
+        if cand.get("source") != "datafetcher":
+            continue
+        verdict = (v.get("verdicts") or {}).get(root_id) or {}
+        if verdict.get("confidence") not in ("high", "medium"):
+            continue
+        key = cand.get("datafetcher_key", "")
+        method = cand.get("datafetcher_method", "")
+        arg_raw = cand.get("datafetcher_arg", "")
+        arg = arg_raw.get(root_id, "") if isinstance(arg_raw, dict) else str(arg_raw)
+        if key and method and key not in seen and key not in skip_keys:
+            seen[key] = {"key": key, "method": method, "arg": arg}
+
+    result = []
+    for info in seen.values():
+        raw_ret = _method_return_type(classpath, DATAFETCHER_INTERFACE, info["method"])
+        fqcn = _unwrap_type(raw_ret) if raw_ret else None
+        short = fqcn.rsplit(".", 1)[-1] if fqcn else "Object"
+        result.append({
+            "key": info["key"],
+            "method": info["method"],
+            "arg": info["arg"],
+            "return_type": short,
+            "return_fqcn": fqcn or "",
+        })
+    return result
+
+
+def _generate_datafetcher_extras(calls: list[dict]) -> str:
+    """Generate null-guarded DataFetcher put blocks (indented 8 spaces)."""
+    if not calls:
+        return ""
+    blocks = []
+    for c in calls:
+        key, method, arg, ret = c["key"], c["method"], c["arg"], c["return_type"]
+        blocks.append(
+            f"        {ret} {key} = null;\n"
+            f"        try {{\n"
+            f"            {key} = DataFetcherFactory.get().{method}({arg});\n"
+            f"        }} catch (Exception e) {{\n"
+            f"            log.warn(\"Could not fetch {key} for locator={{}}\", {arg}, e);\n"
+            f"        }}\n"
+            f"        if ({key} != null) {{\n"
+            f"            renderingData.put(\"{key}\", {key});\n"
+            f"        }}"
+        )
+    return "\n".join(blocks)
+
+
+def _generate_dynamic_imports(all_calls: list[dict]) -> str:
+    fqcns = sorted({
+        c["return_fqcn"] for c in all_calls
+        if c["return_fqcn"] and c["return_type"] != "Object"
+    })
+    return "\n".join(f"import {fqcn};" for fqcn in fqcns)
+
+
+def render_java(
+    product: str,
+    suggested_name: str,
+    quote_df_calls: list[dict] | None = None,
+    policy_df_calls: list[dict] | None = None,
+) -> str:
+    quote_extras = _generate_datafetcher_extras(quote_df_calls or [])
+    policy_extras = _generate_datafetcher_extras(policy_df_calls or [])
+    all_calls = (quote_df_calls or []) + (policy_df_calls or [])
+    dyn_imports = _generate_dynamic_imports(all_calls)
+    if dyn_imports:
+        dyn_imports = dyn_imports + "\n"
     return JAVA_TEMPLATE % {
         "class_name": f"{product}DocumentDataSnapshotPluginImpl",
         "quote_request": f"{product}QuoteRequest",
@@ -235,6 +320,9 @@ def render_java(product: str, suggested_name: str) -> str:
         "segment_type": f"{product}Segment",
         "product": product,
         "suggested_name": suggested_name,
+        "quote_datafetcher_extras": ("\n" + quote_extras) if quote_extras else "",
+        "policy_datafetcher_extras": ("\n" + policy_extras) if policy_extras else "",
+        "dynamic_imports": dyn_imports,
     }
 
 
@@ -277,10 +365,10 @@ def write_report(
         f"renderingData is a `HashMap<String, Object>` with named keys per request type:",
         "",
         f"- **Quote request** — `\"quote\"` (`{quote}`), `\"pricing\"` (enriched totals), `\"productType\"`",
-        f"  Velocity: `$quote.*`, `$pricing.*`",
+        f"  Velocity: `$data.quote.*`, `$data.pricing.*`",
         f"- **Policy request** — `\"policy\"` (`Policy`), `\"transaction\"` (`Transaction`), "
         f"`\"segment\"` (`{seg}`), `\"todayAsString\"`, `\"productType\"`",
-        f"  Velocity: `$policy.*`, `$transaction.*`, `$segment.*`",
+        f"  Velocity: `$data.policy.*`, `$data.transaction.*`, `$data.segment.*`",
         "",
         "---",
         "",
@@ -419,13 +507,24 @@ def main() -> int:
         print("ERROR: no slf4j-api jar found (pass --slf4j-jar)", file=sys.stderr)
         return 1
 
-    suggested = _flatten_to_segment_root(_load_yaml(suggested_path))
-    product = (suggested.get("product") or "").strip()
+    suggested_raw = _load_yaml(suggested_path)
+    product = (suggested_raw.get("product") or "").strip()
     if not product:
         print(f"ERROR: 'product' missing from {suggested_path.name}", file=sys.stderr)
         return 1
 
     classpath = f"{customer_jar}:{datamodel_jar}"
+
+    # Collect DataFetcher calls before flattening — needs per-root verdicts.
+    # Skip "pricing" key for quote handler (handled by the legacy pricing computation block).
+    quote_df_calls = _collect_datafetcher_calls(
+        suggested_raw, "quote", classpath, skip_keys=_LEGACY_PRICING_KEYS
+    )
+    policy_df_calls = _collect_datafetcher_calls(
+        suggested_raw, "segment", classpath, skip_keys=frozenset()
+    )
+
+    suggested = _flatten_to_segment_root(suggested_raw)
 
     # --- Verify interface + nested request types via javap (fail fast) -------
     if not _class_exists(classpath, PLUGIN_INTERFACE):
@@ -449,7 +548,7 @@ def main() -> int:
     segment_ok = _class_exists(classpath, segment_fqcn)
 
     # Determine primary root for validation — prefer segment, fall back to quote.
-    _vel_prefix_map = {"quote": "$quote", "segment": "$segment"}
+    _vel_prefix_map = {"quote": "$data.quote", "segment": "$data.segment"}
     roots_list = suggested.get("rendering_roots") or []
     primary_root_id = next(
         (r["id"] for r in roots_list if r.get("id") in ("segment", "quote")),
@@ -467,7 +566,11 @@ def main() -> int:
     class_name = f"{product}DocumentDataSnapshotPluginImpl"
     java_path = out_dir / f"{class_name}.java"
     out_dir.mkdir(parents=True, exist_ok=True)
-    java_path.write_text(render_java(product, suggested_path.name), encoding="utf-8")
+    java_path.write_text(
+        render_java(product, suggested_path.name,
+                    quote_df_calls=quote_df_calls, policy_df_calls=policy_df_calls),
+        encoding="utf-8",
+    )
 
     # --- Categorise + validate variables -------------------------------------
     variables = suggested.get("variables") or []

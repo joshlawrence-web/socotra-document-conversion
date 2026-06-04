@@ -13,5 +13,8 @@ conformance/fixtures/*/actual/
 # Generated pipeline output — not source, don't track
 samples/output/
 
+# Build artifacts
+build/
+
 # IDE
 .vscode/

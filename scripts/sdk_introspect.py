@@ -119,6 +119,70 @@ def _zero_arg_methods(classpath: str, fqcn: str) -> dict[str, str]:
     return methods
 
 
+DATAFETCHER_INTERFACE = "com.socotra.deployment.DataFetcher"
+
+_ANY_METHOD_RE = re.compile(
+    r"^\s*public\s+(?:(?:abstract|static|default|final|synchronized)\s+)*"
+    r"(?:<[^>]*>\s+)?"
+    r"([\w.$<>?,\[\]\s]+?)\s+"
+    r"(\w+)\s*\("
+)
+
+
+def _method_return_type(classpath: str, fqcn: str, method_name: str) -> str | None:
+    """Return the declared return type string of the first public method with the given name.
+
+    Unlike ``_zero_arg_methods``, this matches methods with any number of parameters —
+    needed for DataFetcher methods that take a locator argument."""
+    rc, out = _javap(classpath, fqcn)
+    if rc != 0:
+        return None
+    for line in out.splitlines():
+        m = _ANY_METHOD_RE.match(line)
+        if m and m.group(2) == method_name:
+            return m.group(1).strip()
+    return None
+
+
+def _find_customer_type_for_method(classpath: str, method_name: str) -> str | None:
+    """Fallback resolver for generic DataFetcher return types (e.g. <T> T getAccount()).
+
+    Strips the 'get' prefix → stem, lists classes in the customer JAR (first
+    classpath entry), and returns the shortest-named FQCN in
+    com.socotra.deployment.customer whose simple name contains the stem
+    (case-insensitive). Inner classes (containing '$') are excluded."""
+    stem = method_name[3:].lower() if method_name.startswith("get") else method_name.lower()
+    customer_jar = classpath.split(":")[0]
+    proc = subprocess.run(["jar", "tf", customer_jar], capture_output=True, text=True)
+    if proc.returncode != 0:
+        return None
+    candidates = []
+    for line in proc.stdout.splitlines():
+        if not line.startswith("com/socotra/deployment/customer/"):
+            continue
+        if "$" in line or not line.endswith(".class"):
+            continue
+        fqcn = line[:-6].replace("/", ".")
+        short = fqcn.rsplit(".", 1)[-1].lower()
+        if stem in short or short in stem:
+            candidates.append(fqcn)
+    if not candidates:
+        return None
+    return min(candidates, key=lambda c: len(c.rsplit(".", 1)[-1]))
+
+
+def datafetcher_return_type(classpath: str, method_name: str) -> str | None:
+    """Return the unwrapped FQCN of the type returned by DataFetcher.<method_name>().
+    Returns None if the method is not found or return type is not navigable."""
+    raw = _method_return_type(classpath, DATAFETCHER_INTERFACE, method_name)
+    if raw is None:
+        return None
+    result = _unwrap_type(raw)
+    if result is None:
+        result = _find_customer_type_for_method(classpath, method_name)
+    return result
+
+
 def _unwrap_type(ret: str) -> str | None:
     """Strip Optional<>/Collection<>/List<> wrappers; return inner FQCN or None
     for primitives / java.lang scalars that cannot be navigated further."""

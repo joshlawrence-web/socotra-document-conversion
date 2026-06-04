@@ -280,3 +280,12 @@ to describe the named-key approach and list the standard root keys per request t
 | `build/core-datamodel-v1.7.61.jar` | `Charge`, `QuotePricing`, `Policy`, `Transaction` |
 | `EC-Demo-Product-main/commercial-auto/plugins/java/CommercialAutoDocumentSnapshotPlugin.java` | Quote ground truth |
 | `EC-Demo-Product-main/commercial-auto_127_V1/plugins/java/GlobalDocDataSnapshotPlugin.java` | Invoice pattern reference |
+
+---
+
+## Superseded assumption
+
+**2026-06-03 — Wrong assumption corrected.** This plan assumed templates reference named roots
+as bare `$quote.*`/`$segment.*` variables. Confirmed via live renderer: all renderingData keys
+are exposed under `$data`, so templates must use `$data.quote.*` etc. Fixed in plan
+[Leg2-data-root-prefix-fix](../Leg2-data-root-prefix-fix/00-plan.md).

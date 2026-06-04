@@ -27,6 +27,7 @@ from sdk_introspect import (
     _class_exists,
     _default_datamodel_jar,
     classify_path,
+    datafetcher_return_type,
     jar_candidate,
     request_fqcn,
     resolve_element_type,
@@ -45,14 +46,14 @@ from suggester_state import (
 # ---------------------------------------------------------------------------
 
 _ROOT_VEL_PREFIX: dict[str, str] = {
-    "quote": "$quote",
-    "segment": "$segment",
+    "quote": "$data.quote",
+    "segment": "$data.segment",
 }
 
 _SIBLING_ROOT: dict[str, str] = {
-    "policy": "$policy",
-    "transaction": "$transaction",
-    "account": "$account",
+    "policy": "$data.policy",
+    "transaction": "$data.transaction",
+    "account": "$data.account",
 }
 
 
@@ -70,7 +71,7 @@ def _reprefix(path: str, new_prefix: str) -> str:
 
 
 def _sibling_data_source(hint: str | None) -> str:
-    """Convert a sibling hint like 'Policy.policyNumber()' → '$policy.policyNumber'."""
+    """Convert a sibling hint like 'Policy.policyNumber()' → '$data.policy.policyNumber'."""
     if not hint:
         return ""
     m = re.match(r"(\w+)\.(\w+)\(\)", hint)
@@ -105,6 +106,75 @@ def snake_to_camel(s: str) -> str:
 # ---------------------------------------------------------------------------
 # Feature-flag constants
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# DataFetcher constants (plan DF-BLOCK / lifecycle table)
+# ---------------------------------------------------------------------------
+
+_DF_BLOCKED_METHODS: frozenset[str] = frozenset({"getQuote", "getSegment"})
+
+_DF_LIFECYCLE_MESSAGES: dict[str, str] = {
+    "getPolicy:quote": (
+        "getPolicy() is not available on quote root — no policy exists at quote stage; "
+        "next-action: supply-from-plugin"
+    ),
+    "getTermCharges:quote": (
+        "getTermCharges() is not available on quote root — no term exists at quote stage; "
+        "next-action: supply-from-plugin"
+    ),
+    "getTermSubsegmentSummaries:quote": (
+        "getTermSubsegmentSummaries() is not available on quote root — no term at quote stage; "
+        "next-action: supply-from-plugin"
+    ),
+    "getTransaction:quote": (
+        "getTransaction() is not available on quote root — no transaction at quote stage; "
+        "next-action: supply-from-plugin"
+    ),
+    "getTransactionPricing:quote": (
+        "getTransactionPricing() is not available on quote root — no transaction at quote stage; "
+        "next-action: supply-from-plugin"
+    ),
+    "getQuotePricing:segment": (
+        "getQuotePricing() is not available on segment root — no quote locator on segment request; "
+        "next-action: supply-from-plugin"
+    ),
+    "getQuoteUnderwritingFlags:segment": (
+        "getQuoteUnderwritingFlags() is not available on segment root; "
+        "next-action: supply-from-plugin"
+    ),
+    "getSegmentDocuments:quote": (
+        "getSegmentDocuments() is not available on quote root; "
+        "next-action: supply-from-plugin"
+    ),
+}
+
+
+def _validate_datafetcher_entry(e: dict) -> str | None:
+    """Validate a registry entry with source: datafetcher. Returns error string or None."""
+    field = e.get("field", "(unnamed)")
+    method = e.get("datafetcher_method", "")
+    if not method:
+        return f"datafetcher entry '{field}': missing datafetcher_method"
+    if not e.get("datafetcher_arg"):
+        return f"datafetcher entry '{field}': missing datafetcher_arg"
+    if not e.get("datafetcher_key"):
+        return f"datafetcher entry '{field}': missing datafetcher_key"
+    if not e.get("valid_roots"):
+        return f"datafetcher entry '{field}': missing valid_roots"
+    if method in _DF_BLOCKED_METHODS:
+        return (
+            f"datafetcher entry '{field}': method {method}() is blocked (collision guard "
+            f"— it returns the same entity as the rendering root as a less-specific type)"
+        )
+    vel = e.get("velocity", "")
+    key = e.get("datafetcher_key", "")
+    if vel and key and not vel.startswith(f"$data.{key}"):
+        return (
+            f"datafetcher entry '{field}': velocity '{vel}' must start with '$data.{key}' "
+            f"(datafetcher_key/velocity mismatch)"
+        )
+    return None
+
 
 REFUSAL_FLAGS: frozenset[str] = frozenset({
     "nested_iterables",
@@ -142,7 +212,7 @@ def _collect_entries(reg: dict) -> list[dict]:
                 if isinstance(v, list):
                     _walk(v)
 
-    for section in ("system_paths", "account_paths", "policy_data"):
+    for section in ("system_paths", "account_paths", "policy_data", "datafetcher_paths"):
         _walk(reg.get(section))
 
     for exp in reg.get("exposures") or []:
@@ -162,6 +232,18 @@ def _collect_entries(reg: dict) -> list[dict]:
 def build_registry_index(reg: dict) -> dict:
     """Build all lookup tables needed by the matcher."""
     entries = _collect_entries(reg)
+
+    df_errors = [
+        err for e in entries
+        if e.get("source") == "datafetcher"
+        for err in [_validate_datafetcher_entry(e)]
+        if err
+    ]
+    if df_errors:
+        raise ValueError(
+            "Registry DataFetcher validation errors:\n"
+            + "\n".join(f"  - {e}" for e in df_errors)
+        )
 
     by_field: dict[str, list[dict]] = {}
     by_display_name: dict[str, list[dict]] = {}
@@ -537,11 +619,82 @@ def derive_variable_candidate(
         reason = f"no match for {name_camel}"
 
     reason += _quantifier_note(e)
-    return cand(path=vel, match_step=step, registry_field=field, base_reason=reason)
+    result = cand(path=vel, match_step=step, registry_field=field, base_reason=reason)
+    if e.get("source") == "datafetcher":
+        result["source"] = "datafetcher"
+        result["datafetcher_method"] = e.get("datafetcher_method", "")
+        result["datafetcher_arg"] = e.get("datafetcher_arg", "")
+        result["datafetcher_key"] = e.get("datafetcher_key", "")
+        result["valid_roots"] = list(e.get("valid_roots") or [])
+    return result
 
 
 def _last_segment(path: str) -> str:
     return (path or "").rstrip(".").rsplit(".", 1)[-1]
+
+
+def _datafetcher_verdict(candidate: dict, rid: str, classpath: str) -> dict:
+    """Verdict for a DataFetcher-sourced registry candidate (DF3).
+
+    1. Lifecycle gate — fails fast on invalid root.
+    2. JAR probe — classify sub-path against DataFetcher return type (N4 option a).
+    3. Fallback to medium if return type not verifiable via JAR (N4 option b).
+    """
+    valid_roots = candidate.get("valid_roots") or []
+    method = candidate.get("datafetcher_method", "")
+    key = candidate.get("datafetcher_key", "")
+    vel = candidate["path"]  # $data.<key>.<field> — no reprefixing for DataFetcher paths
+
+    if rid not in valid_roots:
+        msg = _DF_LIFECYCLE_MESSAGES.get(
+            f"{method}:{rid}",
+            f"{method}() is not available on {rid} root — next-action: supply-from-plugin",
+        )
+        return {"data_source": "", "confidence": "low", "sdk_status": "lifecycle_violation",
+                "reasoning": msg}
+
+    arg_raw = candidate.get("datafetcher_arg", "")
+    arg_str = arg_raw.get(rid, "") if isinstance(arg_raw, dict) else str(arg_raw)
+
+    df_fqcn = datafetcher_return_type(classpath, method)
+    if df_fqcn:
+        key_prefix = f"$data.{key}"
+        rest = vel[len(key_prefix):].lstrip(".")
+        if rest:
+            _probe = "$__df"
+            status, detail, _ = classify_path(
+                classpath, df_fqcn, f"{_probe}.{rest}", None, root_prefix=_probe
+            )
+        else:
+            status, detail = "verified", f"resolves to {method}() return root"
+        grade = confidence_grade(candidate["match_step"], status)
+        df_short = df_fqcn.rsplit(".", 1)[-1]
+        if status == "verified":
+            reasoning = (
+                f"DataFetcher: {method}({arg_str}) → {df_short}.{rest}() "
+                f"— verified on {rid} root"
+            )
+        else:
+            reasoning = (
+                f"DataFetcher: {method}({arg_str}) on {rid} root — {df_short} has no {rest}() "
+                f"(N4 JAR probe: {detail}) — next-action: supply-from-plugin"
+            )
+        return {
+            "data_source": vel if status == "verified" else "",
+            "confidence": grade,
+            "sdk_status": status,
+            "reasoning": reasoning,
+        }
+
+    return {
+        "data_source": vel,
+        "confidence": "medium",
+        "sdk_status": "trusted",
+        "reasoning": (
+            f"DataFetcher: {method}({arg_str}) on {rid} root — return type not verifiable "
+            f"via JAR (trusted from registry, cap: medium)"
+        ),
+    }
 
 
 def variable_verdict_for_root(candidate: dict, root: dict, classpath: str) -> dict:
@@ -560,6 +713,10 @@ def variable_verdict_for_root(candidate: dict, root: dict, classpath: str) -> di
             "sdk_status": "skipped",
             "reasoning": f"root `{rid}` not resolved (D5: invoice deferred); {base}",
         }
+
+    # DataFetcher lifecycle gate (DF3) — bypasses direct-path JAR probing.
+    if candidate.get("source") == "datafetcher":
+        return _datafetcher_verdict(candidate, rid, classpath)
 
     # No single path to check — try JAR fallback first, then replicate.
     if candidate["terminal"]:
@@ -996,11 +1153,17 @@ def annotate_mapping(
         v.pop("data_source", None)
         v.pop("confidence", None)
         v.pop("reasoning", None)
-        v["candidate"] = {
+        cand_block: dict = {
             "path": cand["path"],
             "match_step": cand["match_step"],
             "registry_field": cand["registry_field"],
         }
+        if cand.get("source") == "datafetcher":
+            cand_block["source"] = "datafetcher"
+            cand_block["datafetcher_method"] = cand.get("datafetcher_method", "")
+            cand_block["datafetcher_arg"] = cand.get("datafetcher_arg", "")
+            cand_block["datafetcher_key"] = cand.get("datafetcher_key", "")
+        v["candidate"] = cand_block
         v["verdicts"] = {
             r["id"]: variable_verdict_for_root(cand, r, classpath) for r in roots
         }
