@@ -1,6 +1,0 @@
-{
-  "initialCoreNumber" : "000000001",
-  "format" : "\\H\\A-########-\\J\\D\\L",
-  "copyFromQuote" : true,
-  "termNumberFormat" : "{policyNumber}-{termNumberPlusOne}"
-}

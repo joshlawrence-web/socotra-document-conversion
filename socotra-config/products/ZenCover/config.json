@@ -1,0 +1,79 @@
+{
+  "abstract" : false,
+  "defaultInstallmentPlan" : "Monthly12",
+  "defaultTermDuration" : 12,
+  "defaultDelinquencyPlan" : "Standard",
+  "defaultAutoRenewalPlan" : "Standard_60_30_1",
+  "defaultShortfallTolerancePlan" : "basicPlan",
+  "displayName" : "ZenCover",
+  "defaultDurationBasis" : "months",
+  "eligibleAccountTypes" : [ "PersonalAccount" ],
+  "contents" : [ "Item+" ],
+  "charges" : [ "fee", "premium", "tax", "premiumExclDiscount","settlement" ],
+  "data" : {
+    "coolingOffPeriod" : {
+      "displayName" : "Cooling Off Period",
+      "type" : "int"
+    },
+    "newBusinessWaitPeriod" : {
+      "displayName" : "New Business Wait Period",
+      "type" : "int",
+      "options" : [ "0", "7", "14" ],
+      "defaultValue" : "0"
+    },
+    "contractTermEndDate" : {
+      "displayName" : "Contract Term End Date",
+      "type" : "datetime?"
+    },
+    "expectedRenewalDate" : {
+      "displayName" : "Expected Renewal Date",
+      "type" : "date?"
+    },
+    "discountAmount" : {
+      "displayName" : "Discount Amount",
+      "type" : "decimal?",
+      "precision" : 2
+    },
+    "discountType" : {
+      "displayName" : "Discount Type",
+      "type" : "string?",
+      "maxLength" : 20000,
+      "options" : [ "P", "F" ]
+    },
+    "discountProfileCode" : {
+      "displayName" : "Discount Profile Code",
+      "type" : "string?",
+      "maxLength" : 20000
+    },
+    "discountTerm" : {
+      "displayName" : "Discount Term",
+      "type" : "string?",
+      "maxLength" : 20000
+    },
+    "settlementPeriod" : {
+      "displayName" : "Settlement Period",
+      "type" : "int?"
+    },
+    "settlementPeriodType" : {
+      "displayName" : "Settlement Period Type",
+      "type" : "string?",
+      "maxLength" : 20000
+    },
+    "settlementPeriodOffsetInDays" : {
+      "displayName" : "Settlement Period Offset In Days",
+      "type" : "int?"
+    },
+    "gracePeriod" : {
+      "displayName" : "Grace Period",
+      "type" : "int?"
+    },
+    "gracePeriodType" : {
+      "displayName" : "Grace Period Type",
+      "type" : "string?",
+      "maxLength" : 20000
+    }
+  },
+  "numberingPlan" : "ZCPolicyNumberingPlan",
+  "numberingString" : "ZC",
+  "documents" : [ "Forms01" ]
+}

@@ -1,43 +1,22 @@
 {
   "abstract" : false,
   "displayName" : "Breakdown",
-  "coverageTerms" : [ "ZeroDeductible" ],
-  "charges" : [ "premium" ],
+  "coverageTerms" : [ "ZeroDeductible!" ],
+  "charges" : [ "premium", "premiumExclDiscount", "tax" ],
   "data" : {
-    "perilStartDate" : {
-      "displayName" : "Peril Start Date",
-      "type" : "date?"
-    },
-    "perilEndDate" : {
-      "displayName" : "Peril End Date",
-      "type" : "date?"
-    },
-    "premium" : {
-      "displayName" : "Premium",
-      "type" : "decimal?",
-      "precision" : 2
-    },
-    "taxRate" : {
-      "displayName" : "Tax Rate",
-      "type" : "decimal?",
-      "precision" : 5
-    },
-    "taxAmount" : {
-      "displayName" : "Tax Amount",
-      "type" : "decimal?",
-      "precision" : 2
-    },
     "labourCovered" : {
       "displayName" : "Labour Covered",
-      "type" : "string?",
+      "type" : "string",
       "maxLength" : 20000,
-      "options" : [ "true", "false", "" ]
+      "options" : [ "true", "false" ],
+      "defaultValue" : "true"
     },
     "partsCovered" : {
       "displayName" : "Parts Covered",
-      "type" : "string?",
+      "type" : "string",
       "maxLength" : 20000,
-      "options" : [ "true", "false", "" ]
+      "options" : [ "true", "false" ],
+      "defaultValue" : "true"
     },
     "manufacturerLabourGuaranteeEndDate" : {
       "displayName" : "Manufacturer Labour Guarantee End Date",

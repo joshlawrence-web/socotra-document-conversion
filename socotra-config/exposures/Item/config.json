@@ -1,39 +1,14 @@
 {
   "abstract" : false,
   "displayName" : "Item",
-  "contents" : [ "Accessories?", "AccidentalDamage?", "Breakdown?", "Loss?", "RepeatFaultThree?", "Replacement?", "ReplacementRepair?", "ReplacementWO?", "Theft?" ],
+  "contents" : [ "AccidentalDamage?", "Breakdown!", "Theft?" ],
   "data" : {
-    "itemLocationAddressId" : {
-      "displayName" : "Item Location Address Id",
+    "itemTypeCode" : {
+      "displayName" : "Item Type Code",
       "type" : "string",
-      "maxLength" : 20000
-    },
-    "goodsCategoryCode" : {
-      "displayName" : "Goods Category Code",
-      "type" : "string",
-      "maxLength" : 20000
-    },
-    "manufacturerBrandCode" : {
-      "displayName" : "Manufacturer Brand Code",
-      "type" : "string",
-      "maxLength" : 20000
-    },
-    "levelOfCoverCategoryCode" : {
-      "displayName" : "Level of Cover Category Code",
-      "type" : "string",
-      "maxLength" : 20000
-    },
-    "coverExclusions" : {
-      "displayName" : "Cover Exclusions",
-      "type" : "CoverExclusions*"
-    },
-    "manufacturerLabourGuaranteePeriod" : {
-      "displayName" : "Manufacturer Labour Guarantee Period",
-      "type" : "int?"
-    },
-    "manufacturerPartsGuaranteePeriod" : {
-      "displayName" : "Manufacturer Parts Guarantee Period",
-      "type" : "int"
+      "maxLength" : 20000,
+      "options" : [ "WASHING_MACHINE", "DISHWASHER", "FRIDGE_FREEZER", "TUMBLE_DRYER", "OVEN" ],
+      "tag" : [ "highlight.1|, " ]
     },
     "purchaseDate" : {
       "displayName" : "Purchase Date",
@@ -42,16 +17,12 @@
     "purchasePrice" : {
       "displayName" : "Purchase Price",
       "type" : "decimal",
-      "precision" : 2
+      "precision" : 2,
+      "tag" : [ "highlight.2|" ]
     },
-    "manufactureYear" : {
-      "displayName" : "Manufacture Year",
-      "type" : "date?"
-    },
-    "itemTypeCode" : {
-      "displayName" : "Item Type Code",
-      "type" : "string",
-      "maxLength" : 20000
+    "manufacturerLabourGuaranteePeriod" : {
+      "displayName" : "Manufacturer Labour Guarantee Period",
+      "type" : "int?"
     },
     "itemInWarrantyAtTakeup" : {
       "displayName" : "Item In Warranty At Take Up",
@@ -61,10 +32,9 @@
       "displayName" : "Item In Working Order At Takeup",
       "type" : "boolean"
     },
-    "maxClaimAmount" : {
-      "displayName" : "Max Claim Amount",
-      "type" : "decimal?",
-      "precision" : 2
+    "serialNumber" : {
+      "displayName" : "Serial Number",
+      "type" : "int"
     }
   }
 }

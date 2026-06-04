@@ -1,6 +1,0 @@
-{
-  "displayName" : "Invoice Numbering Plan",
-  "initialCoreNumber" : "000000001",
-  "format" : "\\I\\N\\V-########-\\D\\G",
-  "copyFromQuote" : false
-}

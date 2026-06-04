@@ -1,0 +1,8 @@
+{
+  "displayName" : "Quarterly",
+  "cadence" : "quarterly",
+  "anchorMode" : "termStartDay",
+  "generateLeadDays" : 0,
+  "dueLeadDays" : 0,
+  "maxInstallmentsPerTerm" : 4
+}

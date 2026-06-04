@@ -1,0 +1,16 @@
+{
+  "defaultTimeZone" : "Europe/Paris",
+  "defaultCurrency" : "EUR",
+  "defaultTermDuration" : 1,
+  "defaultInstallmentPlan" : "Monthly12",
+  "defaultDurationBasis" : "years",
+  "defaultBackdatedInstallmentsBilling" : "deferDueDate",
+  "defaultDelinquencyPlan" : "Standard",
+  "defaultAutoRenewalPlan" : "Standard_60_30_1",
+  "defaultExcessCreditPlan" : "Standard",
+  "defaultAuxDataSettings" : "SampleAuxDataSetting",
+  "defaultShortfallTolerancePlan" : "basicPlan",
+  "enableSerialInvoiceNumbering" : false,
+  "enableEntityAnonymization" : false,
+  "defaultScheduleUploadErrorsLimit" : 1
+}

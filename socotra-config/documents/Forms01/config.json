@@ -3,7 +3,7 @@
   "scope" : "policy",
   "format" : "pdf",
   "rendering" : "prerendered",
-  "trigger" : "priced",
+  "trigger" : "issued",
   "portrait" : true,
   "pageSize" : "letter"
 }

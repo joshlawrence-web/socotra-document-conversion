@@ -4,28 +4,19 @@
   "coverageTerms" : [ "ZeroDeductible!" ],
   "charges" : [ "premium", "tax", "premiumExclDiscount" ],
   "data" : {
-    "perilStartDate" : {
-      "displayName" : "Peril Start Date",
-      "type" : "date?"
+    "labourCovered" : {
+      "displayName" : "Labour Covered",
+      "type" : "string",
+      "maxLength" : 20000,
+      "options" : [ "true", "false" ],
+      "defaultValue" : "true"
     },
-    "perilEndDate" : {
-      "displayName" : "Peril End Date",
-      "type" : "date?"
-    },
-    "premium" : {
-      "displayName" : "Premium",
-      "type" : "decimal?",
-      "precision" : 2
-    },
-    "taxRate" : {
-      "displayName" : "Tax Rate",
-      "type" : "decimal?",
-      "precision" : 5
-    },
-    "taxAmount" : {
-      "displayName" : "Tax Amount",
-      "type" : "decimal?",
-      "precision" : 2
+    "partsCovered" : {
+      "displayName" : "Parts Covered",
+      "type" : "string",
+      "maxLength" : 20000,
+      "options" : [ "true", "false" ],
+      "defaultValue" : "true"
     }
   }
 }
