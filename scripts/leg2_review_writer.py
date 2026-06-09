@@ -55,7 +55,18 @@ def _root_ids(suggested: dict) -> list[str]:
 
 
 def _verdict(entry: dict, root_id: str) -> dict:
-    return (entry.get("verdicts") or {}).get(root_id) or {}
+    """Read per-root verdict; falls back to flat schema 1.x fields when verdicts absent."""
+    v = (entry.get("verdicts") or {}).get(root_id)
+    if v is not None:
+        return v
+    # Schema 1.x fallback: flat confidence/data_source/reasoning on the entry itself.
+    if "confidence" in entry or "data_source" in entry:
+        return {
+            "confidence": entry.get("confidence") or "",
+            "data_source": entry.get("data_source") or "",
+            "reasoning": entry.get("reasoning") or "",
+        }
+    return {}
 
 
 def _check_minor_mismatch(suggested: dict) -> str | None:
@@ -90,9 +101,9 @@ def _write_review_md(
     roots = _root_ids(suggested) or ["(none)"]
     primary = roots[0]
 
-    # Per-root confidence counts.
-    def _counts(root_id: str) -> tuple[int, int, int]:
-        hi = me = lo = 0
+    # Per-root confidence counts (includes `none` for old-format / schema-miss).
+    def _counts(root_id: str) -> tuple[int, int, int, int]:
+        hi = me = lo = no = 0
         for e in all_e:
             c = _verdict(e, root_id).get("confidence")
             if c == "high":
@@ -101,7 +112,9 @@ def _write_review_md(
                 me += 1
             elif c == "low":
                 lo += 1
-        return hi, me, lo
+            elif c == "none":
+                no += 1
+        return hi, me, lo, no
 
     # Next-action counts on the primary root.
     na_counts: dict[str, int] = {}
@@ -123,6 +136,13 @@ def _write_review_md(
         "",
         f"- Run id: `{suggested.get('run_id', '')}`",
         f"- Mode: **{suggested.get('mode', 'terse')}**",
+    ]
+    if suggested.get("mode") == "delta":
+        if suggested.get("previous_run_id"):
+            lines.append(f"- Based on: previous_run_id `{suggested['previous_run_id']}`")
+        if suggested.get("base_suggested_sha256"):
+            lines.append(f"- Base sha256: `{suggested['base_suggested_sha256'][:16]}…`")
+    lines += [
         f"- Source mapping: `{mapping_path}`",
         f"- Suggested output: `{suggested_path}`",
         f"- Path registry: `{registry_path}`",
@@ -154,6 +174,29 @@ def _write_review_md(
         "---",
         "",
     ]
+    dc = suggested.get("delta_changes") or {}
+
+    # §1b State summary — always present; compact counts for programmatic parsing.
+    lines += [
+        "## State summary",
+        "",
+        f"- Variables: {len(variables)}  ·  Loops: {len(loops)}",
+        "",
+        "---",
+        "",
+    ]
+    if dc:
+        lines += [
+            "## Delta changes",
+            "",
+            f"changed={len(dc.get('changed') or [])}  "
+            f"cleared={len(dc.get('cleared') or [])}  "
+            f"re_suggested={len(dc.get('re_suggested_unconfirmed') or [])}  "
+            f"carried_confirmed={dc.get('carried_forward_count', 0)}",
+            "",
+            "---",
+            "",
+        ]
 
     # §2 Summary — per rendering root.
     lines += [
@@ -161,14 +204,14 @@ def _write_review_md(
         "",
         f"- Variables: {len(variables)}  ·  Loops: {len(loops)}",
         "",
-        "| Root | Primary | high | medium | low |",
-        "|---|---|---|---|---|",
+        "| Root | Primary | high | medium | low | none |",
+        "|---|---|---|---|---|---|",
     ]
     primary_set = {r.get("id"): r.get("primary") for r in rr}
     for root_id in roots:
-        hi, me, lo = _counts(root_id)
+        hi, me, lo, no = _counts(root_id)
         is_primary = "yes" if primary_set.get(root_id) or root_id == primary else "no"
-        lines.append(f"| `{root_id}` | {is_primary} | {hi} | {me} | {lo} |")
+        lines.append(f"| `{root_id}` | {is_primary} | {hi} | {me} | {lo} | {no} |")
     lines += [
         "",
         f"### Next-action breakdown (primary root: `{primary}`)",
@@ -282,6 +325,30 @@ def _write_review_md(
                 f"- [ ] `{ph}` · root `{root_id}` (line {ln}) → `{ds}`",
                 f"  - {vd.get('reasoning') or ''}",
             ]
+    lines.append("")
+
+    # §4b Token Format Errors — old-format or schema-miss tokens (confidence: none).
+    old_format_vars = [
+        e for e in sorted(all_e, key=_fmt_line)
+        if (e.get("candidate") or {}).get("match_step") in ("old-format", "none")
+    ]
+    lines += ["---", "", "## Token Format Errors", ""]
+    if not old_format_vars:
+        lines.append("No token format errors.")
+    else:
+        lines += [
+            "These placeholders use the old `{{FIELDNAME}}` format or reference an entity/field "
+            "not found in `registry/sdk-schema-index.yaml`. Rename them to "
+            "`{{EntityType.fieldName}}` using the schema index.",
+            "",
+            "| Token | Line | match_step | next-action |",
+            "|---|---|---|---|",
+        ]
+        for e in old_format_vars:
+            ph = e.get("placeholder") or e.get("name") or ""
+            ln = _fmt_line(e)
+            ms = (e.get("candidate") or {}).get("match_step", "")
+            lines.append(f"| `{ph}` | {ln} | `{ms}` | fix-token |")
     lines.append("")
 
     # §5 Cross-scope warnings — scanned on the primary root.

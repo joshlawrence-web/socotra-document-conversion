@@ -67,6 +67,56 @@ def _load_yaml(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _load_cond_registry(path: Path) -> list[dict]:
+    """Load a conditional-registry.yaml; return [] if absent or unreadable."""
+    if not path.exists():
+        return []
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _condition_to_velocity(condition: str) -> str:
+    """Convert 'quote.quoteNumber != null' → '$quote.quoteNumber != null'."""
+    condition = condition.strip()
+    if condition and not condition.startswith("$"):
+        condition = "$" + condition
+    return condition
+
+
+def build_cond_map(cond_blocks: list[dict]) -> dict[str, str]:
+    """Map '$doc.condN' → '#if(velocity_expr)source_text#end' for each block."""
+    result: dict[str, str] = {}
+    for block in cond_blocks:
+        bid = block.get("id")
+        conditions = block.get("conditions") or []
+        source_text = block.get("source_text") or ""
+        operator = block.get("operator", "AND")
+        if bid is None or not conditions:
+            continue
+        vel_conds = [_condition_to_velocity(c) for c in conditions]
+        joiner = " && " if operator == "AND" else " || "
+        cond_expr = joiner.join(vel_conds)
+        result[f"$doc.cond{bid}"] = f"#if({cond_expr}){source_text}#end"
+    return result
+
+
+def apply_cond_substitutions(vm_text: str, cond_map: dict[str, str]) -> str:
+    """Replace $doc.condN tokens with Velocity #if blocks; multi-pass for nesting."""
+    if not cond_map:
+        return vm_text
+    for _ in range(10):
+        new_text = vm_text
+        for token, replacement in cond_map.items():
+            new_text = new_text.replace(token, replacement)
+        if new_text == vm_text:
+            break
+        vm_text = new_text
+    return vm_text
+
+
 def _primary_root_id(suggested: dict) -> str | None:
     """Return the primary rendering root id from a schema 2.0 suggested.yaml, else None."""
     roots = suggested.get("rendering_roots") or []
@@ -170,11 +220,12 @@ def build_foreach_map(suggested: dict, high_only: bool = False) -> dict[str, str
 # Template processor
 # ---------------------------------------------------------------------------
 
-_TBD_TOKEN_RE = re.compile(r"\$(?:\w+\.)?TBD_\w+")
-_GUARD_OPEN_RE = re.compile(r"^\s*#if\(\$TBD_\w+\)\s*$")
+_TBD_TOKEN_RE = re.compile(r"\$(?:\w+\.)?TBD_[\w.]+")
+_GUARD_OPEN_RE = re.compile(r"^\s*#if\(\$TBD_[\w.]+\)\s*$")
 _IF_OR_FOREACH_RE = re.compile(r"^\s*#(if|foreach)\b")
 _END_RE = re.compile(r"^\s*#end\s*$")
 _FOREACH_LINE_RE = re.compile(r"^\s*#foreach\b")
+_BRACE_REF_RE = re.compile(r"\{\$([a-zA-Z_][a-zA-Z0-9_.]*)\}")
 
 
 def _substitute_tokens(line: str, smap: dict[str, str]) -> str:
@@ -245,7 +296,10 @@ def process_vm(
             else:
                 out.append(_substitute_tokens(line, smap) + nl)
 
-    return "".join(out)
+    result = "".join(out)
+    # Normalise {$expr} → ${expr} (invalid Velocity brace notation from source docs)
+    result = _BRACE_REF_RE.sub(r"${\1}", result)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -317,9 +371,12 @@ def write_report(
     high_only: bool = False,
     generated_at: str,
     repo_root: Path,
+    cond_blocks: list[dict] | None = None,
 ) -> None:
     deferred_vars = deferred_vars or []
     deferred_loops = deferred_loops or []
+    cond_blocks = cond_blocks or []
+    cond_count = len(cond_blocks)
     total_all = (
         len(resolved_vars) + len(unresolved_vars)
         + len(resolved_loops) + len(unresolved_loops)
@@ -329,16 +386,19 @@ def write_report(
     deferred_all = len(deferred_vars) + len(deferred_loops)
     unresolved_all = len(unresolved_vars) + len(unresolved_loops)
 
-    if total_all == 0:
+    cond_suffix = f", {cond_count} conditional block(s) applied" if cond_count else ""
+    if total_all == 0 and cond_count == 0:
         status = "EMPTY — no placeholders found"
+    elif total_all == 0 and cond_count > 0:
+        status = f"CONDITIONAL-ONLY — {cond_count} conditional block(s) applied"
     elif unresolved_all == 0 and deferred_all == 0:
-        status = f"COMPLETE — all {total_all} token(s) resolved"
+        status = f"COMPLETE — all {total_all} token(s) resolved{cond_suffix}"
     elif resolved_all == 0 and deferred_all == 0:
-        status = f"BLOCKED — 0 of {total_all} resolved"
+        status = f"BLOCKED — 0 of {total_all} resolved{cond_suffix}"
     elif high_only and deferred_all > 0 and unresolved_all == 0:
-        status = f"HIGH-ONLY — {resolved_all} substituted, {deferred_all} deferred for review"
+        status = f"HIGH-ONLY — {resolved_all} substituted, {deferred_all} deferred for review{cond_suffix}"
     else:
-        status = f"PARTIAL — {resolved_all} of {total_all} resolved, {unresolved_all} need attention"
+        status = f"PARTIAL — {resolved_all} of {total_all} resolved, {unresolved_all} need attention{cond_suffix}"
         if high_only and deferred_all > 0:
             status += f", {deferred_all} deferred"
 
@@ -361,6 +421,25 @@ def write_report(
         "---",
         "",
     ]
+
+    # ---- §0 Conditional blocks -----------------------------------------------
+    if cond_count > 0:
+        lines += [f"## Conditional Blocks Applied ({cond_count})", ""]
+        lines += [
+            "| # | Token | Condition | Source text preview |",
+            "|---|---|---|---|",
+        ]
+        for blk in cond_blocks:
+            bid = blk.get("id", "?")
+            conds = blk.get("conditions") or []
+            vel_conds = [_condition_to_velocity(c) for c in conds]
+            joiner = " && " if blk.get("operator", "AND") == "AND" else " || "
+            cond_expr = joiner.join(vel_conds)
+            preview = (blk.get("source_text") or "")[:60].replace("|", "\\|")
+            if len(blk.get("source_text") or "") > 60:
+                preview += "…"
+            lines.append(f"| {bid} | `$doc.cond{bid}` | `{cond_expr}` | {preview} |")
+        lines += ["", "---", ""]
 
     # ---- §1 Resolved ---------------------------------------------------------
     lines += [
@@ -596,9 +675,13 @@ def main() -> int:
     # --- Build maps ----------------------------------------------------------
     smap = build_substitution_map(suggested, high_only=high_only)
     foreach_map = build_foreach_map(suggested, high_only=high_only)
+    cond_registry_path = out_dir / f"{stem}.conditional-registry.yaml"
+    cond_blocks = _load_cond_registry(cond_registry_path)
+    cond_map = build_cond_map(cond_blocks)
 
     # --- Process -------------------------------------------------------------
     final_vm = process_vm(vm_text, smap, foreach_map)
+    final_vm = apply_cond_substitutions(final_vm, cond_map)
 
     # --- Categorise entries (DD-4: split deferred bucket when high_only) -----
     variables = suggested.get("variables") or []
@@ -639,6 +722,7 @@ def main() -> int:
         high_only=high_only,
         generated_at=generated_at,
         repo_root=repo_root,
+        cond_blocks=cond_blocks,
     )
 
     print(f"Wrote {out_vm_path}")

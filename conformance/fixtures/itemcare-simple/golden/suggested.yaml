@@ -1,0 +1,73 @@
+# Auto-generated golden file for IT-5 delta-stability tests
+schema_version: '1.0'
+source: itemcare-simple.html
+variables:
+- name: POLICY_NUMBER
+  placeholder: $TBD_POLICY_NUMBER
+  type: variable
+  context:
+    parent_tag: p
+    line: 5
+    nearest_label: Policy number
+  data_source: $data.policyNumber
+  confidence: high
+  reasoning: 'exact label match: "Policy number" → display_name "Policy number" →
+    $data.policyNumber'
+- name: POLICYHOLDER_NAME
+  placeholder: $TBD_POLICYHOLDER_NAME
+  type: variable
+  context:
+    parent_tag: p
+    line: 6
+    nearest_label: Policyholder
+  data_source: ''
+  confidence: low
+  reasoning: 'no registry match for policyholderName — next-action: supply-from-plugin'
+- name: SERIAL_NUMBER
+  placeholder: $item.TBD_SERIAL_NUMBER
+  type: variable
+  context:
+    parent_tag: td
+    line: 15
+    nearest_label: Serial number
+    loop: items
+  data_source: $item.data.serialNumber
+  confidence: high
+  reasoning: 'exact label match: "Serial number" → display_name "Serial number" →
+    $item.data.serialNumber'
+- name: SCOPE_VIOLATION
+  placeholder: $TBD_SCOPE_VIOLATION
+  type: variable
+  context:
+    parent_tag: p
+    line: 20
+    nearest_label: Serial number
+    loop_hint: Item
+  data_source: ''
+  confidence: low
+  reasoning: 'no registry match for scopeViolation — next-action: supply-from-plugin'
+loops:
+- name: items
+  placeholder: $TBD_items
+  type: loop
+  context:
+    nearest_heading: Items
+    line: 12
+  data_source: $data.items
+  fields:
+  - name: item_value
+    placeholder: $item.TBD_item_value
+    type: loop_field
+    context:
+      parent_tag: td
+      line: 16
+      nearest_label: Item value
+    data_source: $item.data.itemValue
+    confidence: high
+    reasoning: item_value → $item.data.itemValue (Item exposure)
+  confidence: high
+  reasoning: loop `items` → iterable `Item` → $data.items
+  iterator: $item
+  foreach: '#foreach ($item in $data.items)'
+path_registry: golden/path-registry.yaml
+product: SimpleItemCare

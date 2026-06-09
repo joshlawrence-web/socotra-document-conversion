@@ -7,6 +7,21 @@ import subprocess
 import sys
 from pathlib import Path
 
+_INTERMEDIATE_SUFFIXES = frozenset({
+    ".fields.yaml",
+    ".mapping.yaml",
+    ".suggested.yaml",
+    ".review.md",
+    ".suggester-log.jsonl",
+})
+
+_FULL_PIPELINE_OPS = frozenset({
+    "leg0+leg2+leg3",
+    "leg2+leg3",
+    "leg1+leg2+leg3",
+    "leg1+leg2+leg3+leg4",
+})
+
 
 def _try_read_product(suggested_path: "str | Path") -> "str | None":
     """Best-effort: read product: from a .suggested.yaml. Returns None on failure."""
@@ -64,26 +79,39 @@ def validate_inputs(
     errors: list[str] = []
     missing: list[str] = []
 
-    valid_ops = {"leg1", "leg2", "leg1+leg2", "leg3", "leg1+leg2+leg3", "leg4", "leg1+leg2+leg3+leg4"}
+    valid_ops = {"leg0", "leg0+leg2+leg3", "leg1", "leg2", "leg2+leg3", "leg1+leg2", "leg3", "leg1+leg2+leg3", "leg4", "leg1+leg2+leg3+leg4", "list_paths"}
     if operation not in valid_ops:
         errors.append(
             f"Invalid operation {operation!r}. Must be one of: {', '.join(sorted(valid_ops))}"
         )
 
-    if operation in ("leg1", "leg1+leg2"):
+    if operation in ("leg0", "leg0+leg2+leg3"):
         if not input_html:
-            missing.append("input_html")
+            missing.append("input")
         else:
             try:
                 p = _resolve_safe(input_html, repo_root)
                 if not p.exists():
-                    errors.append(f"input_html not found: {input_html!r}")
-                elif p.suffix.lower() != ".html":
-                    errors.append(f"input_html must be a .html file, got: {p.name!r}")
+                    errors.append(f"input not found: {input_html!r}")
+                elif p.suffix.lower() not in (".docx", ".pdf"):
+                    errors.append(f"input must be a .docx or .pdf file, got: {p.name!r}")
             except ValueError as e:
                 errors.append(str(e))
 
-    if operation in ("leg2",):
+    if operation in ("leg1", "leg1+leg2", "leg1+leg2+leg3", "leg1+leg2+leg3+leg4"):
+        if not input_html:
+            missing.append("input")
+        else:
+            try:
+                p = _resolve_safe(input_html, repo_root)
+                if not p.exists():
+                    errors.append(f"input not found: {input_html!r}")
+                elif p.suffix.lower() != ".html":
+                    errors.append(f"input must be a .html file, got: {p.name!r}")
+            except ValueError as e:
+                errors.append(str(e))
+
+    if operation in ("leg2", "leg2+leg3"):
         if not mapping:
             missing.append("mapping")
         else:
@@ -111,7 +139,7 @@ def validate_inputs(
             except ValueError as e:
                 errors.append(str(e))
 
-    if operation in ("leg2", "leg1+leg2", "leg1+leg2+leg3", "leg1+leg2+leg3+leg4"):
+    if operation in ("leg2", "leg2+leg3", "leg0+leg2+leg3", "leg1+leg2", "leg1+leg2+leg3", "leg1+leg2+leg3+leg4"):
         valid_modes = {"full", "terse", "delta", "batch"}
         if not mode:
             missing.append("mode")
@@ -170,13 +198,33 @@ def _predict_writes(
     suggested: str | None = None,
 ) -> list[str]:
     writes = []
+    if operation in ("leg0", "leg0+leg2+leg3") and input_html:
+        stem = Path(input_html).stem
+        base = f"{out_dir}/{stem}"
+        writes += [
+            f"{base}/{stem}.raw.html",
+            f"{base}/{stem}.annotated.html",
+            f"{base}/{stem}.fields.yaml",
+            f"{base}/{stem}.mapping.yaml",
+            f"{base}/{stem}.conditional-form.md",
+        ]
     if operation in ("leg1", "leg1+leg2", "leg1+leg2+leg3", "leg1+leg2+leg3+leg4") and input_html:
         stem = Path(input_html).stem
         base = f"{out_dir}/{stem}"
-        writes += [f"{base}/{stem}.vm", f"{base}/{stem}.mapping.yaml", f"{base}/{stem}.report.md"]
-    if operation in ("leg2", "leg1+leg2", "leg1+leg2+leg3", "leg1+leg2+leg3+leg4"):
-        if operation == "leg2" and mapping:
+        writes += [
+            f"{base}/{stem}.vm",
+            f"{base}/{stem}.mapping.yaml",
+            f"{base}/{stem}.report.md",
+            f"{base}/{stem}.conditional-registry.yaml",
+            f"{base}/{stem}.conditional-review.md",
+            f"{base}/{stem}.conditional-ref.html",
+        ]
+    if operation in ("leg2", "leg2+leg3", "leg0+leg2+leg3", "leg1+leg2", "leg1+leg2+leg3", "leg1+leg2+leg3+leg4"):
+        if operation in ("leg2", "leg2+leg3") and mapping:
             mappings = mapping if isinstance(mapping, list) else [mapping]
+        elif operation == "leg0+leg2+leg3" and input_html:
+            stem = Path(input_html).stem
+            mappings = [f"{out_dir}/{stem}/{stem}.mapping.yaml"]
         elif operation in ("leg1+leg2", "leg1+leg2+leg3", "leg1+leg2+leg3+leg4") and input_html:
             stem = Path(input_html).stem
             mappings = [f"{out_dir}/{stem}/{stem}.mapping.yaml"]
@@ -192,12 +240,24 @@ def _predict_writes(
                 f"{base}/{stem}.review.md",
                 f"{base}/{stem}.suggester-log.jsonl",
             ]
-    if operation in ("leg3", "leg1+leg2+leg3", "leg1+leg2+leg3+leg4"):
+    if operation in ("leg3", "leg2+leg3", "leg0+leg2+leg3", "leg1+leg2+leg3", "leg1+leg2+leg3+leg4"):
         if operation == "leg3" and suggested:
             stem = Path(suggested).stem
             if stem.endswith(".suggested"):
                 stem = stem[: -len(".suggested")]
             base = str(Path(suggested).parent)
+        elif operation == "leg2+leg3" and mapping:
+            m = mapping if isinstance(mapping, str) else (mapping[0] if mapping else None)
+            if m:
+                stem = Path(m).stem
+                if stem.endswith(".mapping"):
+                    stem = stem[: -len(".mapping")]
+                base = str(Path(m).parent)
+            else:
+                stem = base = None
+        elif operation == "leg0+leg2+leg3" and input_html:
+            stem = Path(input_html).stem
+            base = f"{out_dir}/{stem}"
         elif operation in ("leg1+leg2+leg3", "leg1+leg2+leg3+leg4") and input_html:
             stem = Path(input_html).stem
             base = f"{out_dir}/{stem}"
@@ -245,6 +305,7 @@ def build_preflight(
     suggested: str | None = None,
     high_only: bool = False,
     compile_check: bool = True,
+    keep_intermediates: bool = False,
 ) -> str:
     """Return the formatted preflight block as a string. Does not write anything."""
     reg_path = registry or "registry/path-registry.yaml"
@@ -268,7 +329,8 @@ def build_preflight(
     if operation in ("leg4", "leg1+leg2+leg3+leg4"):
         lines.append(row(f"  Compile   : {'yes' if compile_check else 'no (--compile-check disabled)'}"))
     if input_html:
-        lines.append(row(f"  Input HTML: {input_html}"))
+        input_label = "Input     " if operation in ("leg0", "leg0+leg2+leg3") else "Input HTML"
+        lines.append(row(f"  {input_label}: {input_html}"))
     if mapping:
         mappings = mapping if isinstance(mapping, list) else [mapping]
         for m in mappings:
@@ -280,17 +342,69 @@ def build_preflight(
     if terminology:
         lines.append(row(f"  Terminology: {terminology}"))
     lines.append("╠" + "═" * W + "╣")
-    lines.append(row("  Files that WILL be written:"))
 
     writes = _predict_writes(operation, input_html, mapping, out_dir, mode, suggested)
-    for w in writes:
+
+    clean_intermediates = (not keep_intermediates) and (operation in _FULL_PIPELINE_OPS)
+    if clean_intermediates:
+        final_writes = [w for w in writes if not any(w.endswith(s) for s in _INTERMEDIATE_SUFFIXES)]
+        temp_writes = [w for w in writes if any(w.endswith(s) for s in _INTERMEDIATE_SUFFIXES)]
+    else:
+        final_writes = writes
+        temp_writes = []
+
+    lines.append(row("  Files that WILL be written:"))
+    for w in final_writes:
         display = w if len(w) <= W - 4 else "…" + w[-(W - 5):]
         lines.append(row(f"    {display}"))
+
+    if temp_writes:
+        lines.append("╠" + "═" * W + "╣")
+        lines.append(row("  Temp (removed on success):"))
+        for w in temp_writes:
+            display = w if len(w) <= W - 4 else "…" + w[-(W - 5):]
+            lines.append(row(f"    {display}"))
+        lines.append(row("  Add keep=intermediates to retain these files."))
 
     lines.append("╚" + "═" * W + "╝")
     lines.append("")
     lines.append("Reply PROCEED to run, or CANCEL to abort.")
     return "\n".join(lines)
+
+
+def run_leg0(input_path: str, output_dir: str) -> dict:
+    """Run leg0_ingest.py for Leg 0. Returns ok/artifacts/stdout/stderr."""
+    repo_root = _find_repo_root()
+    script = repo_root / "scripts" / "leg0_ingest.py"
+    cmd = [
+        sys.executable,
+        str(script),
+        "--input",
+        str(_resolve_safe(input_path, repo_root)),
+        "--output-dir",
+        str(_resolve_safe(output_dir, repo_root)),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(repo_root))
+    if result.returncode != 0:
+        return {"ok": False, "returncode": result.returncode, "stderr": result.stderr}
+
+    input_p = _resolve_safe(input_path, repo_root)
+    stem = input_p.stem
+    out_p = _resolve_safe(output_dir, repo_root)
+
+    artifact_names = [
+        f"{stem}.raw.html",
+        f"{stem}.annotated.html",
+        f"{stem}.fields.yaml",
+        f"{stem}.mapping.yaml",
+        f"{stem}.conditional-form.md",
+    ]
+    artifacts = [
+        str((out_p / name).relative_to(repo_root))
+        for name in artifact_names
+        if (out_p / name).exists()
+    ]
+    return {"ok": True, "artifacts": artifacts, "stdout": result.stdout, "stderr": result.stderr}
 
 
 def run_leg1(
@@ -414,14 +528,14 @@ def run_leg2(
     return {"ok": True, "artifacts": artifacts, "stdout": result.stdout, "stderr": result.stderr}
 
 
-def run_leg4(
+def _run_leg4_single(
     suggested: str,
-    customer_jar: str | None = None,
-    datamodel_jar: str | None = None,
-    compile_check: bool = True,
+    customer_jar: str | None,
+    datamodel_jar: str | None,
+    compile_check_flag: bool,
+    repo_root: Path,
 ) -> dict:
-    """Run leg4_generate_plugin.py for Leg 4. Returns ok/artifacts/stdout/stderr."""
-    repo_root = _find_repo_root()
+    """Run leg4_generate_plugin.py for a single suggested.yaml."""
     script = repo_root / "scripts" / "leg4_generate_plugin.py"
     cmd = [
         sys.executable,
@@ -433,7 +547,7 @@ def run_leg4(
         cmd += ["--customer-jar", str(_resolve_safe(customer_jar, repo_root))]
     if datamodel_jar:
         cmd += ["--datamodel-jar", str(_resolve_safe(datamodel_jar, repo_root))]
-    if compile_check:
+    if compile_check_flag:
         cmd.append("--compile-check")
 
     result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(repo_root))
@@ -454,3 +568,82 @@ def run_leg4(
     for java_f in sorted(out_dir.glob("*DocumentDataSnapshotPluginImpl.java")):
         artifacts.append(str(java_f.relative_to(repo_root)))
     return {"ok": True, "artifacts": artifacts, "stdout": result.stdout, "stderr": result.stderr}
+
+
+def run_leg4(
+    suggested: "str | list[str]",
+    customer_jar: str | None = None,
+    datamodel_jar: str | None = None,
+    compile_check: bool = True,
+) -> dict:
+    """Run leg4_generate_plugin.py for one or more suggested.yaml files.
+
+    When multiple forms are passed, processes sequentially so each run reads
+    the prior state — additive mode auto-activates when the Java file already exists.
+    Returns ok/artifacts/stdout/stderr.
+    """
+    repo_root = _find_repo_root()
+    suggested_list = suggested if isinstance(suggested, list) else [suggested]
+
+    all_artifacts: list[str] = []
+    all_stdout: list[str] = []
+
+    for s in suggested_list:
+        result = _run_leg4_single(s, customer_jar, datamodel_jar, compile_check, repo_root)
+        if not result["ok"]:
+            return result
+        all_artifacts.extend(result.get("artifacts") or [])
+        if result.get("stdout"):
+            all_stdout.append(result["stdout"])
+
+    return {
+        "ok": True,
+        "artifacts": all_artifacts,
+        "stdout": "\n".join(all_stdout),
+        "stderr": "",
+    }
+
+
+def get_intermediate_paths(
+    operation: str,
+    input_html: str | None,
+    output: str,
+    leg2_suggested: str | None,
+) -> list[Path]:
+    """Return intermediate file Paths for cleanup after a successful full-pipeline run."""
+    if operation not in _FULL_PIPELINE_OPS:
+        return []
+
+    if operation in ("leg1+leg2+leg3", "leg1+leg2+leg3+leg4") and input_html:
+        stem = Path(input_html).stem
+        base = Path(output) / stem
+        suffixes = [".mapping.yaml", ".suggested.yaml", ".review.md", ".suggester-log.jsonl"]
+    elif operation == "leg0+leg2+leg3" and input_html:
+        stem = Path(input_html).stem
+        base = Path(output) / stem
+        suffixes = [".fields.yaml", ".mapping.yaml", ".suggested.yaml", ".review.md", ".suggester-log.jsonl"]
+    elif operation == "leg2+leg3" and leg2_suggested:
+        p = Path(leg2_suggested)
+        stem = p.stem
+        if stem.endswith(".suggested"):
+            stem = stem[: -len(".suggested")]
+        base = p.parent
+        suffixes = [".suggested.yaml", ".review.md", ".suggester-log.jsonl"]
+    else:
+        return []
+
+    return [base / f"{stem}{s}" for s in suffixes]
+
+
+def run_list_paths(registry_path: str, out_path: str | None = None) -> str:
+    """Render path catalog Markdown from the registry."""
+    repo_root = _find_repo_root()
+    sys.path.insert(0, str(repo_root / "scripts"))
+    from list_paths import render_catalog  # noqa: PLC0415
+    abs_registry = str(_resolve_safe(registry_path, repo_root))
+    catalog = render_catalog(abs_registry)
+    if out_path:
+        out = _resolve_safe(out_path, repo_root)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(catalog, encoding="utf-8")
+    return catalog

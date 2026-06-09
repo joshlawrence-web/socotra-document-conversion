@@ -68,32 +68,32 @@ class TestSuggestLoopRoot(unittest.TestCase):
         self.idx = build_registry_index(self.reg)
 
     def test_exact_name_match(self) -> None:
-        ds, conf, reason, iterator, foreach, _ = suggest_loop_root("Item", self.idx, None, self.reg)
-        self.assertEqual(conf, "high")
+        ds, step, reason, iterator, foreach, _ = suggest_loop_root("Item", self.idx, None, self.reg)
+        self.assertEqual(step, "exact")
         self.assertEqual(ds, "$data.items")
         self.assertEqual(iterator, "$item")
 
     def test_plural_match(self) -> None:
-        # "Items" → plural of "Item"
-        ds, conf, reason, iterator, foreach, _ = suggest_loop_root("Items", self.idx, None, self.reg)
-        self.assertEqual(conf, "high")
+        # "Items" → plural of "Item" — case-insensitive match
+        ds, step, reason, iterator, foreach, _ = suggest_loop_root("Items", self.idx, None, self.reg)
+        self.assertEqual(step, "ci")
         self.assertEqual(ds, "$data.items")
 
     def test_ci_match(self) -> None:
-        ds, conf, _, _, _, _ = suggest_loop_root("item", self.idx, None, self.reg)
-        self.assertEqual(conf, "high")
+        ds, step, _, _, _, _ = suggest_loop_root("item", self.idx, None, self.reg)
+        self.assertEqual(step, "ci")
         self.assertEqual(ds, "$data.items")
 
     def test_no_match_returns_low(self) -> None:
-        ds, conf, reason, it, fe, _ = suggest_loop_root("UnknownLoop", self.idx, None, self.reg)
-        self.assertEqual(conf, "low")
+        ds, step, reason, it, fe, _ = suggest_loop_root("UnknownLoop", self.idx, None, self.reg)
+        self.assertEqual(step, "none")
         self.assertEqual(ds, "")
         self.assertIn("supply-from-plugin", reason)
 
     def test_terminology_match(self) -> None:
         terminology = {"synonyms": {"exposures": {"Item": ["Widget"]}}}
-        ds, conf, reason, _, _, _ = suggest_loop_root("Widget", self.idx, terminology, self.reg)
-        self.assertEqual(conf, "high")
+        ds, step, reason, _, _, _ = suggest_loop_root("Widget", self.idx, terminology, self.reg)
+        self.assertEqual(step, "terminology")
         self.assertIn("terminology", reason)
 
 
@@ -103,30 +103,30 @@ class TestSuggestLoopField(unittest.TestCase):
         self.idx = build_registry_index(self.reg)
 
     def test_exact_field_match(self) -> None:
-        ds, conf, reason = suggest_loop_field("$item.TBD_DESCRIPTION", "Item", self.idx, self.reg)
-        self.assertEqual(conf, "high")
+        ds, step, reason = suggest_loop_field("$item.TBD_DESCRIPTION", "Item", self.idx, self.reg)
+        self.assertEqual(step, "exact")
         self.assertEqual(ds, "$item.data.description")
 
     def test_unparseable_placeholder(self) -> None:
-        ds, conf, reason = suggest_loop_field("NOTAPLACEHOLDER", "Item", self.idx, self.reg)
-        self.assertEqual(conf, "low")
+        ds, step, reason = suggest_loop_field("NOTAPLACEHOLDER", "Item", self.idx, self.reg)
+        self.assertEqual(step, "none")
         self.assertIn("needs-skill-update", reason)
 
     def test_unknown_iterator_low(self) -> None:
-        ds, conf, reason = suggest_loop_field("$ghost.TBD_FOO", "UnknownLoop", self.idx, self.reg)
-        self.assertEqual(conf, "low")
+        ds, step, reason = suggest_loop_field("$ghost.TBD_FOO", "UnknownLoop", self.idx, self.reg)
+        self.assertEqual(step, "none")
         self.assertIn("supply-from-plugin", reason)
 
     def test_fuzzy_last_token_medium(self) -> None:
         # "ITEM_DESCRIPTION" → last token "description" fuzzy-matches exposure field
-        ds, conf, reason = suggest_loop_field("$item.TBD_ITEM_DESCRIPTION", "Item", self.idx, self.reg)
-        self.assertEqual(conf, "medium")
+        ds, step, reason = suggest_loop_field("$item.TBD_ITEM_DESCRIPTION", "Item", self.idx, self.reg)
+        self.assertEqual(step, "fuzzy")
         self.assertEqual(ds, "$item.data.description")
         self.assertIn("confirm-assumption", reason)
 
     def test_unknown_field_in_known_loop_low(self) -> None:
-        ds, conf, reason = suggest_loop_field("$item.TBD_TOTALLY_UNKNOWN_XYZ", "Item", self.idx, self.reg)
-        self.assertEqual(conf, "low")
+        ds, step, reason = suggest_loop_field("$item.TBD_TOTALLY_UNKNOWN_XYZ", "Item", self.idx, self.reg)
+        self.assertEqual(step, "none")
 
 
 class TestReorderTopKeys(unittest.TestCase):
@@ -375,18 +375,18 @@ class TestInvariants(unittest.TestCase):
         unknown_loops = ["GhostLoop", "Nonexistent", "FakeIterable"]
         for name in unknown_loops:
             with self.subTest(loop=name):
-                ds, conf, reason, _, _, _ = suggest_loop_root(name, idx, None, reg)
-                self.assertEqual(conf, "low")
+                ds, step, reason, _, _, _ = suggest_loop_root(name, idx, None, reg)
+                self.assertEqual(step, "none")
                 self.assertIn("next-action:", reason,
-                              f"loop {name!r} low confidence but no next-action in reasoning")
+                              f"loop {name!r} no-match but no next-action in reasoning")
 
     def test_high_confidence_loop_root_always_has_data_source_and_iterator(self) -> None:
         reg = self._reg()
         idx = self._idx()
         for name in ("Item", "Items", "item"):
             with self.subTest(loop=name):
-                ds, conf, _, iterator, foreach, _ = suggest_loop_root(name, idx, None, reg)
-                self.assertEqual(conf, "high")
+                ds, step, _, iterator, foreach, _ = suggest_loop_root(name, idx, None, reg)
+                self.assertIn(step, ("exact", "ci"))
                 self.assertNotEqual(ds, "")
                 self.assertNotEqual(iterator, "")
                 self.assertNotEqual(foreach, "")

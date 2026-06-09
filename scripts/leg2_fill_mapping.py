@@ -332,7 +332,106 @@ def check_scope(entry: dict, context: dict, idx: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 4-step name matching
+# Schema-index helpers (strict-token-schema plan)
+# ---------------------------------------------------------------------------
+
+
+def _ci_lookup(mapping: dict, key: str) -> str | None:
+    """Return the canonical key from mapping for a case-insensitive match, or None."""
+    if key in mapping:
+        return key
+    kl = key.lower()
+    for k in mapping:
+        if k.lower() == kl:
+            return k
+    return None
+
+
+def _make_schema_entries(field_name: str, idx: dict) -> list[dict]:
+    """Strict registry lookup by exact field name for a schema-validated token."""
+    exact = [e for e in idx["by_field"].get(field_name.lower(), [])
+             if e.get("field") == field_name]
+    if exact:
+        return exact
+    return list(idx["by_field"].get(field_name.lower(), []))
+
+
+def _step3_terminology_strict(
+    name: str, schema_index: dict, idx: dict, terminology: dict
+) -> tuple[list[dict], str] | None:
+    """Terminology synonym lookup for dotted-path token (max confidence: medium, D7)."""
+    syns = (terminology.get("synonyms") or {}).get("fields") or {}
+    field_path = name.split(".", 1)[1] if "." in name else name
+    for canonical, aliases in syns.items():
+        for alias in aliases:
+            if alias.lower() == field_path.lower():
+                entries = _make_schema_entries(canonical, idx)
+                if entries:
+                    return entries, alias
+    return None
+
+
+def match_token(
+    name: str,
+    schema_index: dict,
+    idx: dict,
+    terminology: dict | None,
+) -> tuple[list[dict], str, str | None]:
+    """Strict schema-index lookup (strict-token-schema plan §7.1).
+
+    Steps tried in order:
+      exact      — EntityType + fieldName both match exactly in schema index
+      ci         — EntityType or fieldName matches case-insensitively
+      terminology — alias expansion via terminology.yaml (→ max medium, D7)
+      old-format — no dot separator present → confidence: none
+      none       — entity/field not found in schema index → confidence: none
+    """
+    if "." not in name:
+        return [], "old-format", None
+
+    entity, *field_parts = name.split(".")
+    field_path = ".".join(field_parts)
+
+    # Step 1 — exact
+    if entity in schema_index:
+        fields = schema_index[entity]["fields"]
+        if field_path in fields:
+            return _make_schema_entries(field_path, idx), "exact", None
+
+    # Step 2 — case-insensitive
+    entity_ci = _ci_lookup(schema_index, entity)
+    if entity_ci:
+        fields = schema_index[entity_ci]["fields"]
+        field_ci = _ci_lookup(fields, field_path)
+        if field_ci:
+            return _make_schema_entries(field_ci, idx), "ci", None
+
+    # Step 3 — synonym (capped at medium regardless of SDK status, D7)
+    if terminology:
+        syn_result = _step3_terminology_strict(name, schema_index, idx, terminology)
+        if syn_result:
+            entries, alias = syn_result
+            return entries, "terminology", alias
+
+    return [], "none", None
+
+
+def load_schema_index(registry_path: Path | None) -> dict | None:
+    """Load sdk-schema-index.yaml from the registry sibling or repo-root registry/."""
+    candidates: list[Path] = []
+    if registry_path:
+        candidates.append(registry_path.parent / "sdk-schema-index.yaml")
+    candidates.append(_repo_root() / "registry" / "sdk-schema-index.yaml")
+    for p in candidates:
+        if p.exists():
+            data = yaml.safe_load(p.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+    return None
+
+
+# ---------------------------------------------------------------------------
+# 4-step name matching (legacy — used when no schema index is available)
 # ---------------------------------------------------------------------------
 
 
@@ -388,10 +487,17 @@ def match_name(
     idx: dict,
     terminology: dict | None,
 ) -> tuple[list[dict], str, str | None]:
-    """
-    4-step name match.
+    """5-step name + label match.
+
     Returns (entries, step_name, alias_if_step3).
     step_name: 'exact' | 'ci' | 'terminology' | 'fuzzy' | 'none'
+
+    Steps:
+      1. Exact field name match (camelCase)
+      2. CI field name match
+      2b. Exact/CI label match via nearest_label → display_name (high confidence, no JAR needed)
+      3. Terminology synonym match
+      4. Fuzzy last-token match
     """
     name_snake = normalize_mapping_field_name(name)
     name_camel = snake_to_camel(name_snake)
@@ -403,6 +509,15 @@ def match_name(
     hits = _step2_ci(name_camel, idx)
     if hits:
         return hits, "ci", None
+
+    # Step 2b: label match — nearest_label matches registry display_name
+    if label:
+        label_hits = idx["by_display_name"].get(label.lower(), [])
+        exact_label = [e for e in label_hits if e.get("display_name") == label]
+        if exact_label:
+            return exact_label, "exact", None
+        if label_hits:
+            return label_hits, "ci", None
 
     if terminology:
         term_hits = _step3_terminology(name_snake, idx, terminology)
@@ -510,11 +625,17 @@ NEXT_ACTION_FOR_STATUS: dict[str, str] = {
 
 
 def confidence_grade(match_step: str, sdk_status: str) -> str:
-    """Grade a (placeholder × root) verdict (plan §6.3, D8). The JAR can only
-    *demote*: a strong name-match needs `verified` to stay `high`, and SDK truth
-    never promotes a weak (fuzzy) match above `medium`."""
+    """Grade a (placeholder × root) verdict. The JAR can only *demote*: a strong
+    name-match needs `verified` to stay `high`. Strict-token-schema additions:
+    `old-format` and `none` always return `"none"`; terminology is capped at
+    `medium` even when SDK-verified (D7)."""
+    if match_step in ("old-format", "none"):
+        return "none"
     if sdk_status == "verified":
-        return "high" if match_step in ("exact", "ci", "terminology") else "medium"
+        if match_step in ("exact", "ci"):
+            return "high"
+        if match_step == "terminology":
+            return "medium"  # D7 — synonyms capped at medium
     return "low"
 
 
@@ -524,7 +645,7 @@ def confidence_grade(match_step: str, sdk_status: str) -> str:
 
 
 def derive_variable_candidate(
-    v: dict, idx: dict, terminology: dict | None
+    v: dict, idx: dict, terminology: dict | None, schema_index: dict | None = None
 ) -> dict:
     """Name-match a variable to a registry candidate path (root-independent).
 
@@ -533,15 +654,13 @@ def derive_variable_candidate(
     (no match / scope violation / ambiguous) — there is nothing for the JAR to
     check, so the same verdict is replicated across roots with
     ``sdk_status: skipped``.
+
+    When ``schema_index`` is provided, uses strict ``match_token()`` (dotted-path
+    format required); otherwise falls back to legacy ``match_name()``.
     """
     name = v.get("name") or ""
     context = v.get("context") or {}
     label = context.get("nearest_label") or None
-
-    entries, step, alias = match_name(name, label, idx, terminology)
-
-    name_snake = normalize_mapping_field_name(name)
-    name_camel = snake_to_camel(name_snake)
 
     def cand(path="", match_step="none", registry_field="", base_reason="",
              terminal=False, fallback="low") -> dict:
@@ -551,13 +670,54 @@ def derive_variable_candidate(
             "fallback_confidence": fallback,
         }
 
-    if not entries:
-        c = cand(
-            base_reason=f"no registry match for {name_camel} — next-action: supply-from-plugin",
-            terminal=True, fallback="low",
-        )
-        c.update({"jar_fallback_ok": True, "name_camel": name_camel, "label": label})
-        return c
+    if schema_index is not None:
+        entries, step, alias = match_token(name, schema_index, idx, terminology)
+
+        if step == "old-format":
+            return cand(
+                match_step="old-format",
+                base_reason=(
+                    f"token `{name}` uses old format — expected `{{EntityType.fieldName}}`; "
+                    "see registry/sdk-schema-index.yaml — next-action: fix-token"
+                ),
+                terminal=True, fallback="none",
+            )
+        if step == "none":
+            entity = name.split(".")[0] if "." in name else name
+            return cand(
+                match_step="none",
+                base_reason=(
+                    f"token `{name}` — entity `{entity}` or field not found in schema index; "
+                    "see registry/sdk-schema-index.yaml — next-action: fix-token"
+                ),
+                terminal=True, fallback="none",
+            )
+
+        # Schema-validated but no registry entries → terminal, allow JAR probe.
+        field_name = name.split(".", 1)[1] if "." in name else name
+        name_camel = field_name  # exact field name from schema, no normalisation (D8)
+
+        if not entries:
+            c = cand(
+                match_step=step,  # preserve schema-validated step (D3)
+                base_reason=f"schema-validated but no registry path for {name_camel} — next-action: supply-from-plugin",
+                terminal=True, fallback="low",
+            )
+            c.update({"jar_fallback_ok": True, "name_camel": name_camel, "label": label})
+            return c
+
+    else:
+        entries, step, alias = match_name(name, label, idx, terminology)
+        name_snake = normalize_mapping_field_name(name)
+        name_camel = snake_to_camel(name_snake)
+
+        if not entries:
+            c = cand(
+                base_reason=f"no registry match for {name_camel} — next-action: supply-from-plugin",
+                terminal=True, fallback="low",
+            )
+            c.update({"jar_fallback_ok": True, "name_camel": name_camel, "label": label})
+            return c
 
     ok: list[dict] = []
     violated: list[tuple[dict, str]] = []
@@ -614,7 +774,7 @@ def derive_variable_candidate(
     elif step == "terminology":
         reason = f"matched via terminology.yaml synonym `{alias}` → canonical `{field}` → {vel}"
     elif step == "fuzzy":
-        reason = f"fuzzy match: {name_camel} → {vel}"
+        reason = f"fuzzy match: {name_camel} → {vel} — next-action: confirm-assumption"
     else:
         reason = f"no match for {name_camel}"
 
@@ -627,6 +787,31 @@ def derive_variable_candidate(
         result["datafetcher_key"] = e.get("datafetcher_key", "")
         result["valid_roots"] = list(e.get("valid_roots") or [])
     return result
+
+
+def suggest_variable(
+    v: dict,
+    idx: dict,
+    terminology: dict | None,
+) -> tuple[str, str, str]:
+    """Compatibility shim for pre-root-aware callers. Returns (data_source, confidence, reason).
+
+    Wraps derive_variable_candidate; maps match_step to confidence without JAR
+    verification (legacy name-match-only semantics preserved for tests).
+    """
+    c = derive_variable_candidate(v, idx, terminology)
+    ds = c.get("path") or ""
+    step = c.get("match_step") or "none"
+    reason = c.get("base_reason") or ""
+    if c.get("terminal"):
+        conf = "low"
+    elif step in ("exact", "ci"):
+        conf = "high"
+    elif step in ("fuzzy", "terminology"):
+        conf = "medium"
+    else:
+        conf = "low"
+    return ds, conf, reason
 
 
 def _last_segment(path: str) -> str:
@@ -893,14 +1078,13 @@ def _match_coverage_field(
     if not exp_coverages:
         return None
 
-    # Build coverage lookup keyed by squashed lowercase name
-    # ('MedPay' → 'medpay', 'Med Pay' → 'medpay', 'my_cov' → 'mycov')
+    # Build coverage lookup keyed by lowercase name (exact — no squashing, D6)
     cov_by_key: dict[str, dict] = {}
     for cov in exp_coverages:
         raw = str(cov.get("name") or "")
         if not raw:
             continue
-        key = re.sub(r"[_ ]", "", raw.lower())
+        key = raw.lower()
         cov_by_key[key] = cov
 
     tokens = fld_snake.split("_")
@@ -992,12 +1176,14 @@ def suggest_loop_field(
         vel = e.get("velocity") or ""
         return vel, "exact", f"{fld_snake} → {vel} ({it_name} exposure)"
 
-    # Step 4: fuzzy last token on exposure data fields
+    # Step 4: fuzzy last-token match on exposure data fields
     tokens = fld_snake.split("_")
     if tokens and tokens[-1] in exp_fields:
         e = exp_fields[tokens[-1]]
         vel = e.get("velocity") or ""
-        return vel, "fuzzy", f"{fld_snake} → {vel} ({it_name} exposure, fuzzy)"
+        return vel, "fuzzy", (
+            f"{fld_snake} → {vel} ({it_name} exposure, fuzzy) — next-action: confirm-assumption"
+        )
 
     # Coverage field fallback: decompose '<prefix>_<field>' against any coverage
     cov_result = _match_coverage_field(fld_snake, exp_coverages)
@@ -1121,13 +1307,77 @@ def annotate_mapping(
     path_registry_rel: str,
     terminology: dict | None = None,
     *,
-    roots: list[dict],
-    classpath: str,
+    roots: list[dict] | None = None,
+    classpath: str = "",
+    schema_index: dict | None = None,
 ) -> dict:
-    """Produce the ``.suggested.yaml`` **2.0** shape: top-level ``rendering_roots``
-    plus, per variable/loop, a root-independent ``candidate`` and a per-root
-    ``verdicts`` map grounded in the compiled JARs (plan §6)."""
+    """Produce a ``.suggested.yaml`` from the mapping.
+
+    When ``roots`` is provided and ``classpath`` is non-empty: schema **2.0** output with
+    ``rendering_roots`` and per-root ``verdicts`` grounded in the compiled JARs.
+
+    When called without ``roots``/``classpath`` (legacy / test mode): schema **1.0**
+    output with flat ``data_source``, ``confidence``, and ``reasoning`` fields derived
+    from name-match only — no JAR verification.
+    """
     idx = build_registry_index(reg)
+
+    if not roots or not classpath:
+        # Legacy schema 1.0 path — name-match only, no JAR verification.
+        out = copy.deepcopy(mapping)
+        out["schema_version"] = "1.0"
+        out["path_registry"] = path_registry_rel
+        out["product"] = str((reg.get("meta") or {}).get("product", ""))
+        out["_idx"] = idx
+        for v in out.get("variables") or []:
+            c = derive_variable_candidate(v, idx, terminology)
+            step = c.get("match_step") or "none"
+            ds = c.get("path") or ""
+            reason = c.get("base_reason") or ""
+            if c.get("terminal"):
+                conf = "low"
+            elif step in ("exact", "ci"):
+                conf = "high"
+            elif step in ("fuzzy", "terminology"):
+                conf = "medium"
+            else:
+                conf = "low"
+            v["data_source"] = ds
+            v["confidence"] = conf
+            v["reasoning"] = reason
+        for loop in out.get("loops") or []:
+            ln = loop["name"]
+            list_vel, lstep, lreason, iterator, foreach, cov_manifest = suggest_loop_root(
+                ln, idx, terminology, reg
+            )
+            if lstep in ("exact", "ci"):
+                lconf = "high"
+            elif lstep in ("fuzzy", "terminology"):
+                lconf = "medium"
+            else:
+                lconf = "low"
+            loop["data_source"] = list_vel
+            loop["confidence"] = lconf
+            loop["reasoning"] = lreason
+            if iterator:
+                loop["iterator"] = iterator
+            if foreach:
+                loop["foreach"] = foreach
+            if cov_manifest:
+                loop["available_coverages"] = cov_manifest
+            for fld in loop.get("fields") or []:
+                ph = fld.get("placeholder") or ""
+                fvel, fstep, freason = suggest_loop_field(ph, ln, idx, reg)
+                if fstep in ("exact",):
+                    fconf = "high"
+                elif fstep in ("ci", "fuzzy"):
+                    fconf = "medium"
+                else:
+                    fconf = "low"
+                fld["data_source"] = fvel
+                fld["confidence"] = fconf
+                fld["reasoning"] = freason
+        return out
 
     out = copy.deepcopy(mapping)
     out["schema_version"] = "2.0"
@@ -1149,7 +1399,7 @@ def annotate_mapping(
     root_ids = [r["id"] for r in roots]
 
     for v in out.get("variables") or []:
-        cand = derive_variable_candidate(v, idx, terminology)
+        cand = derive_variable_candidate(v, idx, terminology, schema_index)
         v.pop("data_source", None)
         v.pop("confidence", None)
         v.pop("reasoning", None)
@@ -1460,8 +1710,9 @@ def main() -> int:
         os.path.relpath(reg_abs, out_parent) if under_repo else str(reg_abs)
     )
 
-    # Load terminology
+    # Load terminology + schema index
     terminology = load_terminology(args.terminology, args.registry)
+    schema_index = load_schema_index(args.registry)
 
     base_suggested: dict | None = None
     base_bytes: bytes | None = None
@@ -1474,7 +1725,7 @@ def main() -> int:
 
     suggested = annotate_mapping(
         mapping, reg, path_registry_rel, terminology,
-        roots=roots, classpath=classpath,
+        roots=roots, classpath=classpath, schema_index=schema_index,
     )
 
     # Strip volatile keys before stamping

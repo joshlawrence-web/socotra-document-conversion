@@ -116,6 +116,197 @@ system_paths:
   category: system
   velocity: $data.updated
   requires_scope: []
+quote_paths:
+- field: quoteNumber
+  display_name: Quote number
+  type: string?
+  base_type: string
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: quote_system
+  velocity: $data.quoteNumber
+  requires_scope: []
+- field: quoteState
+  display_name: Quote state
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: quote_system
+  velocity: $data.quoteState
+  requires_scope: []
+- field: expirationTime
+  display_name: Quote expiration time (epoch ms)
+  type: datetime?
+  base_type: datetime
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: quote_system
+  velocity: $data.expirationTime
+  requires_scope: []
+- field: startTime
+  display_name: Quote start time (epoch ms)
+  type: datetime?
+  base_type: datetime
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: quote_system
+  velocity: $data.startTime
+  requires_scope: []
+- field: endTime
+  display_name: Quote end time (epoch ms)
+  type: datetime?
+  base_type: datetime
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: quote_system
+  velocity: $data.endTime
+  requires_scope: []
+- field: createdAt
+  display_name: Quote created at (epoch ms)
+  type: datetime?
+  base_type: datetime
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: quote_system
+  velocity: $data.createdAt
+  requires_scope: []
+- field: accountLocator
+  display_name: Account locator
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: quote_system
+  velocity: $data.accountLocator
+  requires_scope: []
+- field: policyLocator
+  display_name: Policy locator (if converted)
+  type: string?
+  base_type: string
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: quote_system
+  velocity: $data.policyLocator
+  requires_scope: []
+- field: reservedPolicyNumber
+  display_name: Reserved policy number
+  type: string?
+  base_type: string
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: quote_system
+  velocity: $data.reservedPolicyNumber
+  requires_scope: []
+- field: producerCode
+  display_name: Producer code
+  type: string?
+  base_type: string
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: quote_system
+  velocity: $data.producerCode
+  requires_scope: []
+- field: underwritingStatus
+  display_name: Underwriting status
+  type: string?
+  base_type: string
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: quote_system
+  velocity: $data.underwritingStatus
+  requires_scope: []
+- field: billingLevel
+  display_name: Billing level
+  type: string
+  base_type: string
+  quantifier: ''
+  cardinality: exactly_one
+  iterable: false
+  category: quote_system
+  velocity: $data.billingLevel
+  requires_scope: []
+- field: autoRenewalPlanName
+  display_name: Auto renewal plan name
+  type: string?
+  base_type: string
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: quote_system
+  velocity: $data.autoRenewalPlanName
+  requires_scope: []
+- field: delinquencyPlanName
+  display_name: Delinquency plan name
+  type: string?
+  base_type: string
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: quote_system
+  velocity: $data.delinquencyPlanName
+  requires_scope: []
+- field: invoiceFeeAmount
+  display_name: Invoice fee amount
+  type: decimal?
+  base_type: decimal
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: quote_system
+  velocity: $data.invoiceFeeAmount
+  requires_scope: []
+- field: jurisdiction
+  display_name: Jurisdiction
+  type: string?
+  base_type: string
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: quote_system
+  velocity: $data.jurisdiction
+  requires_scope: []
+- field: region
+  display_name: Region
+  type: string?
+  base_type: string
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: quote_system
+  velocity: $data.region
+  requires_scope: []
+- field: timezone
+  display_name: Timezone
+  type: string?
+  base_type: string
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: quote_system
+  velocity: $data.timezone
+  requires_scope: []
+- field: durationBasis
+  display_name: Duration basis
+  type: string?
+  base_type: string
+  quantifier: '?'
+  cardinality: zero_or_one
+  iterable: false
+  category: quote_system
+  velocity: $data.durationBasis
+  requires_scope: []
 account_paths:
 - field: firstName
   display_name: Account First Name

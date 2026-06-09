@@ -163,7 +163,7 @@ class TestWriteReviewMd(unittest.TestCase):
                 escape_note="",
             )
             content = out.read_text()
-            self.assertIn("schema_version: 1.1", content)
+            self.assertIn("schema_version: 2.0", content)
 
     def test_blockers_section_lists_low_confidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+from collections import deque
 from functools import lru_cache
 from pathlib import Path
 
@@ -330,28 +331,31 @@ def jar_candidate(
         if m.lower() == nl:
             return {"method_name": m, "path": f"{root_prefix}.{m}", "match_step": "ci"}
 
-    # Step 3 — prefix fuzzy (one is a leading prefix of the other; min-length guard)
-    fuzzy: list[str] = []
-    for m in methods:
-        ml = m.lower()
-        if (ml.startswith(nl) or nl.startswith(ml)) and min(len(ml), len(nl)) >= 4:
-            fuzzy.append(m)
-
-    if len(fuzzy) == 1:
-        return {"method_name": fuzzy[0], "path": f"{root_prefix}.{fuzzy[0]}", "match_step": "fuzzy"}
-
-    # Step 4 — label-word probe (only when no prefix hits)
-    if not fuzzy and label:
-        words = [w.lower() for w in re.split(r"\W+", label) if len(w) > 3]
-        label_hits: list[str] = []
-        for m in methods:
-            ml = m.lower()
-            if any(ml.startswith(w) or w.startswith(ml) for w in words):
-                label_hits.append(m)
-        if len(label_hits) == 1:
-            return {"method_name": label_hits[0], "path": f"{root_prefix}.{label_hits[0]}", "match_step": "fuzzy"}
-
     return None
+
+
+def build_schema_index(classpath: str, root_fqcns: list[str], max_depth: int = 3) -> dict:
+    """BFS from each rendering root; collect {SimpleTypeName: {fqcn, fields}} for all
+    reachable non-primitive types up to max_depth hops. Used by Leg 2 strict lookup."""
+    index: dict[str, dict] = {}
+    queue: deque[tuple[str, int]] = deque((fqcn, 0) for fqcn in root_fqcns)
+    visited: set[str] = set()
+    while queue:
+        fqcn, depth = queue.popleft()
+        if fqcn in visited or depth > max_depth:
+            continue
+        visited.add(fqcn)
+        simple = fqcn.rsplit(".", 1)[-1].rsplit("$", 1)[-1]
+        methods = _zero_arg_methods(classpath, fqcn)
+        if not methods:
+            continue
+        index[simple] = {"fqcn": fqcn, "fields": {}}
+        for name, ret in methods.items():
+            index[simple]["fields"][name] = {"return_type": ret}
+            inner = _unwrap_type(ret)
+            if inner and inner not in visited:
+                queue.append((inner, depth + 1))
+    return index
 
 
 def sibling_probe(

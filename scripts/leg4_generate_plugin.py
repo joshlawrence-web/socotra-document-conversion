@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -50,6 +51,50 @@ from sdk_introspect import (
 # ---------------------------------------------------------------------------
 # Helpers (mirrors scripts/leg3_substitute.py)
 # ---------------------------------------------------------------------------
+
+
+def _derive_accessor(velocity: str, category: str) -> str:
+    """Derive clean accessor from velocity path + category."""
+    v = (velocity or "").strip()
+    cat = (category or "").strip()
+    if cat == "system":
+        return "policy." + v[len("$data."):] if v.startswith("$data.") else v
+    if cat == "quote_system":
+        return "quote." + v[len("$data."):] if v.startswith("$data.") else v
+    if cat == "policy_data":
+        return "policy." + v[len("$data."):] if v.startswith("$data.") else v
+    if v.startswith("$data."):
+        return v[len("$data."):]
+    if v.startswith("$"):
+        return v[1:]
+    return v
+
+
+def _accessor_to_java(expr: str) -> str:
+    """Translate an accessor-style condition expression to a Java expression.
+
+    Adds () to each non-root segment of any accessor chain found in the expression.
+    Examples:
+      quote.quoteNumber != null      →  quote.quoteNumber() != null
+      account.data.lastName          →  account.data().lastName()
+      policy.data.riderType == "X"   →  policy.data().riderType() == "X"
+    """
+    import re as _re
+    def _translate_chain(m: "_re.Match") -> str:
+        chain = m.group(0)
+        parts = chain.split(".")
+        if len(parts) <= 1:
+            return chain
+        result = parts[0]
+        for p in parts[1:]:
+            result += f".{p}()"
+        return result
+    # Match accessor chains (2+ dot-separated identifiers) NOT already followed by (
+    return _re.sub(
+        r'\b([a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)+)(?!\s*\()',
+        _translate_chain,
+        expr,
+    )
 
 
 def _repo_root() -> Path:
@@ -183,7 +228,7 @@ public class %(class_name)s implements DocumentDataSnapshotPlugin {
         renderingData.put("quote", quote);
         renderingData.put("pricing", enhancedPricing);
         renderingData.put("productType", "%(product)s");
-%(quote_datafetcher_extras)s
+%(quote_datafetcher_extras)s%(quote_conditional_puts)s
         return DocumentDataSnapshot.builder()
                 .renderingData(renderingData)
                 .build();
@@ -210,7 +255,7 @@ public class %(class_name)s implements DocumentDataSnapshotPlugin {
         renderingData.put("transaction", transaction);
         renderingData.put("segment", segment);
         renderingData.put("productType", "%(product)s");
-%(policy_datafetcher_extras)s
+%(policy_datafetcher_extras)s%(policy_conditional_puts)s
         return DocumentDataSnapshot.builder()
                 .renderingData(renderingData)
                 .build();
@@ -229,6 +274,149 @@ public class %(class_name)s implements DocumentDataSnapshotPlugin {
 
 
 _LEGACY_PRICING_KEYS = frozenset({"pricing"})
+
+
+# ---------------------------------------------------------------------------
+# Additive plugin update helpers (plan Leg4-additive-plugin-update)
+# ---------------------------------------------------------------------------
+
+
+def _parse_existing_plugin_keys(java_path: Path) -> set[str]:
+    """Extract all renderingData.put("key", ...) literal keys from an existing Java file."""
+    if not java_path.exists():
+        return set()
+    return set(re.findall(r'renderingData\.put\("([^"]+)"', java_path.read_text(encoding="utf-8")))
+
+
+def _parse_existing_cond_high_water(java_path: Path) -> int:
+    """Return the highest condN key in an existing plugin (e.g. cond50 → 50), or 0 if none."""
+    if not java_path.exists():
+        return 0
+    matches = re.findall(r'renderingData\.put\("cond(\d+)"', java_path.read_text(encoding="utf-8"))
+    return max((int(m) for m in matches), default=0)
+
+
+def _required_keys(suggested: dict, cond_blocks: list[dict]) -> dict[str, str]:
+    """Return {key: root_id | "cond"} for DataFetcher variables and conditional blocks.
+
+    Uses local conditional IDs; offsetting happens in _diff_keys.
+    """
+    result: dict[str, str] = {}
+    rendering_roots = suggested.get("rendering_roots") or []
+    root_ids = [r.get("id") for r in rendering_roots] if rendering_roots else ["segment"]
+
+    for v in (suggested.get("variables") or []):
+        cand = v.get("candidate") or {}
+        if cand.get("source") != "datafetcher":
+            continue
+        key = cand.get("datafetcher_key", "")
+        if not key:
+            continue
+        root_id = root_ids[0] if root_ids else "segment"
+        for rid in root_ids:
+            verdict = (v.get("verdicts") or {}).get(rid) or {}
+            if verdict.get("data_source"):
+                root_id = rid
+                break
+        result[key] = root_id
+
+    for b in cond_blocks:
+        result[f"cond{b['id']}"] = "cond"
+
+    return result
+
+
+def _diff_keys(
+    required: dict[str, str],
+    existing_keys: set[str],
+    cond_high_water: int,
+) -> tuple[dict[str, str], list[tuple[int, int]]]:
+    """Compute missing variable keys and offset conditional IDs.
+
+    Returns:
+        missing_vars: {key: root_id} for non-conditional keys absent from existing_keys.
+        missing_conds: [(local_id, global_id), ...] — all new form's cond blocks with
+                       global IDs = cond_high_water + local_id (always added; form-local).
+    """
+    missing_vars: dict[str, str] = {}
+    missing_conds: list[tuple[int, int]] = []
+
+    for key, root_id in required.items():
+        if root_id == "cond":
+            local_id = int(key[4:])
+            missing_conds.append((local_id, cond_high_water + local_id))
+        elif key not in existing_keys:
+            missing_vars[key] = root_id
+
+    return missing_vars, missing_conds
+
+
+def _append_to_plugin(
+    java_path: Path,
+    missing_quote_df: list[dict],
+    missing_policy_df: list[dict],
+    offset_cond_blocks: list[dict],
+) -> None:
+    """Write a backup then insert missing puts before each overload's builder return.
+
+    Quote DataFetcher calls → quote overload.
+    Policy DataFetcher calls → policy overload.
+    Conditional puts → both overloads (document-scoped, decision A4).
+    Also inserts any new dynamic imports needed for new DataFetcher return types.
+    """
+    quote_df_code = _generate_datafetcher_extras(missing_quote_df)
+    policy_df_code = _generate_datafetcher_extras(missing_policy_df)
+    quote_cond_code = render_conditional_puts(offset_cond_blocks, scope="quote")
+    policy_cond_code = render_conditional_puts(offset_cond_blocks, scope="policy")
+
+    if not quote_df_code and not policy_df_code and not quote_cond_code:
+        return
+
+    bak = java_path.with_suffix(".java.bak")
+    bak.write_bytes(java_path.read_bytes())
+
+    text = java_path.read_text(encoding="utf-8")
+
+    # Insert missing dynamic imports for new DataFetcher return types.
+    new_imports = _generate_dynamic_imports(missing_quote_df + missing_policy_df)
+    if new_imports:
+        for imp_line in new_imports.splitlines():
+            if imp_line and imp_line not in text:
+                # Insert before the first 'import' line in the file.
+                first_import = text.find("\nimport ")
+                if first_import != -1:
+                    text = text[: first_import + 1] + imp_line + "\n" + text[first_import + 1 :]
+
+    RETURN_MARKER = "        return DocumentDataSnapshot.builder()"
+    positions: list[int] = []
+    start = 0
+    while True:
+        pos = text.find(RETURN_MARKER, start)
+        if pos == -1:
+            break
+        positions.append(pos)
+        start = pos + 1
+
+    if len(positions) < 2:
+        raise RuntimeError(
+            f"Expected ≥2 'return DocumentDataSnapshot.builder()' in {java_path.name}; "
+            f"found {len(positions)}. Cannot append safely."
+        )
+
+    def _join_inserts(*parts: str) -> str:
+        joined = "\n".join(p for p in parts if p)
+        return ("\n" + joined + "\n") if joined else ""
+
+    quote_insert = _join_inserts(quote_df_code, quote_cond_code)
+    policy_insert = _join_inserts(policy_df_code, policy_cond_code)
+
+    # Insert policy first (later in file) so positions[0] stays valid.
+    if policy_insert:
+        text = text[: positions[1]] + policy_insert + text[positions[1] :]
+    if quote_insert:
+        text = text[: positions[0]] + quote_insert + text[positions[0] :]
+
+    java_path.write_text(text, encoding="utf-8")
 
 
 def _collect_datafetcher_calls(
@@ -299,11 +487,73 @@ def _generate_dynamic_imports(all_calls: list[dict]) -> str:
     return "\n".join(f"import {fqcn};" for fqcn in fqcns)
 
 
+def load_conditional_registry(yaml_path: Path) -> list[dict]:
+    """Load conditional-registry.yaml. Returns [] if absent or empty."""
+    if not yaml_path.exists():
+        return []
+    rows = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or []
+    blocks = []
+    for row in rows:
+        conditions = [str(c).strip() for c in (row.get("conditions") or []) if str(c).strip()]
+        operator = (row.get("operator") or "AND").strip().upper()
+        blocks.append({
+            "id": int(row["id"]),
+            "source_text": row["source_text"],
+            "parent_id": row.get("parent_id"),
+            "depth": int(row.get("depth") or 0),
+            "conditions": conditions,
+            "operator": operator,
+        })
+    return blocks
+
+
+def render_conditional_puts(blocks: list[dict], scope: str = "quote") -> str:
+    """Generate renderingData.put(...) lines for conditional blocks.
+
+    scope: "quote" emits full if-conditions; "policy" emits empty puts for any
+    condition that references quote.* (which is out of scope in that overload).
+    """
+    if not blocks:
+        return ""
+    lines = []
+    for b in blocks:
+        bid = b["id"]
+        src = b["source_text"].replace("\\", "\\\\").replace('"', '\\"')
+        truncated = b["source_text"][:60] + ("..." if len(b["source_text"]) > 60 else "")
+        raw_conds = b["conditions"]
+        quote_scoped = any(c.strip().startswith("quote.") for c in raw_conds)
+        if raw_conds and not (scope == "policy" and quote_scoped):
+            joiner = " || " if b["operator"] == "OR" else " && "
+            java_cond = joiner.join(_accessor_to_java(c) for c in raw_conds)
+            lines.append(
+                f'        // Conditional block {bid}: {truncated}\n'
+                f'        String cond{bid} = "";\n'
+                f'        if ({java_cond}) {{\n'
+                f'            cond{bid} = "{src}";\n'
+                f'        }}\n'
+                f'        renderingData.put("cond{bid}", cond{bid});'
+            )
+        elif scope == "policy" and quote_scoped:
+            lines.append(
+                f'        // Conditional block {bid}: quote-scoped, n/a in policy context\n'
+                f'        renderingData.put("cond{bid}", "");'
+            )
+        else:
+            parent_note = f" — child of cond{b['parent_id']}, guard inside parent if-block" if b.get("parent_id") else ""
+            lines.append(
+                f'        // TODO: fill conditions for cond{bid} in conditional-registry.yaml{parent_note}\n'
+                f'        // {truncated}\n'
+                f'        renderingData.put("cond{bid}", "");'
+            )
+    return "\n".join(lines)
+
+
 def render_java(
     product: str,
     suggested_name: str,
     quote_df_calls: list[dict] | None = None,
     policy_df_calls: list[dict] | None = None,
+    cond_blocks: list[dict] | None = None,
 ) -> str:
     quote_extras = _generate_datafetcher_extras(quote_df_calls or [])
     policy_extras = _generate_datafetcher_extras(policy_df_calls or [])
@@ -311,6 +561,8 @@ def render_java(
     dyn_imports = _generate_dynamic_imports(all_calls)
     if dyn_imports:
         dyn_imports = dyn_imports + "\n"
+    quote_cond_puts = render_conditional_puts(cond_blocks or [], scope="quote")
+    policy_cond_puts = render_conditional_puts(cond_blocks or [], scope="policy")
     return JAVA_TEMPLATE % {
         "class_name": f"{product}DocumentDataSnapshotPluginImpl",
         "quote_request": f"{product}QuoteRequest",
@@ -322,6 +574,8 @@ def render_java(
         "suggested_name": suggested_name,
         "quote_datafetcher_extras": ("\n" + quote_extras) if quote_extras else "",
         "policy_datafetcher_extras": ("\n" + policy_extras) if policy_extras else "",
+        "quote_conditional_puts": ("\n" + quote_cond_puts) if quote_cond_puts else "",
+        "policy_conditional_puts": ("\n" + policy_cond_puts) if policy_cond_puts else "",
         "dynamic_imports": dyn_imports,
     }
 
@@ -343,6 +597,8 @@ def write_report(
     compile_status: str | None,
     compile_detail: str,
     generated_at: str,
+    cond_blocks: list[dict] | None = None,
+    additive_summary: dict | None = None,
 ) -> None:
     seg = f"{product}Segment"
     quote = f"{product}Quote"
@@ -419,6 +675,45 @@ def write_report(
         lines.append(f"**{compile_status}**")
         if compile_detail:
             lines += ["", "```", compile_detail.strip(), "```"]
+    lines += [""]
+
+    if additive_summary is not None:
+        added_keys = sorted(additive_summary.get("keys_added") or [])
+        new_cond_ids = sorted(additive_summary.get("new_cond_ids") or [])
+        cond_range = (
+            f"{new_cond_ids[0]}–{new_cond_ids[-1]}"
+            if len(new_cond_ids) > 1
+            else (str(new_cond_ids[0]) if new_cond_ids else "none")
+        )
+        lines += [
+            "---",
+            "",
+            "## Additive update summary",
+            "",
+            "| | |",
+            "|---|---|",
+            f"| Keys already present | {additive_summary.get('keys_already_present', 0)} |",
+            f"| Keys added this run | {len(added_keys)} |",
+            f"| Conditional high water before | {additive_summary.get('cond_high_water_before', 0)} |",
+            f"| New conditional IDs assigned | {cond_range} |",
+            "",
+        ]
+        if added_keys:
+            lines += ["**Newly added keys:** " + ", ".join(f"`{k}`" for k in added_keys), ""]
+
+    cond_blocks = cond_blocks or []
+    lines += ["---", "", f"## Conditional blocks ({len(cond_blocks)} total)", ""]
+    if cond_blocks:
+        lines += ["| id | depth | parent_id | source_text | conditions | status |", "|---|---|---|---|---|---|"]
+        for b in cond_blocks:
+            truncated = b["source_text"][:60] + ("..." if len(b["source_text"]) > 60 else "")
+            status = "wired" if b["conditions"] else "TODO"
+            conds = " \\| ".join(b["conditions"]) if b["conditions"] else "(empty)"
+            parent_id = b.get("parent_id") or ""
+            depth = b.get("depth", 0)
+            lines.append(f"| {b['id']} | {depth} | {parent_id} | {truncated} | `{conds}` | **{status}** |")
+    else:
+        lines.append("_No conditional-registry.yaml found alongside this .suggested.yaml._")
     lines += [""]
 
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -562,15 +857,55 @@ def main() -> int:
         validate_fqcn = segment_fqcn
         validate_ok = segment_ok
 
-    # --- Render + write Java -------------------------------------------------
+    # --- Load conditional registry (Leg 1 artifact) --------------------------
+    cond_yaml = out_dir / f"{stem}.conditional-registry.yaml"
+    cond_blocks = load_conditional_registry(cond_yaml)
+
+    # --- Render + write Java (additive if file exists, fresh otherwise) ------
     class_name = f"{product}DocumentDataSnapshotPluginImpl"
     java_path = out_dir / f"{class_name}.java"
     out_dir.mkdir(parents=True, exist_ok=True)
-    java_path.write_text(
-        render_java(product, suggested_path.name,
-                    quote_df_calls=quote_df_calls, policy_df_calls=policy_df_calls),
-        encoding="utf-8",
-    )
+
+    additive_mode = java_path.exists()
+    additive_summary: dict | None = None
+
+    if additive_mode:
+        existing_keys = _parse_existing_plugin_keys(java_path)
+        cond_high_water = _parse_existing_cond_high_water(java_path)
+
+        required = _required_keys(suggested_raw, cond_blocks)
+        missing_vars, missing_conds = _diff_keys(required, existing_keys, cond_high_water)
+
+        missing_quote_df = [c for c in quote_df_calls if c["key"] in missing_vars]
+        missing_policy_df = [c for c in policy_df_calls if c["key"] in missing_vars]
+
+        local_to_global = {local_id: global_id for local_id, global_id in missing_conds}
+        offset_cond_blocks = [
+            {**b, "id": local_to_global[b["id"]]}
+            for b in cond_blocks
+            if b["id"] in local_to_global
+        ]
+
+        _append_to_plugin(java_path, missing_quote_df, missing_policy_df, offset_cond_blocks)
+
+        added_keys = {c["key"] for c in missing_quote_df + missing_policy_df}
+        additive_summary = {
+            "keys_already_present": len(existing_keys),
+            "keys_added": added_keys,
+            "cond_high_water_before": cond_high_water,
+            "new_cond_ids": [global_id for _, global_id in missing_conds],
+        }
+        print(
+            f"Additive mode: {len(added_keys)} key(s) added, "
+            f"{len(missing_conds)} conditional(s) added (high-water was {cond_high_water})"
+        )
+    else:
+        java_path.write_text(
+            render_java(product, suggested_path.name,
+                        quote_df_calls=quote_df_calls, policy_df_calls=policy_df_calls,
+                        cond_blocks=cond_blocks),
+            encoding="utf-8",
+        )
 
     # --- Categorise + validate variables -------------------------------------
     variables = suggested.get("variables") or []
@@ -617,6 +952,8 @@ def main() -> int:
         compile_status=compile_status,
         compile_detail=compile_detail,
         generated_at=generated_at,
+        cond_blocks=cond_blocks,
+        additive_summary=additive_summary,
     )
 
     print(f"Wrote {_rel(java_path, repo_root)}")
