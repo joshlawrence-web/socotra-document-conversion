@@ -133,9 +133,7 @@ low. Review this file before running Leg 3 if any medium or low confidence match
 Leg 3 (`leg3_substitute.py`) reads the enriched `.mapping.yaml` and produces the final
 `.final.vm` Velocity template by substituting all resolved `$TBD_*` tokens with their
 confirmed Socotra paths. Any tokens that could not be resolved remain as `$TBD_*` in the
-output and are listed in `.leg3-report.md`. Run with `high_only=true` to defer medium and
-low confidence matches to a separate "Deferred" section and leave them as `$TBD_*` for
-manual review.
+output and are listed in `.leg3-report.md`.
 
 ### Plugin generation (Leg 4)
 

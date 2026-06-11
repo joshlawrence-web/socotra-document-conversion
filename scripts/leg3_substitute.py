@@ -16,14 +16,7 @@ Design decisions (DD — recorded here and in docs/SCHEMA.md):
   DD-2: Unresolved tokens ($TBD_* with empty data_source) are preserved
         as-is so the template remains parseable.
   DD-3: Lenient mode — substitute every resolved token, report the rest.
-        Never aborts on low-confidence or empty data_source entries.
-  DD-4: High-only mode (--high-only flag) — only substitute tokens whose
-        confidence == 'high'. Medium/low entries with a data_source are
-        placed in a "Deferred" bucket: they remain as $TBD_* in the output
-        and get their own report section. Rationale: lets users ship a
-        partial template while fuzzy/unconfirmed matches await human review.
-        Re-run without --high-only once deferred entries are confirmed in
-        the .mapping.yaml.
+        Never aborts on empty data_source entries.
 """
 
 from __future__ import annotations
@@ -239,11 +232,10 @@ def _flatten_to_primary_root(suggested: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def build_substitution_map(suggested: dict, high_only: bool = False) -> dict[str, str]:
+def build_substitution_map(suggested: dict) -> dict[str, str]:
     """
     {placeholder: data_source} for every variable and loop field.
     Entries with empty data_source map to '' — caller decides what to do.
-    When high_only=True, non-high-confidence entries also map to '' (DD-4).
     Accepts both schema 1.x (flat fields) and 2.0 (per-root verdicts).
     """
     suggested = _flatten_to_primary_root(suggested)
@@ -251,32 +243,22 @@ def build_substitution_map(suggested: dict, high_only: bool = False) -> dict[str
     for v in suggested.get("variables") or []:
         ph = v.get("placeholder") or ""
         if ph:
-            if high_only and v.get("confidence") != "high":
-                smap[ph] = ""
-            else:
-                smap[ph] = v.get("data_source") or ""
+            smap[ph] = v.get("data_source") or ""
     for loop in suggested.get("loops") or []:
         ph = loop.get("placeholder") or ""
         if ph:
-            if high_only and loop.get("confidence") != "high":
-                smap[ph] = ""
-            else:
-                smap[ph] = loop.get("data_source") or ""
+            smap[ph] = loop.get("data_source") or ""
         for fld in loop.get("fields") or []:
             fph = fld.get("placeholder") or ""
             if fph:
-                if high_only and fld.get("confidence") != "high":
-                    smap[fph] = ""
-                else:
-                    smap[fph] = fld.get("data_source") or ""
+                smap[fph] = fld.get("data_source") or ""
     return smap
 
 
-def build_foreach_map(suggested: dict, high_only: bool = False) -> dict[str, str]:
+def build_foreach_map(suggested: dict) -> dict[str, str]:
     """
     {loop_placeholder: foreach_directive} for loops that have both
     a data_source and a foreach directive from Leg 2.
-    When high_only=True, only high-confidence loops are included (DD-4).
     Accepts both schema 1.x (flat fields) and 2.0 (per-root verdicts).
     """
     suggested = _flatten_to_primary_root(suggested)
@@ -285,10 +267,8 @@ def build_foreach_map(suggested: dict, high_only: bool = False) -> dict[str, str
         ph = loop.get("placeholder") or ""
         foreach = loop.get("foreach") or ""
         ds = loop.get("data_source") or ""
-        conf = loop.get("confidence") or ""
         if ph and foreach and ds:
-            if not high_only or conf == "high":
-                fmap[ph] = foreach
+            fmap[ph] = foreach
     return fmap
 
 
@@ -445,27 +425,20 @@ def write_report(
     unresolved_vars: list[dict],
     resolved_loops: list[dict],
     unresolved_loops: list[dict],
-    deferred_vars: list[dict] | None = None,
-    deferred_loops: list[dict] | None = None,
     delegated_vars: list[dict] | None = None,
-    high_only: bool = False,
     generated_at: str,
     repo_root: Path,
     cond_blocks: list[dict] | None = None,
 ) -> None:
-    deferred_vars = deferred_vars or []
-    deferred_loops = deferred_loops or []
     delegated_vars = delegated_vars or []
     cond_blocks = cond_blocks or []
     cond_count = len(cond_blocks)
     total_all = (
         len(resolved_vars) + len(unresolved_vars)
         + len(resolved_loops) + len(unresolved_loops)
-        + len(deferred_vars) + len(deferred_loops)
         + len(delegated_vars)
     )
     resolved_all = len(resolved_vars) + len(resolved_loops)
-    deferred_all = len(deferred_vars) + len(deferred_loops)
     unresolved_all = len(unresolved_vars) + len(unresolved_loops)
     delegated_all = len(delegated_vars)
 
@@ -476,16 +449,12 @@ def write_report(
         status = "EMPTY — no placeholders found"
     elif total_all == 0 and cond_count > 0:
         status = f"CONDITIONAL-ONLY — {cond_count} conditional block(s) applied"
-    elif unresolved_all == 0 and deferred_all == 0:
+    elif unresolved_all == 0:
         status = f"COMPLETE — all {total_all} token(s) {'handled' if delegated_all else 'resolved'}{cond_suffix}"
-    elif resolved_all == 0 and deferred_all == 0 and delegated_all == 0:
+    elif resolved_all == 0 and delegated_all == 0:
         status = f"BLOCKED — 0 of {total_all} resolved{cond_suffix}"
-    elif high_only and deferred_all > 0 and unresolved_all == 0:
-        status = f"HIGH-ONLY — {resolved_all} substituted, {deferred_all} deferred for review{cond_suffix}"
     else:
         status = f"PARTIAL — {resolved_all} of {total_all} resolved, {unresolved_all} need attention{cond_suffix}"
-        if high_only and deferred_all > 0:
-            status += f", {deferred_all} deferred"
 
     suggested_rel = _rel(suggested_path, repo_root)
 
@@ -500,7 +469,6 @@ def write_report(
         f"| **Source template** | `{vm_path.name}` |",
         f"| **Mapping used** | `{suggested_path.name}` |",
         f"| **Output template** | `{out_vm_path.name}` |",
-        f"| **Mode** | {'high-only (DD-4)' if high_only else 'standard'} |",
         f"| **Generated** | {generated_at} |",
         "",
         "---",
@@ -572,45 +540,6 @@ def write_report(
             conds = ", ".join(f"cond{c}" for c in v.get("_cond_ids") or []) or "?"
             lines.append(f"| `{ph}` | `{ds}` | {conds} |")
         lines += ["", "---", ""]
-
-    # ---- §2 Deferred (high-only mode) ----------------------------------------
-    if high_only:
-        lines += [
-            f"## Deferred — medium/low confidence ({deferred_all})",
-            "",
-        ]
-        if deferred_all == 0:
-            lines += ["No deferred entries. All entries with data_source were high confidence.", "", "---", ""]
-        else:
-            lines += [
-                "These entries have a suggested path but were **not substituted** because",
-                "confidence is medium or low. Confirm each path in the `.mapping.yaml`,",
-                "then re-run Leg 3 without `high_only=true` to apply them.",
-                "",
-                "| Type | Placeholder | Label | Suggested path | Confidence | Reasoning |",
-                "|---|---|---|---|---|---|",
-            ]
-            for v in deferred_vars:
-                ph = v.get("placeholder") or ""
-                ds = v.get("data_source") or ""
-                label = _label(v)
-                conf = v.get("confidence") or ""
-                reasoning = _strip_next_action(v.get("reasoning") or "")
-                lines.append(f"| variable | `{ph}` | {label} | `{ds}` | {conf} | {reasoning} |")
-            for L in deferred_loops:
-                ph = L.get("placeholder") or ""
-                ds = L.get("data_source") or ""
-                conf = L.get("confidence") or ""
-                reasoning = _strip_next_action(L.get("reasoning") or "")
-                lines.append(f"| loop | `{ph}` | — | `{ds}` | {conf} | {reasoning} |")
-            lines += [
-                "",
-                "> **To apply deferred entries:** review and confirm `data_source` values above,",
-                "> then re-run: `RUN_PIPELINE leg3 suggested=<path>`",
-                "",
-                "---",
-                "",
-            ]
 
     # ---- §3 Unresolved -------------------------------------------------------
     lines += [
@@ -709,10 +638,10 @@ def write_report(
 # ---------------------------------------------------------------------------
 
 
-def substitute(suggested: dict, vm_text: str, high_only: bool = False) -> str:
+def substitute(suggested: dict, vm_text: str) -> str:
     """Apply leg-3 substitution in memory and return the final .vm text."""
-    smap = build_substitution_map(suggested, high_only=high_only)
-    foreach_map = build_foreach_map(suggested, high_only=high_only)
+    smap = build_substitution_map(suggested)
+    foreach_map = build_foreach_map(suggested)
     return process_vm(vm_text, smap, foreach_map)
 
 
@@ -738,10 +667,6 @@ def main() -> int:
     ap.add_argument(
         "--report-out", type=Path, default=None,
         help="Output path for the report (default: <stem>.leg3-report.md in same dir)",
-    )
-    ap.add_argument(
-        "--high-only", action="store_true", default=False,
-        help="Only substitute high-confidence tokens; defer medium/low to review (DD-4)",
     )
     args = ap.parse_args()
 
@@ -771,15 +696,13 @@ def main() -> int:
 
     repo_root = _repo_root()
 
-    high_only = args.high_only
-
     # --- Load ----------------------------------------------------------------
     suggested = _flatten_to_primary_root(_load_yaml(suggested_path))
     vm_text = vm_path.read_text(encoding="utf-8")
 
     # --- Build maps ----------------------------------------------------------
-    smap = build_substitution_map(suggested, high_only=high_only)
-    foreach_map = build_foreach_map(suggested, high_only=high_only)
+    smap = build_substitution_map(suggested)
+    foreach_map = build_foreach_map(suggested)
     cond_registry_path = out_dir / f"{stem}.conditional-registry.yaml"
     cond_blocks = _load_cond_registry(cond_registry_path)
     cond_map = build_cond_map(cond_blocks)
@@ -788,24 +711,14 @@ def main() -> int:
     final_vm = process_vm(vm_text, smap, foreach_map)
     final_vm = apply_cond_substitutions(final_vm, cond_map)
 
-    # --- Categorise entries (DD-4: split deferred bucket when high_only) -----
+    # --- Categorise entries ---------------------------------------------------
     variables = suggested.get("variables") or []
     loops = suggested.get("loops") or []
 
-    if high_only:
-        resolved_vars = [v for v in variables if v.get("data_source") and v.get("confidence") == "high"]
-        deferred_vars = [v for v in variables if v.get("data_source") and v.get("confidence") != "high"]
-        unresolved_vars = [v for v in variables if not v.get("data_source")]
-        resolved_loops = [L for L in loops if L.get("data_source") and L.get("confidence") == "high"]
-        deferred_loops = [L for L in loops if L.get("data_source") and L.get("confidence") != "high"]
-        unresolved_loops = [L for L in loops if not L.get("data_source")]
-    else:
-        resolved_vars = [v for v in variables if v.get("data_source")]
-        deferred_vars = []
-        unresolved_vars = [v for v in variables if not v.get("data_source")]
-        resolved_loops = [L for L in loops if L.get("data_source")]
-        deferred_loops = []
-        unresolved_loops = [L for L in loops if not L.get("data_source")]
+    resolved_vars = [v for v in variables if v.get("data_source")]
+    unresolved_vars = [v for v in variables if not v.get("data_source")]
+    resolved_loops = [L for L in loops if L.get("data_source")]
+    unresolved_loops = [L for L in loops if not L.get("data_source")]
 
     # Tokens living only inside [[...]]$doc.condN blocks are wired by the Leg 4
     # plugin, not this template — report them separately (D9, plan 10).
@@ -826,10 +739,7 @@ def main() -> int:
         unresolved_vars=unresolved_vars,
         resolved_loops=resolved_loops,
         unresolved_loops=unresolved_loops,
-        deferred_vars=deferred_vars,
-        deferred_loops=deferred_loops,
         delegated_vars=delegated_vars,
-        high_only=high_only,
         generated_at=generated_at,
         repo_root=repo_root,
         cond_blocks=cond_blocks,

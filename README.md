@@ -64,7 +64,7 @@ This is a **five-leg pipeline (Leg 0–4)**:
 
 **Leg 2** (`leg2_fill_mapping.py`) reads the `.mapping.yaml` alongside `registry/path-registry.yaml` and suggests real Socotra Velocity paths for every `$TBD_*` variable and loop. It enriches the `.mapping.yaml` in-place (overwriting it with Schema 2.0 suggestions) and writes a `.review.md` summary.
 
-**Leg 3** (`leg3_substitute.py`) reads the enriched `.mapping.yaml` and writes the final `.final.vm` template, substituting `$TBD_*` placeholders with confirmed Socotra paths. A `.leg3-report.md` summarises what was resolved and what remains unresolved. Use `high_only=true` to substitute only `confidence: high` suggestions, leaving medium/low tokens as `$TBD_*` for human review.
+**Leg 3** (`leg3_substitute.py`) reads the enriched `.mapping.yaml` and writes the final `.final.vm` template, substituting `$TBD_*` placeholders with confirmed Socotra paths. A `.leg3-report.md` summarises what was resolved and what remains unresolved.
 
 **Leg 4** (`leg4_generate_plugin.py`) reads the enriched `.mapping.yaml` and emits a compile-correct `{Product}DocumentDataSnapshotPluginImpl.java` plus a `<stem>.plugin-report.md` validation summary. See `.cursor/skills/plugin-builder/SKILL.md`.
 
@@ -186,20 +186,14 @@ If you say *"only fill the high confidence fields"*, the server substitutes only
    # Full pipeline — HTML → .final.vm (most common)
    python3 scripts/agent.py "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml output=samples/output"
 
-   # Full pipeline, high-confidence substitutions only (medium/low stay as $TBD_* for review)
-   python3 scripts/agent.py "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml output=samples/output high_only=true"
-
    # Leg 1 only (HTML → .vm + .mapping.yaml)
    python3 scripts/agent.py "RUN_PIPELINE leg1 input=samples/input/Simple-form.html output=samples/output"
 
    # Leg 2 only (suggest paths for an existing .mapping.yaml)
-   python3 scripts/agent.py "RUN_PIPELINE leg2 mode=terse mapping=samples/output/Simple-form/Simple-form.mapping.yaml"
+   python3 scripts/agent.py "RUN_PIPELINE leg2 mapping=samples/output/Simple-form/Simple-form.mapping.yaml"
 
    # Leg 3 only (write final .vm from a reviewed .mapping.yaml)
    python3 scripts/agent.py "RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.mapping.yaml"
-
-   # Leg 3 only, high-confidence substitutions only
-   python3 scripts/agent.py "RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.mapping.yaml high_only=true"
    ```
 
    The orchestrator shows a preflight summary and requires you to type `PROCEED` before running. Add `--yes` to skip confirmation in CI/headless use.

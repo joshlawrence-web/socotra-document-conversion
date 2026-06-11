@@ -13,7 +13,6 @@ sys.path.insert(0, str(REPO / "scripts"))
 from leg2_review_writer import (  # noqa: E402
     _all_entries,
     _check_minor_mismatch,
-    _extract_candidates,
     _extract_na,
     _fmt_line,
     _write_review_md,
@@ -32,22 +31,6 @@ class TestExtractNa(unittest.TestCase):
 
     def test_empty_string(self) -> None:
         self.assertIsNone(_extract_na(""))
-
-
-class TestExtractCandidates(unittest.TestCase):
-    def test_parses_pipe_separated(self) -> None:
-        result = _extract_candidates("pick-one: $data.foo | $data.bar | $data.baz")
-        self.assertEqual(result, ["$data.foo", "$data.bar", "$data.baz"])
-
-    def test_trims_whitespace(self) -> None:
-        result = _extract_candidates("pick-one:  $a  |  $b  ")
-        self.assertEqual(result, ["$a", "$b"])
-
-    def test_no_pick_one(self) -> None:
-        self.assertEqual(_extract_candidates("supply-from-plugin"), [])
-
-    def test_empty(self) -> None:
-        self.assertEqual(_extract_candidates(""), [])
 
 
 class TestFmtLine(unittest.TestCase):
@@ -100,7 +83,6 @@ class TestWriteReviewMd(unittest.TestCase):
     def _minimal_suggested(self) -> dict:
         return {
             "run_id": "test-run",
-            "mode": "terse",
             "product": "TestProduct",
             "generated_at": "2026-01-01T00:00:00",
             "input_mapping_sha256": "abc123",
@@ -145,7 +127,6 @@ class TestWriteReviewMd(unittest.TestCase):
                 registry_path=Path(tmp) / "registry.yaml",
                 gate_label="pass",
                 escape_note="",
-                mode="terse",
             )
             self.assertTrue(out.exists())
 
@@ -177,7 +158,6 @@ class TestWriteReviewMd(unittest.TestCase):
                 registry_path=Path(tmp) / "registry.yaml",
                 gate_label="pass",
                 escape_note="",
-                mode="terse",
             )
             content = out.read_text()
             self.assertIn("## Blockers", content)
@@ -237,7 +217,7 @@ class TestWriteReviewMd(unittest.TestCase):
             self.assertIn("MINOR=1.2", content)
 
 
-    def _run(self, suggested: dict, mode: str = "terse", escape_note: str = "") -> str:
+    def _run(self, suggested: dict, escape_note: str = "") -> str:
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "test.review.md"
             _write_review_md(
@@ -249,52 +229,18 @@ class TestWriteReviewMd(unittest.TestCase):
                 registry_path=Path(tmp) / "registry.yaml",
                 gate_label="pass",
                 escape_note=escape_note,
-                mode=mode,
             )
             return out.read_text()
 
-    # --- full mode branches ---
+    # --- single (terse) output behavior ---
 
-    def test_full_mode_blockers_verbose_heading(self) -> None:
+    def test_blockers_render_as_table(self) -> None:
         suggested = self._minimal_suggested()
-        content = self._run(suggested, mode="full")
-        # full mode renders ### heading per blocker, not a table
-        self.assertIn("### {{UNKNOWN}}", content)
-        self.assertIn("**parent_tag:**", content)
+        content = self._run(suggested)
+        self.assertIn("| Placeholder | Line | Root | sdk_status | next-action |", content)
+        self.assertIn("`{{UNKNOWN}}`", content)
 
-    def test_full_mode_blockers_with_candidates(self) -> None:
-        suggested = self._minimal_suggested()
-        # next-action placed before pick-one list so it doesn't bleed into candidates
-        suggested["variables"][1]["reasoning"] = (
-            "next-action: pick-one — pick-one: $data.foo | $data.bar"
-        )
-        content = self._run(suggested, mode="full")
-        self.assertIn("**candidates:**", content)
-        self.assertIn("`$data.foo`", content)
-        self.assertIn("`$data.bar`", content)
-
-    def test_full_mode_done_includes_reasoning(self) -> None:
-        suggested = self._minimal_suggested()
-        suggested["variables"][0]["reasoning"] = "exact match via step1"
-        content = self._run(suggested, mode="full")
-        # full mode appends reasoning italicised after the path
-        self.assertIn("exact match via step1", content)
-
-    def test_full_mode_assumptions_renders_checkboxes(self) -> None:
-        suggested = self._minimal_suggested()
-        suggested["variables"].append({
-            "name": "FUZZY_FIELD",
-            "placeholder": "{{FUZZY_FIELD}}",
-            "data_source": "$data.account.data.name",
-            "confidence": "medium",
-            "reasoning": "confirm-assumption: name refers to account name — next-action: confirm-assumption",
-            "context": {"line": 15},
-        })
-        content = self._run(suggested, mode="full")
-        self.assertIn("- [ ]", content)
-        self.assertIn("name refers to account name", content)
-
-    def test_full_mode_assumptions_terse_count_only(self) -> None:
+    def test_assumptions_render_count_only(self) -> None:
         suggested = self._minimal_suggested()
         suggested["variables"].append({
             "name": "FUZZY_FIELD",
@@ -304,33 +250,9 @@ class TestWriteReviewMd(unittest.TestCase):
             "reasoning": "confirm-assumption: check this — next-action: confirm-assumption",
             "context": {"line": 15},
         })
-        content = self._run(suggested, mode="terse")
+        content = self._run(suggested)
         self.assertIn("assumption(s) to confirm", content)
         self.assertNotIn("- [ ]", content)
-
-    # --- delta mode branches ---
-
-    def test_delta_mode_header_shows_previous_run(self) -> None:
-        suggested = self._minimal_suggested()
-        suggested["mode"] = "delta"
-        suggested["base_suggested_sha256"] = "abc123def456"
-        suggested["previous_run_id"] = "prev-run-42"
-        content = self._run(suggested)
-        self.assertIn("previous_run_id `prev-run-42`", content)
-
-    def test_delta_mode_state_summary_shows_counts(self) -> None:
-        suggested = self._minimal_suggested()
-        suggested["mode"] = "delta"
-        suggested["delta_changes"] = {
-            "changed": ["A", "B"],
-            "cleared": ["C"],
-            "re_suggested_unconfirmed": [],
-            "carried_forward_count": 5,
-        }
-        content = self._run(suggested)
-        self.assertIn("changed=2", content)
-        self.assertIn("cleared=1", content)
-        self.assertIn("carried_confirmed=5", content)
 
     # --- §5 scope warning branch ---
 
@@ -368,19 +290,17 @@ class TestWriteReviewMd(unittest.TestCase):
     # --- invariants ---
 
     def test_all_seven_section_headers_always_present(self) -> None:
-        for mode in ("terse", "full"):
-            with self.subTest(mode=mode):
-                content = self._run(self._minimal_suggested(), mode=mode)
-                for header in (
-                    "## State summary",
-                    "## Summary",
-                    "## Blockers",
-                    "## Assumptions to confirm",
-                    "## Cross-scope warnings",
-                    "## Done",
-                    "## Unrecognised inputs",
-                ):
-                    self.assertIn(header, content, f"missing {header!r} in {mode} mode")
+        content = self._run(self._minimal_suggested())
+        for header in (
+            "## State summary",
+            "## Summary",
+            "## Blockers",
+            "## Assumptions to confirm",
+            "## Cross-scope warnings",
+            "## Done",
+            "## Unrecognised inputs",
+        ):
+            self.assertIn(header, content, f"missing {header!r}")
 
     def test_high_confidence_always_in_done_section(self) -> None:
         suggested = self._minimal_suggested()

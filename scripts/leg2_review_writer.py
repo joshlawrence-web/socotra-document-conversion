@@ -6,34 +6,9 @@ from pathlib import Path
 _NA_RE = re.compile(r"next-action:\s*([a-z-]+)")
 _CANDIDATE_RE = re.compile(r"registry candidate `([^`]+)`")
 
-_RESOLUTION = {
-    "supply-from-plugin": (
-        "No registry path exists for this field. "
-        "A plugin (DocumentDataSnapshotPlugin or equivalent) must supply it as a scalar on `$data.data.*`."
-    ),
-    "restructure-template": (
-        "A registry path exists but the template is missing the required `#foreach` wrapper. "
-        "Add the foreach block shown in `requires_scope` and move this variable inside it."
-    ),
-    "pick-one": (
-        "Multiple registry paths are equally plausible. "
-        "Review the candidates and set `data_source` to the correct one before running Leg 3."
-    ),
-    "delete-from-template": "This field has no business purpose in this document. Remove the placeholder.",
-    "confirm-assumption": "",  # medium only — appears in §4 not §3
-}
-
-
 def _extract_na(reasoning: str) -> str | None:
     m = _NA_RE.search(reasoning)
     return m.group(1) if m else None
-
-
-def _extract_candidates(reasoning: str) -> list[str]:
-    m = re.search(r"pick-one:\s*(.+)", reasoning)
-    if m:
-        return [p.strip() for p in m.group(1).split("|") if p.strip()]
-    return []
 
 
 def _fmt_line(entry: dict) -> int:
@@ -91,7 +66,6 @@ def _write_review_md(
     registry_path: Path,
     gate_label: str,
     escape_note: str,
-    mode: str = "terse",
 ) -> None:
     idx: dict = suggested.get("_idx") or {}
     variables = suggested.get("variables") or []
@@ -135,13 +109,7 @@ def _write_review_md(
         f"# Mapping review — {stem}",
         "",
         f"- Run id: `{suggested.get('run_id', '')}`",
-        f"- Mode: **{suggested.get('mode', 'terse')}**",
     ]
-    if suggested.get("mode") == "delta":
-        if suggested.get("previous_run_id"):
-            lines.append(f"- Based on: previous_run_id `{suggested['previous_run_id']}`")
-        if suggested.get("base_suggested_sha256"):
-            lines.append(f"- Base sha256: `{suggested['base_suggested_sha256'][:16]}…`")
     lines += [
         f"- Source mapping: `{mapping_path}`",
         f"- Suggested output: `{suggested_path}`",
@@ -174,7 +142,6 @@ def _write_review_md(
         "---",
         "",
     ]
-    dc = suggested.get("delta_changes") or {}
 
     # §1b State summary — always present; compact counts for programmatic parsing.
     lines += [
@@ -185,18 +152,6 @@ def _write_review_md(
         "---",
         "",
     ]
-    if dc:
-        lines += [
-            "## Delta changes",
-            "",
-            f"changed={len(dc.get('changed') or [])}  "
-            f"cleared={len(dc.get('cleared') or [])}  "
-            f"re_suggested={len(dc.get('re_suggested_unconfirmed') or [])}  "
-            f"carried_confirmed={dc.get('carried_forward_count', 0)}",
-            "",
-            "---",
-            "",
-        ]
 
     # §2 Summary — per rendering root.
     lines += [
@@ -261,7 +216,7 @@ def _write_review_md(
     lines += ["---", "", "## Blockers (low confidence, per root)", ""]
     if not blocker_pairs:
         lines.append("No blockers.")
-    elif mode == "terse":
+    else:
         lines += [
             "| Placeholder | Line | Root | sdk_status | next-action |",
             "|---|---|---|---|---|",
@@ -274,34 +229,6 @@ def _write_review_md(
             lines.append(
                 f"| `{ph}` | {ln} | `{root_id}` | {vd.get('sdk_status', '')} | {na} |"
             )
-    else:
-        for e, root_id in blocker_pairs:
-            ph = e.get("placeholder") or e.get("name") or ""
-            ctx = e.get("context") or {}
-            ln = ctx.get("line") or "?"
-            vd = _verdict(e, root_id)
-            reasoning = vd.get("reasoning") or ""
-            na = _extract_na(reasoning) or "supply-from-plugin"
-            cands = _extract_candidates(reasoning)
-            lines += [
-                f"### {ph} · root `{root_id}`  _(line {ln})_",
-                "",
-                f"- **parent_tag:** `{ctx.get('parent_tag') or '—'}`",
-                f"- **nearest_label:** \"{ctx.get('nearest_label') or ''}\"",
-                f"- **sdk_status:** `{vd.get('sdk_status', '')}`",
-            ]
-            if vd.get("sibling_hint"):
-                lines.append(f"- **sibling_hint:** `{vd['sibling_hint']}`")
-            if cands:
-                lines.append("- **candidates:**")
-                for c in cands:
-                    lines.append(f"  - `{c}`")
-            lines += [
-                f"- **next-action:** `{na}`",
-                f"- **suggested resolution:** {_RESOLUTION.get(na, '')}",
-                f"- **reasoning:** {reasoning}",
-                "",
-            ]
     lines.append("")
 
     # §4 Assumptions to confirm — medium-confidence verdicts, per root.
@@ -313,18 +240,8 @@ def _write_review_md(
                 assumption_pairs.append((e, root_id))
     if not assumption_pairs:
         lines.append("No assumptions to confirm.")
-    elif mode == "terse":
-        lines.append(f"{len(assumption_pairs)} assumption(s) to confirm — see .mapping.yaml")
     else:
-        for e, root_id in assumption_pairs:
-            ph = e.get("placeholder") or e.get("name") or ""
-            vd = _verdict(e, root_id)
-            ds = vd.get("data_source") or ""
-            ln = (e.get("context") or {}).get("line") or "?"
-            lines += [
-                f"- [ ] `{ph}` · root `{root_id}` (line {ln}) → `{ds}`",
-                f"  - {vd.get('reasoning') or ''}",
-            ]
+        lines.append(f"{len(assumption_pairs)} assumption(s) to confirm — see .mapping.yaml")
     lines.append("")
 
     # §4b Token Format Errors — old-format or schema-miss tokens (confidence: none).
@@ -397,10 +314,7 @@ def _write_review_md(
         ph = e.get("placeholder") or e.get("name") or ""
         vd = _verdict(e, root_id)
         ds = vd.get("data_source") or ""
-        if mode == "terse":
-            lines.append(f"- `{ph}` · `{root_id}` → `{ds}`")
-        else:
-            lines.append(f"- `{ph}` · `{root_id}` → `{ds}`  _{vd.get('reasoning') or ''}_")
+        lines.append(f"- `{ph}` · `{root_id}` → `{ds}`")
     lines += ["", "</details>"]
     lines.append("")
 

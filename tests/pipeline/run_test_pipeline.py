@@ -221,12 +221,36 @@ def run_leg4(mapping_paths: list[str]) -> bool:
 
     java_files = list(plugin_output_dir.glob("*.java"))
     if not java_files:
-        # Also check other output dirs
-        java_files = [
-            jf for mp in mapping_paths for jf in Path(mp).parent.glob("*.java")
-        ]
+        print(f"  FAIL — no combined plugin written to {plugin_output_dir.relative_to(REPO)}")
+        return False
+    stray = [
+        jf for mp in mapping_paths[1:] for jf in Path(mp).parent.glob("*.java")
+    ]
+    if stray:
+        for jf in stray:
+            print(f"  FAIL — stray per-form plugin: {jf.relative_to(REPO)} "
+                  "(all forms must merge into the first form's plugin)")
+        return False
     for jf in java_files:
         print(f"\n  OK — plugin: {jf.relative_to(REPO)}")
+
+    # Every form must contribute its conditional keys to the combined plugin —
+    # a single-form plugin passing silently was the multi-form regression.
+    plugin_text = java_files[0].read_text(encoding="utf-8")
+    n_expected_conds = 0
+    for mp in mapping_paths:
+        cond_reg = Path(mp).parent / f"{Path(mp).parent.name}.conditional-registry.yaml"
+        if cond_reg.exists():
+            n_expected_conds += cond_reg.read_text(encoding="utf-8").count("- id:")
+    n_plugin_conds = len(set(
+        re.findall(r'renderingData\.put\("(cond\d+)"', plugin_text)
+    ))
+    if n_plugin_conds < n_expected_conds:
+        print(f"  FAIL — combined plugin has {n_plugin_conds} distinct conditional key(s), "
+              f"expected {n_expected_conds} across {len(mapping_paths)} form(s)")
+        return False
+    print(f"  OK — combined plugin carries {n_plugin_conds} conditional key(s) "
+          f"from {len(mapping_paths)} form(s)")
 
     # Fields inside conditional blocks must be concatenated, never left as
     # literal $TBD_* in the plugin strings (plan 10-conditional-field-tokens).

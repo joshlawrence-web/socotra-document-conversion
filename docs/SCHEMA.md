@@ -271,8 +271,9 @@ Produced by: `mapping-suggester` (Leg 2). Current version: **2.0** (MAJOR: per-(
 > rendering root — the JARs are the authority (Leg2 plan D1/D4). Downstream
 > consumers that only support `1.x` (Leg 3, Leg 4) MUST halt with an
 > upgrade-path message until the §14 harmonisation lands; until then they read a
-> 2.0 file as having no high-confidence scalar fields. Delta mode is **not
-> supported** on 2.0 (Leg2 plan D10) — `--mode delta` exits non-zero.
+> 2.0 file as having no high-confidence scalar fields. Output modes
+> (`full`/`terse`/`delta`/`batch`) were removed in 2026-06 — Leg 2 has a
+> single output behaviour (the former `terse`).
 
 ### Rendering roots (2.0)
 
@@ -289,7 +290,6 @@ cut — D5). The first listed root is primary.
 |---|---|---|
 | `schema_version` | string | `'2.0'`. First key. |
 | `run_id` | string | UUID for this run; matches JSONL `run_id`. |
-| `mode` | string | `full` \| `terse` \| `batch`. `delta` is rejected on 2.0 (D10). |
 | `generated_at` | string | ISO-8601 UTC timestamp. |
 | `input_mapping_sha256` | string | SHA-256 of mapping file bytes read. |
 | `input_registry_sha256` | string | SHA-256 of registry file bytes read. |
@@ -300,8 +300,6 @@ cut — D5). The first listed root is primary.
 | `live_source_config_sha256` | string? | Recomputed from `--config-dir` when supplied. |
 | `registry_config_verified` | bool | `true` only when embedded and live fingerprints matched. |
 | `registry_config_check` | string | `matched` \| `skipped_no_config_dir` \| `skipped_escape_hatch` \| `skipped_missing_registry_fingerprint` \| `failed_mismatch`. |
-| `previous_run_id` | string? | Prior `run_id` when `mode: delta` and base file had one. |
-| `base_suggested_sha256` | string? | SHA-256 of base `.suggested.yaml` bytes for delta. |
 | `input_mapping_version` | string | `schema_version` read from `<stem>.mapping.yaml`. |
 | `input_registry_version` | string | `schema_version` read from `path-registry.yaml`. |
 | `source` | string | Copied from mapping (carries the `(root)` bracket Leg 2 parses). |
@@ -411,7 +409,7 @@ review with no verdicts (Leg2 plan §8).
 **v1.1 extensions (tool-emitted; optional in frozen conformance goldens):**
 between Section 1 and `## Summary`, `scripts/leg2_fill_mapping.py` may emit
 provenance bullets (`run_id`, paths, hashes, registry lineage,
-`registry_config_check`, optional delta line), a `---` separator, and
+`registry_config_check`), a `---` separator, and
 `## State summary`. Hand-authored `conformance/fixtures/*/golden/review.md`
 files may omit those blocks until refreshed from a live run; they must still
 use the line-1 HTML comment and a correct `Schema:` bullet for the paired
@@ -471,15 +469,16 @@ next release (deferred until a real breaking change is proposed).
 | `hot_registry_paths` | array<string> | Registry entries matched by ≥ 2 placeholders this run (candidates for terminology promotion). |
 | `unknown_context_keys_seen` | array<string> | Union of every placeholder record's `unknown_context_keys`, sorted. |
 
-**v1.1 summary extensions (optional, additive):** `mode`,
+**v1.1 summary extensions (optional, additive):**
 `input_mapping_sha256`, `input_registry_sha256`,
 `registry_schema_version`, `registry_generated_at`,
 `registry_config_dir`, `registry_source_config_sha256`,
 `live_source_config_sha256`, `registry_config_verified`,
-`registry_config_check`, `base_suggested_sha256`,
-`previous_run_id`, `result_suggested_sha256`, and `delta_changes`
-(object). Older logs omit these keys; validators MUST treat them as
-optional.
+`registry_config_check`, and `result_suggested_sha256`.
+Older logs may also carry `mode`, `base_suggested_sha256`,
+`previous_run_id`, and `delta_changes` (object) — these keys are no
+longer emitted (modes removed 2026-06). Logs may omit any of these
+keys; validators MUST treat them all as optional.
 
 ### Emission rules
 

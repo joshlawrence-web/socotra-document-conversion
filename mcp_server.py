@@ -48,7 +48,6 @@ def convert_html_to_velocity(
     input_html: str,
     output_dir: str = "velocity-output",
     registry: str = "",
-    high_only: bool = False,
 ) -> str:
     """Convert an HTML file into a production-ready Velocity (.vm) template.
 
@@ -64,8 +63,6 @@ def convert_html_to_velocity(
         input_html: Path to the HTML file (absolute, or relative to CWD).
         output_dir: Directory for all output files. Default: velocity-output/
         registry:   Path to path-registry.yaml. Defaults to the built-in registry.
-        high_only:  If true, only substitute confidence:high tokens. Medium/low
-                    tokens stay as $TBD_* and appear in the deferred report section.
     """
     input_path = _resolve(input_html)
     out_path = _resolve(output_dir)
@@ -88,20 +85,16 @@ def convert_html_to_velocity(
     ok, msg = _run([sys.executable, str(_LEG2),
                     "--mapping", str(mapping), "--registry", str(reg),
                     "--out", str(suggested), "--review-out", str(review_out),
-                    "--telemetry-log", str(telemetry), "--mode", "terse"])
+                    "--telemetry-log", str(telemetry)])
     if not ok:
         return f"Leg 1 succeeded, Leg 2 failed:\n{msg}"
 
     # Leg 3
     final_vm = stem_dir / f"{stem}.final.vm"
     report = stem_dir / f"{stem}.leg3-report.md"
-    cmd = [sys.executable, str(_LEG3),
-           "--suggested", str(suggested), "--out", str(final_vm),
-           "--report-out", str(report)]
-    if high_only:
-        cmd.append("--high-only")
-
-    ok, msg = _run(cmd)
+    ok, msg = _run([sys.executable, str(_LEG3),
+                    "--suggested", str(suggested), "--out", str(final_vm),
+                    "--report-out", str(report)])
     if not ok:
         return f"Legs 1+2 succeeded, Leg 3 failed:\n{msg}"
 
@@ -149,7 +142,6 @@ def extract_velocity_tokens(
 def suggest_velocity_paths(
     mapping: str,
     registry: str = "",
-    mode: str = "terse",
     terminology: str = "",
 ) -> str:
     """Run Leg 2 only: suggest Socotra data-source paths for an existing .mapping.yaml.
@@ -161,7 +153,6 @@ def suggest_velocity_paths(
     Args:
         mapping:     Path to the .mapping.yaml file (absolute, or relative to CWD).
         registry:    Path to path-registry.yaml. Defaults to built-in registry.
-        mode:        Suggester verbosity: terse (default), full, delta, or batch.
         terminology: Optional path to a terminology.yaml override file.
     """
     mapping_path = _resolve(mapping)
@@ -178,7 +169,7 @@ def suggest_velocity_paths(
     cmd = [sys.executable, str(_LEG2),
            "--mapping", str(mapping_path), "--registry", str(reg),
            "--out", str(suggested), "--review-out", str(review_out),
-           "--telemetry-log", str(telemetry), "--mode", mode]
+           "--telemetry-log", str(telemetry)]
     if terminology:
         cmd += ["--terminology", str(_resolve(terminology))]
 
@@ -196,7 +187,6 @@ def suggest_velocity_paths(
 @mcp.tool()
 def write_final_template(
     suggested: str,
-    high_only: bool = False,
 ) -> str:
     """Run Leg 3 only: substitute paths into the .vm and write the final template.
 
@@ -208,10 +198,6 @@ def write_final_template(
 
     Args:
         suggested:  Path to the .suggested.yaml file (absolute, or relative to CWD).
-        high_only:  If true, only substitute confidence:high tokens. Medium/low
-                    tokens stay as $TBD_* in the output and appear in a Deferred
-                    section of the report. Use this when fuzzy matches need human
-                    review before going to production.
     """
     suggested_path = _resolve(suggested)
     stem = suggested_path.stem
@@ -222,13 +208,9 @@ def write_final_template(
     final_vm = base / f"{stem}.final.vm"
     report = base / f"{stem}.leg3-report.md"
 
-    cmd = [sys.executable, str(_LEG3),
-           "--suggested", str(suggested_path), "--out", str(final_vm),
-           "--report-out", str(report)]
-    if high_only:
-        cmd.append("--high-only")
-
-    ok, msg = _run(cmd)
+    ok, msg = _run([sys.executable, str(_LEG3),
+                    "--suggested", str(suggested_path), "--out", str(final_vm),
+                    "--report-out", str(report)])
     if not ok:
         return f"Leg 3 failed:\n{msg}"
 

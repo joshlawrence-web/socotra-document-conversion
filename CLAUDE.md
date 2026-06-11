@@ -111,7 +111,7 @@ python3 scripts/agent.py --yes "RUN_PIPELINE leg1 input=<path> output=samples/ou
 
 **Leg 2 only** (suggest paths for an existing mapping):
 ```
-python3 scripts/agent.py --yes "RUN_PIPELINE leg2 mode=terse mapping=<path> registry=registry/path-registry.yaml"
+python3 scripts/agent.py --yes "RUN_PIPELINE leg2 mapping=<path> registry=registry/path-registry.yaml"
 ```
 
 **Leg 2+3** (suggest paths + write final template, starting from an existing mapping — use after leg0 + parsing the conditional form):
@@ -123,22 +123,6 @@ python3 scripts/agent.py --yes "RUN_PIPELINE leg2+leg3 mapping=<path> registry=r
 ```
 python3 scripts/agent.py --yes "RUN_PIPELINE leg3 suggested=<path.mapping.yaml>"
 ```
-
-**Leg 3 high-confidence only** (substitute only `confidence: high` tokens; medium/low stay as `$TBD_*` and appear in a "Deferred" section of the report — use when fuzzy matches need human review before going live):
-```
-python3 scripts/agent.py --yes "RUN_PIPELINE leg3 suggested=<path.mapping.yaml> high_only=true"
-```
-
-**Full pipeline high-confidence only** (same as above but runs from HTML):
-```
-python3 scripts/agent.py --yes "RUN_PIPELINE leg1+leg2+leg3 input=<path> registry=registry/path-registry.yaml output=samples/output high_only=true"
-```
-
-**Trigger phrases for high-only mode** (use judgment):
-- "only fill the high confidence fields"
-- "skip the fuzzy matches"
-- "don't substitute medium/low confidence"
-- "I want to review the medium confidence first"
 
 **Leg 1+2 only** (HTML → suggested paths, no final write — useful when many tokens are unresolved and need human review first):
 ```
@@ -180,7 +164,14 @@ Output lands in `samples/output/<stem>/`:
 
 **Fields inside conditional blocks** — `{field}` placeholders inside `[[...]]` blocks are concatenated into the plugin's conditional strings as Java accessors (e.g. `Objects.toString(segment.data().discountAmount(), "")`); the template only outputs `${data.condN}`. Supported: quote system fields (quote overload), policy system + custom fields (policy overload — custom fields resolve on the segment type). **Leg 4 hard-fails** if a field inside a block has no `data_source` — run Leg 2 first. Per-exposure (`item.*`), account, and DataFetcher-sourced fields are not wired: they get a `// TODO` comment and a WARN row in the plugin report's "Field tokens inside conditional blocks" section.
 
-**Multi-form** — pass multiple `--suggested` paths (each pointing to a `.mapping.yaml`) or call `run_leg4(suggested=[...])` from `agent_tools.py`. Each form is processed sequentially; additive mode activates after the first.
+**Multi-form** — pass multiple `--suggested` paths (each pointing to a `.mapping.yaml`), use `RUN_PIPELINE leg4 suggested=[a.mapping.yaml, b.mapping.yaml]`, or call `run_leg4(suggested=[...])` from `agent_tools.py`. All forms are merged into **one** plugin: it lands in the first form's directory (override with `--output-dir`). The first form writes it fresh — or updates it additively if the `.java` already exists — and every subsequent form is merged additively (conditional ids renumber past the existing high-water mark). Each form still gets its own `.plugin-report.md` in its own directory.
+
+Supported plugin flows:
+1. **Fresh, multiple forms** — no existing `.java`: pass all forms in one run → one combined plugin.
+2. **Additive, single form** — `.java` exists in the output dir: the new form's missing keys are appended.
+3. **Additive, multiple forms** — `.java` exists: pass all new forms in one run; each is appended in sequence.
+
+(Removing a form from the plugin is **not** supported — that requires conditional-number state tracking.)
 
 **Pipeline integration** (`RUN_PIPELINE leg4`) is wired into `agent.py`.
 

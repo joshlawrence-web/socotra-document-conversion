@@ -63,7 +63,6 @@ def validate_inputs(
     mapping=None,
     registry: str | None = None,
     output: str | None = None,
-    mode: str | None = None,
     terminology: str | None = None,
     suggested: str | None = None,
     **kwargs,
@@ -128,23 +127,18 @@ def validate_inputs(
         if not suggested:
             missing.append("suggested")
         else:
-            try:
-                p = _resolve_safe(suggested, repo_root)
-                if not p.exists():
-                    errors.append(f"suggested not found: {suggested!r}")
-                elif not (p.name.endswith(".mapping.yaml") or p.name.endswith(".suggested.yaml")):
-                    errors.append(f"suggested must be a .mapping.yaml (or legacy .suggested.yaml) file, got: {p.name!r}")
-            except ValueError as e:
-                errors.append(str(e))
-
-    if operation in ("leg2", "leg2+leg3", "leg0+leg2+leg3", "leg1+leg2", "leg1+leg2+leg3", "leg1+leg2+leg3+leg4"):
-        valid_modes = {"full", "terse", "delta", "batch"}
-        if not mode:
-            missing.append("mode")
-        elif mode not in valid_modes:
-            errors.append(
-                f"Invalid mode {mode!r}. Must be one of: {', '.join(sorted(valid_modes))}"
-            )
+            suggesteds = suggested if isinstance(suggested, list) else [suggested]
+            if operation == "leg3" and len(suggesteds) > 1:
+                errors.append("leg3 accepts a single suggested file (leg4 accepts a list)")
+            for s_item in suggesteds:
+                try:
+                    p = _resolve_safe(s_item, repo_root)
+                    if not p.exists():
+                        errors.append(f"suggested not found: {s_item!r}")
+                    elif not (p.name.endswith(".mapping.yaml") or p.name.endswith(".suggested.yaml")):
+                        errors.append(f"suggested must be a .mapping.yaml (or legacy .suggested.yaml) file, got: {p.name!r}")
+                except ValueError as e:
+                    errors.append(str(e))
 
     default_registry = repo_root / "registry" / "path-registry.yaml"
     if registry:
@@ -192,7 +186,6 @@ def _predict_writes(
     input_html: str | None,
     mapping,
     out_dir: str,
-    mode: str | None,
     suggested: str | None = None,
 ) -> list[str]:
     writes = []
@@ -265,29 +258,29 @@ def _predict_writes(
             ]
     if operation in ("leg4", "leg1+leg2+leg3+leg4"):
         if operation == "leg4" and suggested:
-            leg4_base_path = suggested
+            leg4_paths = suggested if isinstance(suggested, list) else [suggested]
         elif operation == "leg1+leg2+leg3+leg4" and input_html:
             s = Path(input_html).stem
-            leg4_base_path = f"{out_dir}/{s}/{s}.mapping.yaml"
+            leg4_paths = [f"{out_dir}/{s}/{s}.mapping.yaml"]
         else:
-            leg4_base_path = None
-        if leg4_base_path:
+            leg4_paths = []
+        for i, leg4_base_path in enumerate(leg4_paths):
             stem4 = Path(leg4_base_path).stem
             for _sfx in (".suggested", ".mapping"):
                 if stem4.endswith(_sfx):
                     stem4 = stem4[: -len(_sfx)]
                     break
             base4 = str(Path(leg4_base_path).parent)
-            product = _try_read_product(leg4_base_path)
-            java_name = (
-                f"{product}DocumentDataSnapshotPluginImpl.java"
-                if product
-                else "<Product>DocumentDataSnapshotPluginImpl.java"
-            )
-            writes += [
-                f"{base4}/{java_name}",
-                f"{base4}/{stem4}.plugin-report.md",
-            ]
+            if i == 0:
+                # The shared plugin .java lands in the first form's directory
+                product = _try_read_product(leg4_base_path)
+                java_name = (
+                    f"{product}DocumentDataSnapshotPluginImpl.java"
+                    if product
+                    else "<Product>DocumentDataSnapshotPluginImpl.java"
+                )
+                writes.append(f"{base4}/{java_name}")
+            writes.append(f"{base4}/{stem4}.plugin-report.md")
     return writes
 
 
@@ -297,10 +290,8 @@ def build_preflight(
     mapping=None,
     registry: str | None = None,
     output: str | None = None,
-    mode: str | None = None,
     terminology: str | None = None,
     suggested: str | None = None,
-    high_only: bool = False,
     compile_check: bool = True,
     keep_intermediates: bool = False,
 ) -> str:
@@ -319,10 +310,6 @@ def build_preflight(
         "╠" + "═" * W + "╣",
         row(f"  Operation : {operation}"),
     ]
-    if mode:
-        lines.append(row(f"  Mode      : {mode}"))
-    if high_only:
-        lines.append(row(f"  High-only : yes (medium/low confidence deferred)"))
     if operation in ("leg4", "leg1+leg2+leg3+leg4"):
         lines.append(row(f"  Compile   : {'yes' if compile_check else 'no (--compile-check disabled)'}"))
     if input_html:
@@ -335,12 +322,13 @@ def build_preflight(
     lines.append(row(f"  Registry  : {reg_path}"))
     lines.append(row(f"  Output dir: {out_dir}"))
     if suggested:
-        lines.append(row(f"  Suggested : {suggested}"))
+        for s_item in (suggested if isinstance(suggested, list) else [suggested]):
+            lines.append(row(f"  Suggested : {s_item}"))
     if terminology:
         lines.append(row(f"  Terminology: {terminology}"))
     lines.append("╠" + "═" * W + "╣")
 
-    writes = _predict_writes(operation, input_html, mapping, out_dir, mode, suggested)
+    writes = _predict_writes(operation, input_html, mapping, out_dir, suggested)
 
     clean_intermediates = (not keep_intermediates) and (operation in _FULL_PIPELINE_OPS)
     if clean_intermediates:
@@ -446,7 +434,6 @@ def run_leg3(
     out: str,
     report_out: str,
     vm: str | None = None,
-    high_only: bool = False,
 ) -> dict:
     """Run leg3_substitute.py for Leg 3. Returns ok/artifacts/stdout/stderr."""
     repo_root = _find_repo_root()
@@ -463,8 +450,6 @@ def run_leg3(
     ]
     if vm:
         cmd += ["--vm", str(_resolve_safe(vm, repo_root))]
-    if high_only:
-        cmd.append("--high-only")
 
     result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(repo_root))
     if result.returncode != 0:
@@ -484,9 +469,7 @@ def run_leg2(
     out: str,
     review_out: str,
     telemetry_log: str | None = None,
-    mode: str = "terse",
     terminology: str | None = None,
-    base_suggested: str | None = None,
 ) -> dict:
     """Run leg2_fill_mapping.py for Leg 2. Returns ok/artifacts/stdout/stderr."""
     repo_root = _find_repo_root()
@@ -502,15 +485,11 @@ def run_leg2(
         str(_resolve_safe(out, repo_root)),
         "--review-out",
         str(_resolve_safe(review_out, repo_root)),
-        "--mode",
-        mode,
     ]
     if telemetry_log:
         cmd += ["--telemetry-log", str(_resolve_safe(telemetry_log, repo_root))]
     if terminology:
         cmd += ["--terminology", str(_resolve_safe(terminology, repo_root))]
-    if base_suggested:
-        cmd += ["--base-suggested", str(_resolve_safe(base_suggested, repo_root))]
 
     result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(repo_root))
     if result.returncode != 0:
@@ -526,75 +505,35 @@ def run_leg2(
     return {"ok": True, "artifacts": artifacts, "stdout": result.stdout, "stderr": result.stderr}
 
 
-def _run_leg4_single(
-    suggested: str,
-    customer_jar: str | None,
-    datamodel_jar: str | None,
-    compile_check_flag: bool,
-    repo_root: Path,
-) -> dict:
-    """Run leg4_generate_plugin.py for a single suggested.yaml."""
-    script = repo_root / "scripts" / "leg4_generate_plugin.py"
-    cmd = [
-        sys.executable,
-        str(script),
-        "--suggested",
-        str(_resolve_safe(suggested, repo_root)),
-    ]
-
-    # Preflight: warn if annotated HTML has conditionals but no registry
-    _suggested_path = _resolve_safe(suggested, repo_root)
-    _stem = _suggested_path.name
-    for _sfx in (".suggested.yaml", ".mapping.yaml", ".yaml"):
-        if _stem.endswith(_sfx):
-            _stem = _stem[: -len(_sfx)]
-            break
-    _out_dir = _suggested_path.parent
-    _cond_yaml = _out_dir / f"{_stem}.conditional-registry.yaml"
-    if not _cond_yaml.exists():
-        _annotated = _out_dir / f"{_stem}.annotated.html"
-        if _annotated.exists():
-            _n = len(set(re.findall(r'\$doc\.cond\d+', _annotated.read_text(encoding="utf-8"))))
-            if _n > 0:
-                _form = _out_dir / f"{_stem}.conditional-form.md"
-                if _form.exists():
-                    _fix = (
-                        f"python3 scripts/leg0_ingest.py "
-                        f"--parse-conditional-form {_form} "
-                        f"--output-dir {_out_dir}"
-                    )
-                else:
-                    _fix = "(conditional-form.md not found — re-run Leg 0 first)"
-                print(
-                    f"WARNING: {_n} conditional(s) detected in {_stem}.annotated.html "
-                    f"but no conditional-registry.yaml found.\nRun: {_fix}"
-                )
-
-    if customer_jar:
-        cmd += ["--customer-jar", str(_resolve_safe(customer_jar, repo_root))]
-    if datamodel_jar:
-        cmd += ["--datamodel-jar", str(_resolve_safe(datamodel_jar, repo_root))]
-    if compile_check_flag:
-        cmd.append("--compile-check")
-
-    result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(repo_root))
-    if result.returncode != 0:
-        return {"ok": False, "returncode": result.returncode, "stderr": result.stderr, "stdout": result.stdout}
-
-    suggested_path = _resolve_safe(suggested, repo_root)
+def _warn_missing_cond_registry(suggested_path: Path) -> None:
+    """Warn if a form's annotated HTML has conditionals but no registry."""
     stem = suggested_path.name
-    for suffix in (".suggested.yaml", ".mapping.yaml", ".yaml"):
-        if stem.endswith(suffix):
-            stem = stem[: -len(suffix)]
+    for sfx in (".suggested.yaml", ".mapping.yaml", ".yaml"):
+        if stem.endswith(sfx):
+            stem = stem[: -len(sfx)]
             break
-    out_dir = suggested_path.parent
-    artifacts = []
-    report = out_dir / f"{stem}.plugin-report.md"
-    if report.exists():
-        artifacts.append(str(report.relative_to(repo_root)))
-    for java_f in sorted(out_dir.glob("*DocumentDataSnapshotPluginImpl.java")):
-        artifacts.append(str(java_f.relative_to(repo_root)))
-    return {"ok": True, "artifacts": artifacts, "stdout": result.stdout, "stderr": result.stderr}
+    form_dir = suggested_path.parent
+    if (form_dir / f"{stem}.conditional-registry.yaml").exists():
+        return
+    annotated = form_dir / f"{stem}.annotated.html"
+    if not annotated.exists():
+        return
+    n = len(set(re.findall(r'\$doc\.cond\d+', annotated.read_text(encoding="utf-8"))))
+    if n == 0:
+        return
+    form = form_dir / f"{stem}.conditional-form.md"
+    if form.exists():
+        fix = (
+            f"python3 scripts/leg0_ingest.py "
+            f"--parse-conditional-form {form} "
+            f"--output-dir {form_dir}"
+        )
+    else:
+        fix = "(conditional-form.md not found — re-run Leg 0 first)"
+    print(
+        f"WARNING: {n} conditional(s) detected in {stem}.annotated.html "
+        f"but no conditional-registry.yaml found.\nRun: {fix}"
+    )
 
 
 def run_leg4(
@@ -602,33 +541,54 @@ def run_leg4(
     customer_jar: str | None = None,
     datamodel_jar: str | None = None,
     compile_check: bool = True,
+    output_dir: str | None = None,
 ) -> dict:
-    """Run leg4_generate_plugin.py for one or more suggested.yaml files.
+    """Run leg4_generate_plugin.py once for one or more mapping files.
 
-    When multiple forms are passed, processes sequentially so each run reads
-    the prior state — additive mode auto-activates when the Java file already exists.
+    All forms go to a single invocation (repeated --suggested). The plugin
+    .java lands in output_dir (default: the first form's directory); the first
+    form writes it fresh — or updates it additively if it already exists —
+    and every subsequent form is merged additively into the same file.
     Returns ok/artifacts/stdout/stderr.
     """
     repo_root = _find_repo_root()
     suggested_list = suggested if isinstance(suggested, list) else [suggested]
+    suggested_paths = [_resolve_safe(s, repo_root) for s in suggested_list]
 
-    all_artifacts: list[str] = []
-    all_stdout: list[str] = []
+    script = repo_root / "scripts" / "leg4_generate_plugin.py"
+    cmd = [sys.executable, str(script)]
+    for sp in suggested_paths:
+        _warn_missing_cond_registry(sp)
+        cmd += ["--suggested", str(sp)]
+    if output_dir:
+        cmd += ["--output-dir", str(_resolve_safe(output_dir, repo_root))]
+    if customer_jar:
+        cmd += ["--customer-jar", str(_resolve_safe(customer_jar, repo_root))]
+    if datamodel_jar:
+        cmd += ["--datamodel-jar", str(_resolve_safe(datamodel_jar, repo_root))]
+    if compile_check:
+        cmd.append("--compile-check")
 
-    for s in suggested_list:
-        result = _run_leg4_single(s, customer_jar, datamodel_jar, compile_check, repo_root)
-        if not result["ok"]:
-            return result
-        all_artifacts.extend(result.get("artifacts") or [])
-        if result.get("stdout"):
-            all_stdout.append(result["stdout"])
+    result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(repo_root))
+    if result.returncode != 0:
+        return {"ok": False, "returncode": result.returncode, "stderr": result.stderr, "stdout": result.stdout}
 
-    return {
-        "ok": True,
-        "artifacts": all_artifacts,
-        "stdout": "\n".join(all_stdout),
-        "stderr": "",
-    }
+    plugin_dir = (
+        _resolve_safe(output_dir, repo_root) if output_dir else suggested_paths[0].parent
+    )
+    artifacts = []
+    for sp in suggested_paths:
+        stem = sp.name
+        for suffix in (".suggested.yaml", ".mapping.yaml", ".yaml"):
+            if stem.endswith(suffix):
+                stem = stem[: -len(suffix)]
+                break
+        report = sp.parent / f"{stem}.plugin-report.md"
+        if report.exists():
+            artifacts.append(str(report.relative_to(repo_root)))
+    for java_f in sorted(plugin_dir.glob("*DocumentDataSnapshotPluginImpl.java")):
+        artifacts.append(str(java_f.relative_to(repo_root)))
+    return {"ok": True, "artifacts": artifacts, "stdout": result.stdout, "stderr": result.stderr}
 
 
 def get_intermediate_paths(

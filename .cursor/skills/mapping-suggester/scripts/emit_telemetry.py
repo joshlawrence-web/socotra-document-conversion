@@ -199,7 +199,6 @@ def build_summary_record(
         "unknown_context_keys_seen": sorted(unknown_union),
     }
     provenance_keys = (
-        "mode",
         "input_mapping_sha256",
         "input_registry_sha256",
         "registry_schema_version",
@@ -209,8 +208,6 @@ def build_summary_record(
         "live_source_config_sha256",
         "registry_config_verified",
         "registry_config_check",
-        "base_suggested_sha256",
-        "previous_run_id",
         "result_suggested_sha256",
     )
     for key in provenance_keys:

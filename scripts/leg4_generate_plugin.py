@@ -1252,10 +1252,13 @@ def compile_check(
 def main() -> int:
     repo_root = _repo_root()
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--suggested", type=Path, required=True,
-                    help=".mapping.yaml (enriched by Leg 2) or legacy .suggested.yaml")
+    ap.add_argument("--suggested", type=Path, action="append", required=True,
+                    help=".mapping.yaml (enriched by Leg 2) or legacy .suggested.yaml. "
+                         "Repeatable — forms are processed sequentially into one plugin: "
+                         "the first form writes (or additively updates) the .java, "
+                         "subsequent forms are always merged additively.")
     ap.add_argument("--output-dir", type=Path, default=None,
-                    help="Where to write the .java (default: dir of --suggested)")
+                    help="Where to write the .java (default: dir of the first --suggested)")
     ap.add_argument("--customer-jar", type=Path,
                     default=repo_root / "build" / "customer-config.jar",
                     help="customer-config.jar with the plugin interface + request types")
@@ -1274,7 +1277,24 @@ def main() -> int:
                     help="Parse and validate existing plugin file only; no files written")
     args = ap.parse_args()
 
-    suggested_path = args.suggested.resolve()
+    suggested_paths = [sp.resolve() for sp in args.suggested]
+    out_dir = (args.output_dir.resolve() if args.output_dir
+               else suggested_paths[0].parent)
+    for suggested_path in suggested_paths:
+        rc = _process_form(suggested_path, out_dir, args, repo_root)
+        if rc != 0:
+            return rc
+    return 0
+
+
+def _process_form(
+    suggested_path: Path, out_dir: Path, args: argparse.Namespace, repo_root: Path
+) -> int:
+    """Process one mapping into the shared plugin at out_dir (fresh or additive).
+
+    Per-form artifacts (conditional registry lookup, plugin report) stay in the
+    form's own directory; only the .java is shared across forms.
+    """
     if not suggested_path.exists():
         print(f"ERROR: suggested file not found: {suggested_path}", file=sys.stderr)
         return 1
@@ -1285,7 +1305,7 @@ def main() -> int:
             stem = stem[: -len(suffix)]
             break
 
-    out_dir = (args.output_dir.resolve() if args.output_dir else suggested_path.parent)
+    form_dir = suggested_path.parent
 
     suggested_raw = _load_yaml(suggested_path)
     product = (suggested_raw.get("product") or "").strip()
@@ -1384,17 +1404,17 @@ def main() -> int:
         validate_ok = segment_ok
 
     # --- Load conditional registry (Leg 1 artifact) --------------------------
-    cond_yaml = out_dir / f"{stem}.conditional-registry.yaml"
+    cond_yaml = form_dir / f"{stem}.conditional-registry.yaml"
     cond_blocks = load_conditional_registry(cond_yaml)
     if not cond_yaml.exists():
-        n_conds = _count_annotated_conditionals(out_dir, stem)
+        n_conds = _count_annotated_conditionals(form_dir, stem)
         if n_conds > 0:
-            form_path = out_dir / f"{stem}.conditional-form.md"
+            form_path = form_dir / f"{stem}.conditional-form.md"
             if form_path.exists():
                 fix_cmd = (
                     f"python3 scripts/leg0_ingest.py "
                     f"--parse-conditional-form {form_path} "
-                    f"--output-dir {out_dir}"
+                    f"--output-dir {form_dir}"
                 )
             else:
                 fix_cmd = "(conditional-form.md not found — re-run Leg 0 first)"
@@ -1550,7 +1570,7 @@ def main() -> int:
         compile_status = "PASS" if compile_ok else "FAIL"
 
     # --- Report --------------------------------------------------------------
-    report_path = suggested_path.parent / f"{stem}.plugin-report.md"
+    report_path = form_dir / f"{stem}.plugin-report.md"
     generated_at = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     write_report(
         report_path,

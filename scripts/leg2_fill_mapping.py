@@ -12,7 +12,6 @@ import argparse
 import copy
 import datetime as dt
 import importlib.util
-import json
 import os
 import re
 import sys
@@ -34,8 +33,6 @@ from sdk_introspect import (
     roots_for_product,
 )
 from suggester_state import (
-    compute_delta_change_set,
-    entry_locked,
     evaluate_registry_config_gate,
     sha256_bytes,
     sha256_file,
@@ -1023,15 +1020,14 @@ def suggest_loop_field(
 
 def reorder_top_keys(d: dict) -> dict:
     head = [
-        "schema_version", "run_id", "mode", "generated_at",
+        "schema_version", "run_id", "generated_at",
         "input_mapping_sha256", "input_registry_sha256",
         "registry_schema_version", "registry_generated_at",
         "registry_config_dir", "registry_source_config_sha256",
         "live_source_config_sha256", "registry_config_verified",
-        "registry_config_check", "previous_run_id",
-        "base_suggested_sha256", "input_mapping_version",
+        "registry_config_check", "input_mapping_version",
         "input_registry_version", "source", "path_registry",
-        "product", "rendering_roots", "tooling", "delta_changes",
+        "product", "rendering_roots", "tooling",
     ]
     out: dict = {}
     for k in head:
@@ -1288,14 +1284,6 @@ def main() -> int:
     ap.add_argument("--registry", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument(
-        "--mode",
-        choices=("full", "terse", "delta", "batch"),
-        default="terse",
-        help="Output mode. 'terse' emits condensed review; 'full' adds narrative. "
-             "'delta' is not supported for schema 2.0 (see Leg2 plan D10).",
-    )
-    ap.add_argument("--base-suggested", type=Path, default=None)
-    ap.add_argument(
         "--customer-jar", type=Path, default=None,
         help="customer-config.jar with {Product}Quote/{Product}Segment + request types "
              "(default: build/customer-config.jar).",
@@ -1310,22 +1298,11 @@ def main() -> int:
     ap.add_argument("--require-registry-config-check", action="store_true")
     ap.add_argument("--telemetry-log", type=Path, default=None)
     ap.add_argument("--review-out", type=Path, default=None)
-    ap.add_argument("--delta-sidecar", type=Path, default=None)
     ap.add_argument(
         "--terminology", type=Path, default=None,
         help="Path to terminology.yaml (default: registry sibling or registry/terminology.yaml).",
     )
     args = ap.parse_args()
-
-    # Delta mode is shape-incompatible with the 2.0 per-root verdicts (D10) —
-    # fail loud rather than silently mis-merge a 1.x base.
-    if args.mode == "delta":
-        print(
-            "ERROR: delta mode not supported for schema 2.0 yet (see Leg2 plan D10); "
-            "use --mode full/terse/batch",
-            file=sys.stderr,
-        )
-        return 2
 
     repo_root_early = _repo_root().resolve()
     customer_jar = (
@@ -1417,15 +1394,6 @@ def main() -> int:
     terminology = load_terminology(args.terminology, args.registry)
     schema_index = load_schema_index(args.registry)
 
-    base_suggested: dict | None = None
-    base_bytes: bytes | None = None
-    if args.mode == "delta":
-        if not args.base_suggested:
-            print("ERROR: --base-suggested required for mode=delta", file=sys.stderr)
-            return 2
-        base_bytes = args.base_suggested.read_bytes()
-        base_suggested = yaml.safe_load(base_bytes.decode("utf-8"))
-
     suggested = annotate_mapping(
         mapping, reg, path_registry_rel, terminology,
         roots=roots, classpath=classpath, schema_index=schema_index,
@@ -1445,38 +1413,9 @@ def main() -> int:
 
     run_id = str(uuid.uuid4())
     gen_at = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    prev_run = None
-    base_sha = None
-    if base_suggested is not None and base_bytes is not None:
-        prev_run = base_suggested.get("run_id")
-        if not isinstance(prev_run, str):
-            prev_run = None
-        base_sha = sha256_bytes(base_bytes)
-
-    prior_reg_sha = None
-    prior_src_fp = None
-    if base_suggested is not None:
-        prior_reg_sha = base_suggested.get("input_registry_sha256")
-        if not isinstance(prior_reg_sha, str):
-            prior_reg_sha = None
-        prior_src_fp = base_suggested.get("registry_source_config_sha256")
-        if not isinstance(prior_src_fp, str):
-            prior_src_fp = None
 
     inp_map_sha = sha256_bytes(mapping_text.encode("utf-8"))
     inp_reg_sha = sha256_bytes(registry_text.encode("utf-8"))
-
-    delta_changes = None
-    if args.mode == "delta":
-        delta_changes = compute_delta_change_set(
-            base=base_suggested,
-            merged=suggested,
-            prior_input_registry_sha256=prior_reg_sha,
-            prior_registry_source_config_sha256=prior_src_fp,
-            current_input_registry_sha256=inp_reg_sha,
-            current_registry_source_config_sha256=gate.registry_source_config_sha256,
-        )
-        suggested["delta_changes"] = delta_changes
 
     emb_fp = meta.get("source_config_sha256")
     if isinstance(emb_fp, str):
@@ -1486,7 +1425,6 @@ def main() -> int:
 
     suggested["schema_version"] = "2.0"
     suggested["run_id"] = run_id
-    suggested["mode"] = args.mode
     suggested["generated_at"] = gen_at
     suggested["input_mapping_sha256"] = inp_map_sha
     suggested["input_registry_sha256"] = inp_reg_sha
@@ -1497,10 +1435,6 @@ def main() -> int:
     suggested["live_source_config_sha256"] = gate.live_source_config_sha256
     suggested["registry_config_verified"] = gate.registry_config_verified
     suggested["registry_config_check"] = gate.registry_config_check
-    if prev_run is not None:
-        suggested["previous_run_id"] = prev_run
-    if base_sha is not None:
-        suggested["base_suggested_sha256"] = base_sha
     suggested["tooling"] = {
         "mapping_suggester": {
             "version": "leg2_fill_mapping.py",
@@ -1541,15 +1475,7 @@ def main() -> int:
         registry_path=args.registry,
         gate_label=gate.registry_config_check,
         escape_note=escape_note,
-        mode=args.mode,
     )
-
-    if args.delta_sidecar and delta_changes is not None:
-        args.delta_sidecar.parent.mkdir(parents=True, exist_ok=True)
-        args.delta_sidecar.write_text(
-            json.dumps(delta_changes, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
 
     if args.telemetry_log:
         emit = _load_emit_telemetry()

@@ -8,9 +8,7 @@ Usage:
     python3 scripts/agent.py "RUN_PIPELINE leg1 input=samples/input/Simple-form.html"
     python3 scripts/agent.py "RUN_PIPELINE leg1+leg2 input=samples/input/Simple-form.html"
     python3 scripts/agent.py "RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.mapping.yaml"
-    python3 scripts/agent.py "RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.mapping.yaml high_only=true"
     python3 scripts/agent.py "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml"
-    python3 scripts/agent.py "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml high_only=true"
     python3 scripts/agent.py "RUN_PIPELINE leg4 suggested=samples/output/Simple-form/Simple-form.mapping.yaml"
     python3 scripts/agent.py "RUN_PIPELINE leg1+leg2+leg3+leg4 input=samples/input/Simple-form.html registry=registry/path-registry.yaml"
     python3 scripts/agent.py --yes "RUN_PIPELINE leg1+leg2+leg3+leg4 input=samples/input/Simple-form.html"
@@ -45,13 +43,11 @@ This agent requires an explicit invocation token. Examples:
   RUN_PIPELINE leg0 input=samples/input/policy-form.docx output=samples/output
   RUN_PIPELINE leg0+leg2+leg3 input=samples/input/policy-form.docx registry=registry/path-registry.yaml output=samples/output
   RUN_PIPELINE leg1 input=samples/input/Simple-form.html output=samples/output
-  RUN_PIPELINE leg2 mode=terse mapping=samples/output/Simple-form/Simple-form.mapping.yaml
+  RUN_PIPELINE leg2 mapping=samples/output/Simple-form/Simple-form.mapping.yaml
   RUN_PIPELINE leg2+leg3 mapping=samples/output/Simple-form/Simple-form.mapping.yaml registry=registry/path-registry.yaml
   RUN_PIPELINE leg1+leg2 input=samples/input/Simple-form.html registry=registry/path-registry.yaml
   RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.mapping.yaml
-  RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.mapping.yaml high_only=true
   RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml
-  RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml high_only=true
   RUN_PIPELINE leg4 suggested=samples/output/Simple-form/Simple-form.mapping.yaml
   RUN_PIPELINE leg1+leg2+leg3+leg4 input=samples/input/Simple-form.html registry=registry/path-registry.yaml
   RUN_PIPELINE list_paths registry=registry/path-registry.yaml
@@ -61,24 +57,20 @@ Required per operation:
   leg0               : input=<file.docx|file.pdf>
   leg0+leg2+leg3     : input=<file.docx|file.pdf>
   leg1               : input=<file.html>
-  leg2               : mode=<full|terse|delta|batch>  mapping=<file.mapping.yaml>
-  leg2+leg3          : mapping=<file.mapping.yaml>  [mode defaults to terse]
-  leg1+leg2          : input=<file.html>  [mode defaults to terse]
+  leg2               : mapping=<file.mapping.yaml>
+  leg2+leg3          : mapping=<file.mapping.yaml>
+  leg1+leg2          : input=<file.html>
   leg3               : suggested=<file.mapping.yaml>
-  leg1+leg2+leg3     : input=<file.html>  [mode defaults to terse]
+  leg1+leg2+leg3     : input=<file.html>
   leg4               : suggested=<file.mapping.yaml>
-  leg1+leg2+leg3+leg4: input=<file.html>  [mode defaults to terse]
+  leg1+leg2+leg3+leg4: input=<file.html>
 
   list_paths         : registry=<path> (optional)  out=<file> (optional)
 Optional for all:           output=<dir>  registry=<path>  terminology=<path>
-Optional for leg3 variants: high_only=true  (substitute only confidence:high tokens;
-                            medium/low remain as $TBD_* and appear in the deferred
-                            section of the leg3-report.md)
 Optional for leg4 variants: compile_check=false  (skip javac after generating plugin)
 """
 
 VALID_OPS = {"leg0", "leg0+leg2+leg3", "leg1", "leg2", "leg2+leg3", "leg1+leg2", "leg3", "leg1+leg2+leg3", "leg4", "leg1+leg2+leg3+leg4", "list_paths"}
-VALID_MODES = {"full", "terse", "delta", "batch"}
 
 
 def parse_invocation(text: str) -> dict | None:
@@ -176,17 +168,11 @@ def run(invocation: str, auto_yes: bool) -> int:
     mapping = parsed.get("mapping")
     registry = parsed.get("registry") or "registry/path-registry.yaml"
     output = parsed.get("output") or "samples/output"
-    mode = parsed.get("mode")
     terminology = parsed.get("terminology")
     suggested = parsed.get("suggested")
-    high_only = parsed.get("high_only", "").lower() in ("true", "1", "yes")
     compile_check_raw = parsed.get("compile_check", "true")
     compile_check = compile_check_raw.lower() not in ("false", "0", "no")
     keep_intermediates = parsed.get("keep", "").lower() == "intermediates"
-
-    # Apply defaults
-    if operation in ("leg0+leg2+leg3", "leg2+leg3", "leg1+leg2", "leg1+leg2+leg3", "leg1+leg2+leg3+leg4") and not mode:
-        mode = "terse"
 
     # --- list_paths fast-path (no preflight / PROCEED needed) ---
     if operation == "list_paths":
@@ -206,7 +192,6 @@ def run(invocation: str, auto_yes: bool) -> int:
         mapping=mapping,
         registry=registry,
         output=output,
-        mode=mode,
         terminology=terminology,
         suggested=suggested,
     )
@@ -219,8 +204,6 @@ def run(invocation: str, auto_yes: bool) -> int:
         if result.get("missing"):
             missing = result["missing"]
             print(f"\nMissing required field(s): {', '.join(missing)}")
-            if "mode" in missing:
-                print("  mode must be one of: full, terse, delta, batch")
             if "mapping" in missing:
                 candidates = list_candidates(output)
                 if candidates:
@@ -239,10 +222,8 @@ def run(invocation: str, auto_yes: bool) -> int:
         mapping=mapping,
         registry=registry,
         output=output,
-        mode=mode,
         terminology=terminology,
         suggested=suggested,
-        high_only=high_only,
         compile_check=compile_check,
         keep_intermediates=keep_intermediates,
     )
@@ -356,7 +337,6 @@ def run(invocation: str, auto_yes: bool) -> int:
                 out=this_suggested,
                 review_out=leg2_paths.get("review_out") or f"{base}/{stem}.review.md",
                 telemetry_log=leg2_paths.get("telemetry_log"),
-                mode=mode,
                 terminology=terminology,
             )
             if not r["ok"]:
@@ -385,7 +365,6 @@ def run(invocation: str, auto_yes: bool) -> int:
             suggested=leg3_suggested,
             out=leg3_paths["out"],
             report_out=leg3_paths["report_out"],
-            high_only=high_only,
         )
         if not r["ok"]:
             print(f"Leg 3 failed (rc={r['returncode']}):\n{r['stderr']}", file=sys.stderr)
@@ -528,24 +507,6 @@ def guided_mode() -> str:
         else:
             suggested = _ask("Path to .mapping.yaml file")
         parts.append(f"suggested={suggested}")
-
-    # Mode (leg2 / leg2+leg3 / leg1+leg2 / combos that include leg2)
-    if operation in ("leg2", "leg2+leg3", "leg1+leg2", "leg1+leg2+leg3", "leg1+leg2+leg3+leg4"):
-        print("\nSuggester mode:")
-        print("  terse — concise review.md (default)")
-        print("  full  — detailed reasoning per field")
-        print("  delta — only unresolved $TBD_ fields")
-        mode_val = _ask("Mode", default="terse")
-        parts.append(f"mode={mode_val}")
-
-    # High-only mode (leg3 / combos with leg3)
-    if operation in ("leg3", "leg2+leg3", "leg1+leg2+leg3", "leg1+leg2+leg3+leg4"):
-        print("\nHigh-only mode: substitute only confidence:high tokens.")
-        print("  Medium/low tokens stay as $TBD_* and appear in the deferred")
-        print("  section of the leg3-report.md for human review.")
-        high_only_val = _ask("Enable high-only mode? [y/N]", default="n")
-        if high_only_val.lower() in ("y", "yes"):
-            parts.append("high_only=true")
 
     # Compile check (leg4 / combos with leg4)
     if operation in ("leg4", "leg1+leg2+leg3+leg4"):

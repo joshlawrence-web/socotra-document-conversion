@@ -47,9 +47,9 @@ from agent import parse_invocation  # noqa: E402
             {"suggested": "foo.suggested.yaml"},
         ),
         (
-            "RUN_PIPELINE leg3 high_only=true suggested=foo.yaml",
+            "RUN_PIPELINE leg3 keep=intermediates suggested=foo.yaml",
             "leg3",
-            {"high_only": "true", "suggested": "foo.yaml"},
+            {"keep": "intermediates", "suggested": "foo.yaml"},
         ),
     ],
 )
