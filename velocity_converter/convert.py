@@ -1034,6 +1034,9 @@ def _yaml_safe(data):
 
 def dump_yaml(mapping: Mapping) -> str:
     data = _yaml_safe(mapping.to_yaml_dict())
+    from velocity_converter.models import MappingDoc
+
+    validate_contract(data, MappingDoc, artifact="mapping.yaml")
     return yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=100)
 
 

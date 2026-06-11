@@ -29,7 +29,13 @@ from pathlib import Path
 
 import yaml
 
-from velocity_converter.models import ConditionalRegistry, ContractError, validate_contract
+from velocity_converter.models import (
+    ConditionalRegistry,
+    ContractError,
+    SuggestedDoc,
+    load_contract,
+    validate_contract,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -710,6 +716,14 @@ def main() -> int:
     repo_root = _repo_root()
 
     # --- Load ----------------------------------------------------------------
+    try:
+        load_contract(
+            suggested_path, SuggestedDoc, artifact="suggested.yaml",
+            expected_versions=("1.0", "2.0"), strip_comment_header=True,
+        )
+    except ContractError as exc:
+        print(exc, file=sys.stderr)
+        return 1
     suggested = _flatten_to_primary_root(_load_yaml(suggested_path))
     vm_text = vm_path.read_text(encoding="utf-8")
 

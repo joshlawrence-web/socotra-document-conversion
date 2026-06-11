@@ -650,9 +650,15 @@ def build_velocity_lookup(registry_path: "str | Path") -> "dict[str, str]":
     Pass 1 wins on collision (more specific key).
     Returns {} on any read/parse failure.
     """
+    from velocity_converter.models import ContractError, PathRegistry, validate_contract
+
     try:
         import yaml as _yaml  # noqa: PLC0415
         data = _yaml.safe_load(Path(registry_path).read_text(encoding="utf-8")) or {}
+        validate_contract(data, PathRegistry, artifact="path-registry.yaml", path=Path(registry_path))
+    except ContractError as exc:
+        print(f"WARNING: ignoring invalid registry (velocity lookup disabled)\n{exc}", file=sys.stderr)
+        return {}
     except Exception:
         return {}
 

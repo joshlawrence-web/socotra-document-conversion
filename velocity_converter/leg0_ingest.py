@@ -32,7 +32,7 @@ from pathlib import Path
 
 import yaml
 
-from velocity_converter.models import ConditionalRegistry, validate_contract
+from velocity_converter.models import ConditionalRegistry, MappingDoc, validate_contract
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -420,6 +420,7 @@ def _normalise_for_leg2(fields: list[dict], source_name: str) -> dict:
 def write_leg2_mapping(fields: list[dict], source_name: str, output_path: Path) -> None:
     """Write {stem}.mapping.yaml — leg2-compatible format with placeholder field."""
     data = _normalise_for_leg2(fields, source_name)
+    validate_contract(data, MappingDoc, artifact="mapping.yaml", path=output_path)
     output_path.write_text(
         yaml.dump(data, default_flow_style=False, allow_unicode=True),
         encoding="utf-8",

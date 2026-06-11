@@ -1460,6 +1460,9 @@ def main() -> int:
     idx_for_review = suggested.pop("_idx", {})
     root_ids_for_review = suggested.pop("_root_ids", root_ids)
 
+    # Validate-on-write (post-_idx-pop dict; the dict itself is dumped below).
+    validate_contract(suggested, SuggestedDoc, artifact="suggested.yaml", path=args.out)
+
     args.out.parent.mkdir(parents=True, exist_ok=True)
     stem = args.out.name.replace(".suggested.yaml", "").replace(".mapping.yaml", "").replace(".yaml", "")
     header = (
