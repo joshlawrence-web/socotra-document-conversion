@@ -360,10 +360,10 @@ def build_preflight(
 def run_leg0(input_path: str, output_dir: str) -> dict:
     """Run leg0_ingest.py for Leg 0. Returns ok/artifacts/stdout/stderr."""
     repo_root = _find_repo_root()
-    script = repo_root / "scripts" / "leg0_ingest.py"
     cmd = [
         sys.executable,
-        str(script),
+        "-m",
+        "velocity_converter.leg0_ingest",
         "--input",
         str(_resolve_safe(input_path, repo_root)),
         "--output-dir",
@@ -400,10 +400,10 @@ def run_leg1(
 ) -> dict:
     """Run convert.py for Leg 1. Returns ok/artifacts/stdout/stderr."""
     repo_root = _find_repo_root()
-    script = repo_root / ".cursor" / "skills" / "html-to-velocity" / "scripts" / "convert.py"
     cmd = [
         sys.executable,
-        str(script),
+        "-m",
+        "velocity_converter.convert",
         str(_resolve_safe(input_html, repo_root)),
         "--output-dir",
         str(_resolve_safe(output_dir, repo_root)),
@@ -437,10 +437,10 @@ def run_leg3(
 ) -> dict:
     """Run leg3_substitute.py for Leg 3. Returns ok/artifacts/stdout/stderr."""
     repo_root = _find_repo_root()
-    script = repo_root / "scripts" / "leg3_substitute.py"
     cmd = [
         sys.executable,
-        str(script),
+        "-m",
+        "velocity_converter.leg3_substitute",
         "--suggested",
         str(_resolve_safe(suggested, repo_root)),
         "--out",
@@ -473,10 +473,10 @@ def run_leg2(
 ) -> dict:
     """Run leg2_fill_mapping.py for Leg 2. Returns ok/artifacts/stdout/stderr."""
     repo_root = _find_repo_root()
-    script = repo_root / "scripts" / "leg2_fill_mapping.py"
     cmd = [
         sys.executable,
-        str(script),
+        "-m",
+        "velocity_converter.leg2_fill_mapping",
         "--mapping",
         str(_resolve_safe(mapping, repo_root)),
         "--registry",
@@ -524,7 +524,7 @@ def _warn_missing_cond_registry(suggested_path: Path) -> None:
     form = form_dir / f"{stem}.conditional-form.md"
     if form.exists():
         fix = (
-            f"python3 scripts/leg0_ingest.py "
+            f"python3 -m velocity_converter.leg0_ingest "
             f"--parse-conditional-form {form} "
             f"--output-dir {form_dir}"
         )
@@ -555,8 +555,7 @@ def run_leg4(
     suggested_list = suggested if isinstance(suggested, list) else [suggested]
     suggested_paths = [_resolve_safe(s, repo_root) for s in suggested_list]
 
-    script = repo_root / "scripts" / "leg4_generate_plugin.py"
-    cmd = [sys.executable, str(script)]
+    cmd = [sys.executable, "-m", "velocity_converter.leg4_generate_plugin"]
     for sp in suggested_paths:
         _warn_missing_cond_registry(sp)
         cmd += ["--suggested", str(sp)]
@@ -687,8 +686,7 @@ def resolve_dotted_path(name: str, lookup: "dict[str, str]") -> "str | None":
 def run_list_paths(registry_path: str, out_path: str | None = None) -> str:
     """Render path catalog Markdown from the registry."""
     repo_root = _find_repo_root()
-    sys.path.insert(0, str(repo_root / "scripts"))
-    from list_paths import render_catalog  # noqa: PLC0415
+    from velocity_converter.list_paths import render_catalog  # noqa: PLC0415
     abs_registry = str(_resolve_safe(registry_path, repo_root))
     catalog = render_catalog(abs_registry)
     if out_path:

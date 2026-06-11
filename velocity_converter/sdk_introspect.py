@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Shared SDK introspection — the single source of compiled-JAR truth.
 
-Factored out of ``scripts/leg4_generate_plugin.py`` (Leg 2 plan P1.1/P1.2) so
+Factored out of ``velocity_converter/leg4_generate_plugin.py`` (Leg 2 plan P1.1/P1.2) so
 that **Leg 2** (the mapping-suggester / confidence rater) and **Leg 4** (the
 plugin generator) decide "does this ``$data.*`` path exist on the rendering
 root?" the *same* way and cannot drift.

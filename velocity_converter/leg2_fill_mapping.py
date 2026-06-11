@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import copy
 import datetime as dt
-import importlib.util
 import os
 import re
 import sys
@@ -20,8 +19,8 @@ from pathlib import Path
 
 import yaml
 
-from leg2_review_writer import _write_review_md
-from sdk_introspect import (
+from velocity_converter.leg2_review_writer import _write_review_md
+from velocity_converter.sdk_introspect import (
     ALLOWED_ROOTS,
     _class_exists,
     _default_datamodel_jar,
@@ -32,7 +31,7 @@ from sdk_introspect import (
     resolve_element_type,
     roots_for_product,
 )
-from suggester_state import (
+from velocity_converter.suggester_state import (
     evaluate_registry_config_gate,
     sha256_bytes,
     sha256_file,
@@ -1262,13 +1261,9 @@ def _repo_root() -> Path:
 
 
 def _load_emit_telemetry():
-    path = _repo_root() / ".cursor" / "skills" / "mapping-suggester" / "scripts" / "emit_telemetry.py"
-    spec = importlib.util.spec_from_file_location("emit_telemetry_mod", path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"emit_telemetry not found at {path}")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    from velocity_converter import emit_telemetry
+
+    return emit_telemetry
 
 
 # ---------------------------------------------------------------------------

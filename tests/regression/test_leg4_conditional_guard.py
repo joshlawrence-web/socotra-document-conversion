@@ -8,9 +8,8 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "scripts"))
 
-from leg4_generate_plugin import _count_annotated_conditionals, write_report  # noqa: E402
+from velocity_converter.leg4_generate_plugin import _count_annotated_conditionals, write_report  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

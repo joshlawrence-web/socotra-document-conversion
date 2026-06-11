@@ -2,7 +2,7 @@
 """Standalone validator for DocumentDataSnapshotPluginImpl.java files.
 
 Usage:
-  python3 scripts/validate_plugin.py <path-to-plugin.java> [--json] [--keys]
+  python3 -m velocity_converter.validate_plugin <path-to-plugin.java> [--json] [--keys]
 
 Exit codes:
   0 — VALID (or --keys used)
@@ -15,10 +15,7 @@ import json
 import sys
 from pathlib import Path
 
-SCRIPTS = Path(__file__).resolve().parent
-sys.path.insert(0, str(SCRIPTS))
-
-from leg4_generate_plugin import parse_plugin_keys  # noqa: E402
+from velocity_converter.leg4_generate_plugin import parse_plugin_keys
 
 
 def main() -> int:

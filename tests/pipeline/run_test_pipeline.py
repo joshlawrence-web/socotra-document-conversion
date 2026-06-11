@@ -84,7 +84,7 @@ def _wait_for_form(form_path: Path, stem: str) -> None:
     print(f"  {'='*60}")
     print(f"\n  Fill in each 'Condition:' line using accessor-path expressions.")
     print(f"  Examples: quote.quoteNumber != null  |  policy.data.discountAmount != null")
-    print(f"  Run `python3 scripts/list_paths.py` to see all available accessors.")
+    print(f"  Run `python3 -m velocity_converter.list_paths` to see all available accessors.")
     print(f"\n  Press ENTER when done (or Ctrl+C to abort)...")
     try:
         input()
@@ -121,7 +121,7 @@ def run_fixture(fixture_file: str, auto: bool, seeds_data: dict) -> dict:
     print(f"\n[1/4] Leg 0 — ingest document")
     r0 = _run(
         [
-            sys.executable, "scripts/leg0_ingest.py",
+            sys.executable, "-m", "velocity_converter.leg0_ingest",
             "--input", str(input_path),
             "--output-dir", str(output_dir),
         ],
@@ -150,7 +150,7 @@ def run_fixture(fixture_file: str, auto: bool, seeds_data: dict) -> dict:
     print(f"\n[3/4] Parse conditional form → conditional-registry.yaml")
     r_parse = _run(
         [
-            sys.executable, "scripts/leg0_ingest.py",
+            sys.executable, "-m", "velocity_converter.leg0_ingest",
             "--parse-conditional-form", str(form_path),
             "--output-dir", str(output_dir),
         ],
@@ -170,7 +170,7 @@ def run_fixture(fixture_file: str, auto: bool, seeds_data: dict) -> dict:
     mapping_path = output_dir / f"{stem}.mapping.yaml"
     r23 = _run(
         [
-            sys.executable, "scripts/agent.py", "--yes",
+            sys.executable, "-m", "velocity_converter.agent", "--yes",
             f"RUN_PIPELINE leg2+leg3 mapping={mapping_path} "
             f"registry={REGISTRY}",
         ],
@@ -210,7 +210,7 @@ def run_leg4(mapping_paths: list[str]) -> bool:
             stale.unlink()
             print(f"  cleaned stale {stale.relative_to(REPO)}")
 
-    cmd = [sys.executable, "scripts/leg4_generate_plugin.py"]
+    cmd = [sys.executable, "-m", "velocity_converter.leg4_generate_plugin"]
     for mp in mapping_paths:
         cmd += ["--suggested", mp]
     # No --customer-jar / --datamodel-jar — compile check skipped in test runner
@@ -301,7 +301,7 @@ def main():
     if args.regen:
         _banner("Regenerating fixtures")
         r = _run(
-            [sys.executable, "scripts/generate_test_fixtures.py",
+            [sys.executable, "tools/generate_test_fixtures.py",
              "--out-dir", str(FIXTURES_DIR)],
             "generate_test_fixtures",
         )
@@ -325,7 +325,7 @@ def main():
         print(f"ERROR: fixture file(s) missing:\n  " + "\n  ".join(
             str(FIXTURES_DIR / f) for f in missing
         ))
-        print("\nRun first:  python3 scripts/generate_test_fixtures.py")
+        print("\nRun first:  python3 tools/generate_test_fixtures.py")
         sys.exit(1)
 
     # --- Load seeds ---

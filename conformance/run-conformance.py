@@ -68,6 +68,7 @@ from __future__ import annotations
 import argparse
 import copy
 import difflib
+import importlib.util
 import shutil
 import subprocess
 import sys
@@ -83,8 +84,8 @@ except ImportError:
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURES_DIR = REPO_ROOT / "conformance" / "fixtures"
-EXTRACT_SCRIPT = REPO_ROOT / ".cursor" / "skills" / "mapping-suggester" / "scripts" / "extract_paths.py"
-LEG2_SCRIPT = REPO_ROOT / "scripts" / "leg2_fill_mapping.py"
+EXTRACT_MODULE = "velocity_converter.extract_paths"
+LEG2_MODULE = "velocity_converter.leg2_fill_mapping"
 LEGACY_ROOT_REGISTRY = REPO_ROOT / "path-registry.yaml"
 
 # A fixture opts in to a JAR-backed Leg 2 run (schema 2.0, SDK-grounded
@@ -232,11 +233,11 @@ def _run_extract_paths(fixture: Path) -> Path:
 
     cmd = [
         sys.executable,
-        str(EXTRACT_SCRIPT),
+        "-m", EXTRACT_MODULE,
         "--config-dir", str(fixture / "socotra-config"),
         "--output",     str(actual_registry),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=str(REPO_ROOT))
     if proc.returncode != 0:
         raise RuntimeError(
             "extract_paths.py failed for fixture {} (exit {}):\n"
@@ -265,7 +266,7 @@ def _run_leg2(fixture: Path) -> None:
     rel = lambda p: str(p.relative_to(REPO_ROOT))
     cmd = [
         sys.executable,
-        rel(LEG2_SCRIPT),
+        "-m", LEG2_MODULE,
         "--mapping",    rel(fixture / "mapping.yaml"),
         "--registry",   rel(fixture / "golden" / "path-registry.yaml"),
         "--out",        rel(actual_dir / "suggested.yaml"),
@@ -411,8 +412,8 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    if not EXTRACT_SCRIPT.exists():
-        print("ERROR: extract_paths.py not found at {}".format(EXTRACT_SCRIPT))
+    if importlib.util.find_spec(EXTRACT_MODULE) is None:
+        print("ERROR: module {} not importable (run from repo root or pip install -e .)".format(EXTRACT_MODULE))
         return 2
 
     fixtures = _discover_fixtures()

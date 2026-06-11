@@ -55,29 +55,7 @@ except ImportError:
         "pip install pyyaml --break-system-packages"
     )
 
-# Resolve sibling scripts/ dir for shared helpers (optional — degrades gracefully)
-def _find_scripts_dir() -> Optional[Path]:
-    p = Path(__file__).resolve().parent
-    for _ in range(8):
-        candidate = p / "scripts" / "agent_tools.py"
-        if candidate.is_file():
-            return p / "scripts"
-        if p.parent == p:
-            break
-        p = p.parent
-    return None
-
-_scripts_dir = _find_scripts_dir()
-if _scripts_dir:
-    _sd = str(_scripts_dir)
-    if _sd not in sys.path:
-        sys.path.insert(0, _sd)
-
-try:
-    from agent_tools import build_velocity_lookup as _build_velocity_lookup  # noqa: PLC0415
-except ImportError:
-    def _build_velocity_lookup(registry_path):  # type: ignore[misc]
-        return {}
+from velocity_converter.agent_tools import build_velocity_lookup as _build_velocity_lookup
 
 
 # ---------------------------------------------------------------------------

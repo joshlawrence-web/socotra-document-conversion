@@ -1,10 +1,5 @@
 """Smoke test — verify all 7 MCP tools are discoverable at startup."""
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
-import mcp_server
+import velocity_converter.mcp_server as mcp_server
 
 
 def test_tool_count():

@@ -7,8 +7,7 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(REPO / "scripts"))
-from leg2_fill_mapping import (  # noqa: E402
+from velocity_converter.leg2_fill_mapping import (  # noqa: E402
     build_registry_index,
     check_scope,
     normalize_mapping_field_name,

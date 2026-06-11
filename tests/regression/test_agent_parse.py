@@ -8,9 +8,8 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(REPO / "scripts"))
 
-from agent import parse_invocation  # noqa: E402
+from velocity_converter.agent import parse_invocation  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

@@ -24,3 +24,6 @@ build/
 
 # Archived plans (kept in git history only)
 .cursor/plans/
+
+# Packaging
+*.egg-info/

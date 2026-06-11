@@ -8,10 +8,8 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent.parent
-SCRIPTS = REPO / "scripts"
-sys.path.insert(0, str(SCRIPTS))
 
-from leg4_generate_plugin import parse_plugin_keys  # noqa: E402
+from velocity_converter.leg4_generate_plugin import parse_plugin_keys  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Minimal valid plugin fixture — matches actual generated template structure
@@ -185,7 +183,7 @@ def test_whitespace_only_file_is_invalid(tmp_path):
 
 def _run_cli(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, str(SCRIPTS / "validate_plugin.py"), *args],
+        [sys.executable, "-m", "velocity_converter.validate_plugin", *args],
         capture_output=True,
         text=True,
     )
@@ -255,7 +253,7 @@ def test_validate_only_exits_0_on_valid(tmp_path):
     suggested = tmp_path / "ZenCover.suggested.yaml"
     suggested.write_text("product: ZenCover\nvariables: []\n", encoding="utf-8")
     proc = subprocess.run(
-        [sys.executable, str(SCRIPTS / "leg4_generate_plugin.py"),
+        [sys.executable, "-m", "velocity_converter.leg4_generate_plugin",
          "--suggested", str(suggested),
          "--output-dir", str(tmp_path),
          "--validate-only"],
@@ -271,7 +269,7 @@ def test_validate_only_exits_1_on_invalid(tmp_path):
     suggested = tmp_path / "ZenCover.suggested.yaml"
     suggested.write_text("product: ZenCover\nvariables: []\n", encoding="utf-8")
     proc = subprocess.run(
-        [sys.executable, str(SCRIPTS / "leg4_generate_plugin.py"),
+        [sys.executable, "-m", "velocity_converter.leg4_generate_plugin",
          "--suggested", str(suggested),
          "--output-dir", str(tmp_path),
          "--validate-only"],
@@ -288,7 +286,7 @@ def test_validate_only_writes_no_files(tmp_path):
     suggested.write_text("product: ZenCover\nvariables: []\n", encoding="utf-8")
     files_before = set(tmp_path.iterdir())
     subprocess.run(
-        [sys.executable, str(SCRIPTS / "leg4_generate_plugin.py"),
+        [sys.executable, "-m", "velocity_converter.leg4_generate_plugin",
          "--suggested", str(suggested),
          "--output-dir", str(tmp_path),
          "--validate-only"],
@@ -302,7 +300,7 @@ def test_validate_only_no_existing_plugin_exits_0(tmp_path):
     suggested = tmp_path / "ZenCover.suggested.yaml"
     suggested.write_text("product: ZenCover\nvariables: []\n", encoding="utf-8")
     proc = subprocess.run(
-        [sys.executable, str(SCRIPTS / "leg4_generate_plugin.py"),
+        [sys.executable, "-m", "velocity_converter.leg4_generate_plugin",
          "--suggested", str(suggested),
          "--output-dir", str(tmp_path),
          "--validate-only"],

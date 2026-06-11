@@ -9,9 +9,8 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(REPO / "scripts"))
 
-from leg4_generate_plugin import render_java, write_report  # noqa: E402
+from velocity_converter.leg4_generate_plugin import render_java, write_report  # noqa: E402
 
 FIXTURE_YAML = REPO / "tests" / "regression" / "fixtures" / "simple.suggested.yaml"
 

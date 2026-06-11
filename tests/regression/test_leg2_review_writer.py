@@ -8,9 +8,8 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(REPO / "scripts"))
 
-from leg2_review_writer import (  # noqa: E402
+from velocity_converter.leg2_review_writer import (  # noqa: E402
     _all_entries,
     _check_minor_mismatch,
     _extract_na,

@@ -2,9 +2,9 @@
 """Render registry/path-registry.yaml into a human-readable Markdown field catalog.
 
 Usage:
-    python3 scripts/list_paths.py
-    python3 scripts/list_paths.py --registry registry/path-registry.yaml
-    python3 scripts/list_paths.py --registry registry/path-registry.yaml --out samples/output/field-catalog.md
+    python3 -m velocity_converter.list_paths
+    python3 -m velocity_converter.list_paths --registry registry/path-registry.yaml
+    python3 -m velocity_converter.list_paths --registry registry/path-registry.yaml --out samples/output/field-catalog.md
 """
 
 import argparse

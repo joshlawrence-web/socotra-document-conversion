@@ -11,16 +11,15 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(REPO / "scripts"))
 
-from leg0_ingest import (  # noqa: E402
+from velocity_converter.leg0_ingest import (  # noqa: E402
     _braces_to_tbd,
     _tbd_to_braces,
     parse_conditional_form,
     write_conditional_form,
 )
-from leg3_substitute import split_delegated  # noqa: E402
-from leg4_generate_plugin import (  # noqa: E402
+from velocity_converter.leg3_substitute import split_delegated  # noqa: E402
+from velocity_converter.leg4_generate_plugin import (  # noqa: E402
     _analyse_cond_fields,
     _build_cond_field_lookup,
     _find_field_tokens,

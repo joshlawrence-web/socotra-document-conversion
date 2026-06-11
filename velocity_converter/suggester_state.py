@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -19,16 +18,9 @@ def sha256_file(path: Path) -> str:
 
 
 def load_compute_source_config_sha256():
-    here = Path(__file__).resolve().parent
-    mod_path = here / "socotra_config_fingerprint.py"
-    if not mod_path.is_file():
-        raise RuntimeError("Missing {}".format(mod_path))
-    spec = importlib.util.spec_from_file_location("socotra_config_fingerprint", mod_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("Cannot load fingerprint module")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod.compute_source_config_sha256
+    from velocity_converter.socotra_config_fingerprint import compute_source_config_sha256
+
+    return compute_source_config_sha256
 
 
 @dataclass
@@ -105,7 +97,7 @@ def evaluate_registry_config_gate(
                 "registry meta.source_config_sha256.\n"
                 "  embedded (registry): {}\n"
                 "  live (--config-dir): {}\n"
-                "Re-run: python3 .cursor/skills/mapping-suggester/scripts/extract_paths.py "
+                "Re-run: python3 -m velocity_converter.extract_paths "
                 "--config-dir <socotra-config> --output <registry-path>\n".format(embedded_fp, live)
             )
             return RegistryConfigGateResult(

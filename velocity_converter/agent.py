@@ -5,14 +5,14 @@ Parses a structured RUN_PIPELINE invocation, validates inputs, shows a preflight
 summary, requires PROCEED confirmation, then dispatches to Leg 1 / Leg 2 / Leg 3 / Leg 4 scripts.
 
 Usage:
-    python3 scripts/agent.py "RUN_PIPELINE leg1 input=samples/input/Simple-form.html"
-    python3 scripts/agent.py "RUN_PIPELINE leg1+leg2 input=samples/input/Simple-form.html"
-    python3 scripts/agent.py "RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.mapping.yaml"
-    python3 scripts/agent.py "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml"
-    python3 scripts/agent.py "RUN_PIPELINE leg4 suggested=samples/output/Simple-form/Simple-form.mapping.yaml"
-    python3 scripts/agent.py "RUN_PIPELINE leg1+leg2+leg3+leg4 input=samples/input/Simple-form.html registry=registry/path-registry.yaml"
-    python3 scripts/agent.py --yes "RUN_PIPELINE leg1+leg2+leg3+leg4 input=samples/input/Simple-form.html"
-    python3 scripts/agent.py          # interactive stdin mode
+    python3 -m velocity_converter.agent "RUN_PIPELINE leg1 input=samples/input/Simple-form.html"
+    python3 -m velocity_converter.agent "RUN_PIPELINE leg1+leg2 input=samples/input/Simple-form.html"
+    python3 -m velocity_converter.agent "RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.mapping.yaml"
+    python3 -m velocity_converter.agent "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml"
+    python3 -m velocity_converter.agent "RUN_PIPELINE leg4 suggested=samples/output/Simple-form/Simple-form.mapping.yaml"
+    python3 -m velocity_converter.agent "RUN_PIPELINE leg1+leg2+leg3+leg4 input=samples/input/Simple-form.html registry=registry/path-registry.yaml"
+    python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg1+leg2+leg3+leg4 input=samples/input/Simple-form.html"
+    python3 -m velocity_converter.agent          # interactive stdin mode
 """
 
 import argparse
@@ -20,9 +20,7 @@ import re
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
-
-from agent_tools import (
+from velocity_converter.agent_tools import (
     build_preflight,
     get_intermediate_paths,
     list_candidates,

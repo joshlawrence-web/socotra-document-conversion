@@ -1,4 +1,4 @@
-"""Unit tests for html-to-velocity/scripts/convert.py."""
+"""Unit tests for velocity_converter/convert.py."""
 
 from __future__ import annotations
 
@@ -7,12 +7,10 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
-CONVERT_SCRIPTS = REPO / ".cursor" / "skills" / "html-to-velocity" / "scripts"
-sys.path.insert(0, str(CONVERT_SCRIPTS))
 
 from bs4 import BeautifulSoup, NavigableString, Tag  # noqa: E402
 
-from convert import (  # noqa: E402
+from velocity_converter.convert import (  # noqa: E402
     Mapping,
     _clean_label,
     _collect_mustache_tokens,
@@ -92,33 +90,33 @@ class TestSlugify(unittest.TestCase):
 
 class TestCleanLabel(unittest.TestCase):
     def test_strips_trailing_colon(self) -> None:
-        from convert import _clean_label
+        from velocity_converter.convert import _clean_label
         self.assertEqual(_clean_label("Policy Number:"), "Policy Number")
 
     def test_empty_returns_empty(self) -> None:
-        from convert import _clean_label
+        from velocity_converter.convert import _clean_label
         self.assertEqual(_clean_label(""), "")
         self.assertEqual(_clean_label("   "), "")
 
     def test_rejects_tbd(self) -> None:
-        from convert import _clean_label
+        from velocity_converter.convert import _clean_label
         self.assertEqual(_clean_label("TBD_FIELD"), "")
 
     def test_rejects_dollar(self) -> None:
-        from convert import _clean_label
+        from velocity_converter.convert import _clean_label
         self.assertEqual(_clean_label("$data.policyNumber"), "")
 
     def test_rejects_mustache(self) -> None:
-        from convert import _clean_label
+        from velocity_converter.convert import _clean_label
         self.assertEqual(_clean_label("{{POLICY_NUMBER}}"), "")
 
     def test_truncates_at_80(self) -> None:
-        from convert import _clean_label
+        from velocity_converter.convert import _clean_label
         long = "A" * 90
         self.assertEqual(len(_clean_label(long)), 80)
 
     def test_normal_label_preserved(self) -> None:
-        from convert import _clean_label
+        from velocity_converter.convert import _clean_label
         self.assertEqual(_clean_label("Effective Date"), "Effective Date")
 
 

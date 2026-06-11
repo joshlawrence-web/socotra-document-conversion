@@ -7,14 +7,13 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(REPO / "scripts"))
 
 
 def test_agent_list_paths_exits_zero():
     result = subprocess.run(
         [
             sys.executable,
-            "scripts/agent.py",
+            "-m", "velocity_converter.agent",
             "--yes",
             "RUN_PIPELINE list_paths registry=registry/path-registry.yaml",
         ],
@@ -30,14 +29,14 @@ def test_agent_list_paths_exits_zero():
 
 
 def test_catalog_content_has_system_fields():
-    from agent_tools import run_list_paths  # noqa: PLC0415
+    from velocity_converter.agent_tools import run_list_paths  # noqa: PLC0415
     catalog = run_list_paths(registry_path="registry/path-registry.yaml", out_path=None)
     assert "## System Fields" in catalog
 
 
 def test_agent_rejects_unknown_op():
     result = subprocess.run(
-        [sys.executable, "scripts/agent.py", "--yes", "RUN_PIPELINE bogus_op"],
+        [sys.executable, "-m", "velocity_converter.agent", "--yes", "RUN_PIPELINE bogus_op"],
         capture_output=True,
         text=True,
         cwd=str(REPO),
@@ -47,7 +46,7 @@ def test_agent_rejects_unknown_op():
 
 def test_agent_rejects_non_pipeline_text():
     result = subprocess.run(
-        [sys.executable, "scripts/agent.py", "--yes", "not a pipeline invocation"],
+        [sys.executable, "-m", "velocity_converter.agent", "--yes", "not a pipeline invocation"],
         capture_output=True,
         text=True,
         cwd=str(REPO),

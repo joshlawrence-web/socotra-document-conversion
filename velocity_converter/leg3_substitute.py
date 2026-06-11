@@ -619,7 +619,7 @@ def write_report(
             "   ```",
             "3. If the path doesn't exist in the registry yet:",
             "   - Add the field to your Socotra config",
-            "   - Regenerate the registry: `python3 .cursor/skills/mapping-suggester/scripts/extract_paths.py`",
+            "   - Regenerate the registry: `python3 -m velocity_converter.extract_paths`",
             "   - Re-run Leg 2 to update the suggested mapping",
             "   - Then re-run Leg 3",
             "",

@@ -10,12 +10,10 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
-CONVERT_SCRIPTS = REPO / ".cursor" / "skills" / "html-to-velocity" / "scripts"
-sys.path.insert(0, str(CONVERT_SCRIPTS))
 
 from bs4 import BeautifulSoup  # noqa: E402
 
-from convert import Mapping, process_all_mustache_loops, rewrite_vars_in_subtree  # noqa: E402
+from velocity_converter.convert import Mapping, process_all_mustache_loops, rewrite_vars_in_subtree  # noqa: E402
 
 _HTML = """\
 <body>

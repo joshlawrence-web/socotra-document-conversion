@@ -35,7 +35,6 @@ Output: when ``--output`` is omitted, writes ``<parent-of-config-dir>/registry/p
 
 import argparse
 import copy
-import importlib.util
 import json
 import sys
 from datetime import datetime, timezone
@@ -51,23 +50,9 @@ def _relative_display(p: Path) -> str:
 
 
 def _compute_source_config_sha256(config_dir: Path) -> str:
-    """Load ``scripts/socotra_config_fingerprint.py`` from the repo root (any ancestor)."""
-    here = Path(__file__).resolve()
-    for anc in here.parents:
-        mod_path = anc / "scripts" / "socotra_config_fingerprint.py"
-        if not mod_path.is_file():
-            continue
-        spec = importlib.util.spec_from_file_location("socotra_config_fingerprint", mod_path)
-        if spec is None or spec.loader is None:
-            continue
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        fn = getattr(mod, "compute_source_config_sha256", None)
-        if callable(fn):
-            return str(fn(config_dir))
-    raise RuntimeError(
-        "Cannot locate scripts/socotra_config_fingerprint.py above {}".format(here)
-    )
+    from velocity_converter.socotra_config_fingerprint import compute_source_config_sha256
+
+    return str(compute_source_config_sha256(config_dir))
 
 try:
     import yaml

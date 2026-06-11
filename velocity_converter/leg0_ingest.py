@@ -7,8 +7,8 @@ suitable for the existing Leg 1 pipeline, then extracts {field_name} tokens
 and [[conditional]] blocks, annotates them, and writes all pipeline-ready artifacts.
 
 Usage:
-    python3 scripts/leg0_ingest.py --input <path.docx|path.pdf> [--output-dir <dir>]
-    python3 scripts/leg0_ingest.py --parse-conditional-form <filled-form.md> --output-dir <dir>
+    python3 -m velocity_converter.leg0_ingest --input <path.docx|path.pdf> [--output-dir <dir>]
+    python3 -m velocity_converter.leg0_ingest --parse-conditional-form <filled-form.md> --output-dir <dir>
 
 Outputs (normal mode):
     {stem}.raw.html           — raw converted HTML (pre-annotation)
@@ -470,7 +470,7 @@ def write_conditional_form(blocks: list[dict], stem: str, output_path: Path) -> 
         "",
         "Comparison examples: `quote.quoteNumber != null` · `account.data.state == \"CA\"` · `policy.data.riderType == \"AirBag\"`",
         "",
-        "Run `python3 scripts/list_paths.py` to see all available accessors.",
+        "Run `python3 -m velocity_converter.list_paths` to see all available accessors.",
         "Return this file to your implementation contact when complete.",
         "",
     ]

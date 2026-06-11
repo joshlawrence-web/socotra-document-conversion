@@ -6,9 +6,8 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(REPO / "scripts"))
 
-from leg4_generate_plugin import _append_to_plugin, _diff_keys  # noqa: E402
+from velocity_converter.leg4_generate_plugin import _append_to_plugin, _diff_keys  # noqa: E402
 
 # Minimal 2-overload plugin fixture — matches the return-marker _append_to_plugin looks for
 VALID_PLUGIN_JAVA = """\
