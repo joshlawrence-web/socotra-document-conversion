@@ -1,9 +1,9 @@
 """Validate emit_telemetry records against the frozen suggester-log JSON Schema.
 
 conformance/schemas/suggester-log.schema.json is the authoritative contract
-(SCHEMA.md); until now nothing enforced it. Records are derived from the
-committed itemcare-jar goldens so the test runs without JARs or prior
-pipeline output.
+(SCHEMA.md); until now nothing enforced it. Records are derived from frozen
+static inputs (a real schema-2.0 suggested doc + its registry) so the test
+runs without JARs or prior pipeline output.
 """
 
 from __future__ import annotations
@@ -19,9 +19,8 @@ from velocity_converter.emit_telemetry import derive_run  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent.parent
 SCHEMA_PATH = REPO / "conformance" / "schemas" / "suggester-log.schema.json"
-GOLDEN_DIR = REPO / "conformance" / "fixtures" / "itemcare-jar" / "golden"
-SUGGESTED = GOLDEN_DIR / "suggested.yaml"
-REGISTRY = GOLDEN_DIR / "path-registry.yaml"
+SUGGESTED = REPO / "tests" / "regression" / "fixtures" / "itemcare.suggested.yaml"
+REGISTRY = REPO / "conformance" / "fixtures" / "itemcare-jar" / "golden" / "path-registry.yaml"
 
 
 @pytest.fixture(scope="module")

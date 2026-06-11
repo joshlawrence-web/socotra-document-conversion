@@ -59,7 +59,7 @@ REGISTRY_FILES = (
 MAPPING_FILES = _collect("conformance/fixtures/*/mapping.yaml")
 
 SUGGESTED_FILES = (
-    _collect("conformance/fixtures/*/golden/suggested.yaml")
+    _collect("tests/regression/fixtures/*.suggested.yaml")
     + _collect("samples/output/*/*.mapping.yaml")
     + _collect("tests/pipeline/output/*/*.mapping.yaml")
 )
