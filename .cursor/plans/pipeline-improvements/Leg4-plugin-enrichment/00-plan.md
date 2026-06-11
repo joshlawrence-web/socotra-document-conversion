@@ -1,6 +1,7 @@
 # Leg 4 — Plugin Enrichment (Phase 4)
 
-**Status:** Not started  
+**Status:** Not started
+**When done:** set `Status: Done`, add `Completed:` date, move folder to `CompletedPlans/` (§7).
 **Created:** 2026-06-03  
 **Predecessor:** [Leg4-document-snapshot-plugin](../Leg4-document-snapshot-plugin/00-plan.md) — Phases 1–3 complete  
 **History:** [history.md](./history.md) (append-only)
@@ -213,3 +214,15 @@ must look like when the template uses `#foreach`.
 | `build/core-datamodel-v1.7.61.jar` | Platform model types |
 | `.cursor/skills/plugin-builder/SKILL.md` | User-facing skill — update trigger phrases when adding flags |
 | `CLAUDE.md` | Pipeline trigger phrases — update for new flags/ops |
+
+---
+
+## 7. Self-certification (completing agent — required)
+
+When every item in §5 Definition of done is satisfied:
+
+1. Edit this file: change `**Status:** Not started` → `**Status:** Done` and add `**Completed:** <date>`.
+2. Move this folder: `mv .cursor/plans/pipeline-improvements/Leg4-plugin-enrichment/ .cursor/plans/pipeline-improvements/CompletedPlans/`
+3. Commit both changes with your implementation (or in a follow-up commit).
+
+**Do not skip this step.** Plans left open after completion create false signals about remaining work.

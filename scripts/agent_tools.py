@@ -3,16 +3,14 @@
 No Claude API code here — only business logic called by agent.py dispatch.
 """
 
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 _INTERMEDIATE_SUFFIXES = frozenset({
-    ".fields.yaml",
     ".mapping.yaml",
-    ".suggested.yaml",
     ".review.md",
-    ".suggester-log.jsonl",
 })
 
 _FULL_PIPELINE_OPS = frozenset({
@@ -24,7 +22,7 @@ _FULL_PIPELINE_OPS = frozenset({
 
 
 def _try_read_product(suggested_path: "str | Path") -> "str | None":
-    """Best-effort: read product: from a .suggested.yaml. Returns None on failure."""
+    """Best-effort: read product: from a .mapping.yaml or .suggested.yaml. Returns None on failure."""
     try:
         import yaml  # noqa: PLC0415
         p = Path(suggested_path)
@@ -134,8 +132,8 @@ def validate_inputs(
                 p = _resolve_safe(suggested, repo_root)
                 if not p.exists():
                     errors.append(f"suggested not found: {suggested!r}")
-                elif not p.name.endswith(".suggested.yaml"):
-                    errors.append(f"suggested must be a .suggested.yaml file, got: {p.name!r}")
+                elif not (p.name.endswith(".mapping.yaml") or p.name.endswith(".suggested.yaml")):
+                    errors.append(f"suggested must be a .mapping.yaml (or legacy .suggested.yaml) file, got: {p.name!r}")
             except ValueError as e:
                 errors.append(str(e))
 
@@ -204,7 +202,6 @@ def _predict_writes(
         writes += [
             f"{base}/{stem}.raw.html",
             f"{base}/{stem}.annotated.html",
-            f"{base}/{stem}.fields.yaml",
             f"{base}/{stem}.mapping.yaml",
             f"{base}/{stem}.conditional-form.md",
         ]
@@ -236,9 +233,7 @@ def _predict_writes(
                 stem = stem[: -len(".mapping")]
             base = str(Path(m).parent)
             writes += [
-                f"{base}/{stem}.suggested.yaml",
                 f"{base}/{stem}.review.md",
-                f"{base}/{stem}.suggester-log.jsonl",
             ]
     if operation in ("leg3", "leg2+leg3", "leg0+leg2+leg3", "leg1+leg2+leg3", "leg1+leg2+leg3+leg4"):
         if operation == "leg3" and suggested:
@@ -273,13 +268,15 @@ def _predict_writes(
             leg4_base_path = suggested
         elif operation == "leg1+leg2+leg3+leg4" and input_html:
             s = Path(input_html).stem
-            leg4_base_path = f"{out_dir}/{s}/{s}.suggested.yaml"
+            leg4_base_path = f"{out_dir}/{s}/{s}.mapping.yaml"
         else:
             leg4_base_path = None
         if leg4_base_path:
             stem4 = Path(leg4_base_path).stem
-            if stem4.endswith(".suggested"):
-                stem4 = stem4[: -len(".suggested")]
+            for _sfx in (".suggested", ".mapping"):
+                if stem4.endswith(_sfx):
+                    stem4 = stem4[: -len(_sfx)]
+                    break
             base4 = str(Path(leg4_base_path).parent)
             product = _try_read_product(leg4_base_path)
             java_name = (
@@ -395,7 +392,6 @@ def run_leg0(input_path: str, output_dir: str) -> dict:
     artifact_names = [
         f"{stem}.raw.html",
         f"{stem}.annotated.html",
-        f"{stem}.fields.yaml",
         f"{stem}.mapping.yaml",
         f"{stem}.conditional-form.md",
     ]
@@ -487,8 +483,8 @@ def run_leg2(
     registry: str,
     out: str,
     review_out: str,
-    telemetry_log: str,
-    mode: str,
+    telemetry_log: str | None = None,
+    mode: str = "terse",
     terminology: str | None = None,
     base_suggested: str | None = None,
 ) -> dict:
@@ -506,11 +502,11 @@ def run_leg2(
         str(_resolve_safe(out, repo_root)),
         "--review-out",
         str(_resolve_safe(review_out, repo_root)),
-        "--telemetry-log",
-        str(_resolve_safe(telemetry_log, repo_root)),
         "--mode",
         mode,
     ]
+    if telemetry_log:
+        cmd += ["--telemetry-log", str(_resolve_safe(telemetry_log, repo_root))]
     if terminology:
         cmd += ["--terminology", str(_resolve_safe(terminology, repo_root))]
     if base_suggested:
@@ -522,6 +518,8 @@ def run_leg2(
 
     artifacts = []
     for p_str in [out, review_out, telemetry_log]:
+        if p_str is None:
+            continue
         p = _resolve_safe(p_str, repo_root)
         if p.exists():
             artifacts.append(str(p.relative_to(repo_root)))
@@ -543,6 +541,35 @@ def _run_leg4_single(
         "--suggested",
         str(_resolve_safe(suggested, repo_root)),
     ]
+
+    # Preflight: warn if annotated HTML has conditionals but no registry
+    _suggested_path = _resolve_safe(suggested, repo_root)
+    _stem = _suggested_path.name
+    for _sfx in (".suggested.yaml", ".mapping.yaml", ".yaml"):
+        if _stem.endswith(_sfx):
+            _stem = _stem[: -len(_sfx)]
+            break
+    _out_dir = _suggested_path.parent
+    _cond_yaml = _out_dir / f"{_stem}.conditional-registry.yaml"
+    if not _cond_yaml.exists():
+        _annotated = _out_dir / f"{_stem}.annotated.html"
+        if _annotated.exists():
+            _n = len(set(re.findall(r'\$doc\.cond\d+', _annotated.read_text(encoding="utf-8"))))
+            if _n > 0:
+                _form = _out_dir / f"{_stem}.conditional-form.md"
+                if _form.exists():
+                    _fix = (
+                        f"python3 scripts/leg0_ingest.py "
+                        f"--parse-conditional-form {_form} "
+                        f"--output-dir {_out_dir}"
+                    )
+                else:
+                    _fix = "(conditional-form.md not found — re-run Leg 0 first)"
+                print(
+                    f"WARNING: {_n} conditional(s) detected in {_stem}.annotated.html "
+                    f"but no conditional-registry.yaml found.\nRun: {_fix}"
+                )
+
     if customer_jar:
         cmd += ["--customer-jar", str(_resolve_safe(customer_jar, repo_root))]
     if datamodel_jar:
@@ -556,7 +583,7 @@ def _run_leg4_single(
 
     suggested_path = _resolve_safe(suggested, repo_root)
     stem = suggested_path.name
-    for suffix in (".suggested.yaml", ".yaml"):
+    for suffix in (".suggested.yaml", ".mapping.yaml", ".yaml"):
         if stem.endswith(suffix):
             stem = stem[: -len(suffix)]
             break
@@ -617,22 +644,84 @@ def get_intermediate_paths(
     if operation in ("leg1+leg2+leg3", "leg1+leg2+leg3+leg4") and input_html:
         stem = Path(input_html).stem
         base = Path(output) / stem
-        suffixes = [".mapping.yaml", ".suggested.yaml", ".review.md", ".suggester-log.jsonl"]
+        # Keep .mapping.yaml — leg4 and leg3 re-runs need it
+        suffixes = [".review.md"]
     elif operation == "leg0+leg2+leg3" and input_html:
         stem = Path(input_html).stem
         base = Path(output) / stem
-        suffixes = [".fields.yaml", ".mapping.yaml", ".suggested.yaml", ".review.md", ".suggester-log.jsonl"]
+        # Keep .mapping.yaml — it's the enriched YAML artifact
+        suffixes = [".review.md"]
     elif operation == "leg2+leg3" and leg2_suggested:
         p = Path(leg2_suggested)
         stem = p.stem
-        if stem.endswith(".suggested"):
-            stem = stem[: -len(".suggested")]
+        for sfx in (".suggested", ".mapping"):
+            if stem.endswith(sfx):
+                stem = stem[: -len(sfx)]
+                break
         base = p.parent
-        suffixes = [".suggested.yaml", ".review.md", ".suggester-log.jsonl"]
+        # Keep .mapping.yaml — leg4 and leg3 re-runs need it
+        suffixes = [".review.md"]
     else:
         return []
 
     return [base / f"{stem}{s}" for s in suffixes]
+
+
+def _velocity_to_accessor(velocity: str, category: str) -> str:
+    """Mirror leg0_ingest._derive_accessor — derive the shorthand accessor key a user would write."""
+    v = (velocity or "").strip()
+    cat = (category or "").strip()
+    if cat in ("system", "policy_data"):
+        return "policy." + v[len("$data."):] if v.startswith("$data.") else v.lstrip("$")
+    if cat == "quote_system":
+        return "quote." + v[len("$data."):] if v.startswith("$data.") else v.lstrip("$")
+    if v.startswith("$data."):
+        return v[len("$data."):]
+    if v.startswith("$"):
+        return v[1:]
+    return v
+
+
+def build_velocity_lookup(registry_path: "str | Path") -> "dict[str, str]":
+    """Build a flat lookup map: accessor shorthand (and full suffix) → velocity path.
+
+    Two keys per registry entry:
+      Pass 1 — full suffix: velocity.lstrip("$")  e.g. "data.account.data.firstName"
+      Pass 2 — accessor shorthand: what list_paths shows  e.g. "account.data.firstName"
+    Pass 1 wins on collision (more specific key).
+    Returns {} on any read/parse failure.
+    """
+    try:
+        import yaml as _yaml  # noqa: PLC0415
+        data = _yaml.safe_load(Path(registry_path).read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+
+    pass1: "dict[str, str]" = {}
+    pass2: "dict[str, str]" = {}
+
+    def _collect(node: object, category: str = "") -> None:
+        if isinstance(node, dict):
+            v = node.get("velocity")
+            cat = node.get("category") or category
+            if v and isinstance(v, str):
+                pass1[v.lstrip("$")] = v
+                acc = _velocity_to_accessor(v, cat)
+                if acc not in pass2:
+                    pass2[acc] = v
+            for child in node.values():
+                _collect(child, cat)
+        elif isinstance(node, list):
+            for item in node:
+                _collect(item, category)
+
+    _collect(data)
+    return {**pass2, **pass1}  # pass1 wins on collision
+
+
+def resolve_dotted_path(name: str, lookup: "dict[str, str]") -> "str | None":
+    """Return the velocity path for a dotted accessor name, or None on miss."""
+    return lookup.get(name)
 
 
 def run_list_paths(registry_path: str, out_path: str | None = None) -> str:

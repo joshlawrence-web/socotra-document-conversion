@@ -1,8 +1,13 @@
 # Path Catalog — Field Reference for Document Authors
 
-**Status:** Ready  
+**Status:** Complete  
 **Created:** 2026-06-09  
+**Completed:** 2026-06-09  
 **History:** [history.md](./history.md) (append-only)
+
+## Completion note (2026-06-09)
+
+All 4 tasks verified complete: `scripts/list_paths.py` exists and renders grouped Markdown; `agent_tools.run_list_paths()` wired; `agent.py` dispatches `list_paths` op; CLAUDE.md has all 5 trigger phrases. No JARs required at runtime.
 
 ---
 

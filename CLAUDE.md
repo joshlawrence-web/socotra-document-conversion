@@ -2,6 +2,25 @@
 
 **Repository:** [github.com/joshlawrence-web/socotra-document-conversion](https://github.com/joshlawrence-web/socotra-document-conversion)
 
+## Architecture overview
+
+This tool is a **five-leg document pipeline** for authoring Socotra Velocity templates.
+The hot-swap loop: author a document (Word/PDF or HTML) → run the pipeline → deploy
+the generated `.final.vm` (and optionally the `SnapshotPlugin.java`) to `socotra-config/`
+without redeploying the entire product config JAR.
+
+| Leg | Script | Input → Output |
+|-----|--------|----------------|
+| 0 | `leg0_ingest.py` | `.docx`/`.pdf` → `.raw.html`, `.conditional-form.md` |
+| 1 | `convert.py` | `.html` → `.mapping.yaml` |
+| 2 | `leg2_fill_mapping.py` | `.mapping.yaml` → `.mapping.yaml` (enriched), `.review.md` |
+| 3 | `leg3_substitute.py` | `.mapping.yaml` → `.final.vm` |
+| 4 | `leg4_generate_plugin.py` | `.mapping.yaml` → `SnapshotPlugin.java` |
+
+> Full data-flow diagram: [docs/pipeline-dataflow.md](docs/pipeline-dataflow.md)
+
+---
+
 ## Converting Word/PDF documents to Velocity templates (Leg 0)
 
 When the user provides a `.docx` or `.pdf` file, run Leg 0 (then optionally full pipeline).
@@ -41,10 +60,27 @@ python3 scripts/leg0_ingest.py --parse-conditional-form samples/output/<stem>/<s
 **Output lands in** `samples/output/<stem>/`:
 - `<stem>.raw.html` — raw converted HTML (pre-annotation)
 - `<stem>.annotated.html` — HTML with `{field}` → `$TBD_field`, `[[cond]]` → `$doc.condN`
-- `<stem>.fields.yaml` — extracted fields (human-editable)
-- `<stem>.mapping.yaml` — leg2-compatible mapping
+- `<stem>.mapping.yaml` — leg2-compatible mapping (enriched in-place by Leg 2)
 - `<stem>.conditional-form.md` — customer-facing conditional form (send to customer)
 - `<stem>.conditional-registry.yaml` — written after customer returns the form
+
+---
+
+## MANDATORY pre-flight before Leg 2, 3, or 4 (after a Leg 0 run)
+
+**ALWAYS run this check before executing Leg 2, Leg 3, or Leg 4 when the source was a Leg 0 run.**
+
+1. Check if `samples/output/<stem>/<stem>.conditional-registry.yaml` exists.
+2. Check if `samples/output/<stem>/<stem>.conditional-form.md` exists.
+3. If the **registry does NOT exist** and the **form DOES exist** → parse the conditional form first, then proceed:
+
+```
+python3 scripts/leg0_ingest.py --parse-conditional-form samples/output/<stem>/<stem>.conditional-form.md --output-dir samples/output/<stem>/
+```
+
+4. Only after the registry is written (or confirmed to already exist) → run the requested downstream legs.
+
+**Do not skip this step.** The plugin will be empty and the template will have unresolved `$doc.condN` placeholders if the registry is missing. The user should not have to tell you to do this — it is always required.
 
 ---
 
@@ -83,14 +119,14 @@ python3 scripts/agent.py --yes "RUN_PIPELINE leg2 mode=terse mapping=<path> regi
 python3 scripts/agent.py --yes "RUN_PIPELINE leg2+leg3 mapping=<path> registry=registry/path-registry.yaml"
 ```
 
-**Leg 3 only** (finalise an existing `.suggested.yaml` into a `.final.vm`):
+**Leg 3 only** (finalise an existing `.mapping.yaml` into a `.final.vm`):
 ```
-python3 scripts/agent.py --yes "RUN_PIPELINE leg3 suggested=<path>"
+python3 scripts/agent.py --yes "RUN_PIPELINE leg3 suggested=<path.mapping.yaml>"
 ```
 
 **Leg 3 high-confidence only** (substitute only `confidence: high` tokens; medium/low stay as `$TBD_*` and appear in a "Deferred" section of the report — use when fuzzy matches need human review before going live):
 ```
-python3 scripts/agent.py --yes "RUN_PIPELINE leg3 suggested=<path> high_only=true"
+python3 scripts/agent.py --yes "RUN_PIPELINE leg3 suggested=<path.mapping.yaml> high_only=true"
 ```
 
 **Full pipeline high-confidence only** (same as above but runs from HTML):
@@ -127,10 +163,10 @@ python3 scripts/agent.py --yes "RUN_PIPELINE leg1+leg2 input=<path> registry=reg
 - "run leg 4 for multiple forms"
 - "add the second form to the plugin"
 
-**Leg 4** (`.suggested.yaml` → Java plugin + report):
+**Leg 4** (`.mapping.yaml` → Java plugin + report):
 ```
 python3 scripts/leg4_generate_plugin.py \
-  --suggested samples/output/<stem>/<stem>.suggested.yaml \
+  --suggested samples/output/<stem>/<stem>.mapping.yaml \
   --customer-jar build/customer-config.jar \
   --datamodel-jar build/core-datamodel-v1.7.61.jar \
   --compile-check
@@ -142,7 +178,9 @@ Output lands in `samples/output/<stem>/`:
 
 **Additive mode** — if `{Product}DocumentDataSnapshotPluginImpl.java` already exists in the output dir, Leg 4 automatically adds only the missing keys (never removes existing ones). A `.java.bak` backup is written before modification. The plugin report includes an "Additive update summary" section.
 
-**Multi-form** — pass multiple `--suggested` paths or call `run_leg4(suggested=[...])` from `agent_tools.py`. Each form is processed sequentially; additive mode activates after the first.
+**Fields inside conditional blocks** — `{field}` placeholders inside `[[...]]` blocks are concatenated into the plugin's conditional strings as Java accessors (e.g. `Objects.toString(segment.data().discountAmount(), "")`); the template only outputs `${data.condN}`. Supported: quote system fields (quote overload), policy system + custom fields (policy overload — custom fields resolve on the segment type). **Leg 4 hard-fails** if a field inside a block has no `data_source` — run Leg 2 first. Per-exposure (`item.*`), account, and DataFetcher-sourced fields are not wired: they get a `// TODO` comment and a WARN row in the plugin report's "Field tokens inside conditional blocks" section.
+
+**Multi-form** — pass multiple `--suggested` paths (each pointing to a `.mapping.yaml`) or call `run_leg4(suggested=[...])` from `agent_tools.py`. Each form is processed sequentially; additive mode activates after the first.
 
 **Pipeline integration** (`RUN_PIPELINE leg4`) is wired into `agent.py`.
 
@@ -175,6 +213,52 @@ python3 scripts/list_paths.py [--registry registry/path-registry.yaml] [--out <p
 ```
 
 Output: grouped Markdown — System → Account → Policy Custom Fields → Policy Charges → Per-Exposure (system/custom/coverages/charges) → DataFetcher Paths.
+
+---
+
+## Running the pipeline test suite
+
+When the user asks to validate pipeline changes, run the automated test suite.
+
+**Trigger phrases** (not exhaustive — use judgment):
+- "run the test pipeline"
+- "test my changes"
+- "validate the pipeline"
+- "run the tests"
+- "check the pipeline still works"
+
+**Run all fixtures (automated, no pauses):**
+```
+python3 tests/pipeline/run_test_pipeline.py --auto
+```
+
+**Run a single fixture:**
+```
+python3 tests/pipeline/run_test_pipeline.py --auto --only "TestItemCert(segment)"
+```
+
+**Interactive mode** (pauses so you can hand-fill conditions — simulates real customer flow):
+```
+python3 tests/pipeline/run_test_pipeline.py
+```
+
+**Regenerate DOCX fixtures** (run this if fixtures are missing or after changing `generate_test_fixtures.py`):
+```
+python3 scripts/generate_test_fixtures.py
+```
+
+Output lands in `tests/pipeline/output/<stem>/`. Exit code is non-zero on failure.
+
+**What is tested:** Leg 0 → conditional-form fill → parse → Leg 2+3 → Leg 4 (single combined plugin)
+across three fixtures: `TestQuoteSummary(quote)`, `TestItemCert(segment)`, `TestRenewalNotice(segment)`.
+
+**Adding a new fixture** (four-step checklist):
+1. Add a builder function to `scripts/generate_test_fixtures.py` and append it to `FIXTURES`.
+2. Add the filename to `ALL_FIXTURES` in `tests/pipeline/run_test_pipeline.py`.
+3. Add condition seeds for its blocks in `tests/pipeline/condition_seeds.yaml`.
+4. Run `python3 scripts/generate_test_fixtures.py` to write the DOCX.
+
+> Full details: [tests/pipeline/README.md](tests/pipeline/README.md)
 
 ---
 

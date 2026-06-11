@@ -392,26 +392,11 @@ def match_token(
     entity, *field_parts = name.split(".")
     field_path = ".".join(field_parts)
 
-    # Step 1 — exact
+    # Exact match only — no ci/terminology/fuzzy fallbacks
     if entity in schema_index:
         fields = schema_index[entity]["fields"]
         if field_path in fields:
             return _make_schema_entries(field_path, idx), "exact", None
-
-    # Step 2 — case-insensitive
-    entity_ci = _ci_lookup(schema_index, entity)
-    if entity_ci:
-        fields = schema_index[entity_ci]["fields"]
-        field_ci = _ci_lookup(fields, field_path)
-        if field_ci:
-            return _make_schema_entries(field_ci, idx), "ci", None
-
-    # Step 3 — synonym (capped at medium regardless of SDK status, D7)
-    if terminology:
-        syn_result = _step3_terminology_strict(name, schema_index, idx, terminology)
-        if syn_result:
-            entries, alias = syn_result
-            return entries, "terminology", alias
 
     return [], "none", None
 
@@ -430,105 +415,6 @@ def load_schema_index(registry_path: Path | None) -> dict | None:
     return None
 
 
-# ---------------------------------------------------------------------------
-# 4-step name matching (legacy — used when no schema index is available)
-# ---------------------------------------------------------------------------
-
-
-def _step1_exact(name_camel: str, idx: dict) -> list[dict]:
-    hits: list[dict] = []
-    for e in idx["by_field"].get(name_camel.lower(), []):
-        if e.get("field") == name_camel and e not in hits:
-            hits.append(e)
-    return hits
-
-
-def _step2_ci(name_camel: str, idx: dict) -> list[dict]:
-    hits: list[dict] = []
-    for e in idx["by_field"].get(name_camel.lower(), []):
-        if e not in hits:
-            hits.append(e)
-    return hits
-
-
-def _step3_terminology(
-    name_snake: str, idx: dict, terminology: dict
-) -> list[tuple[dict, str]]:
-    """Returns (entry, alias_used) pairs from terminology synonyms."""
-    syns = terminology.get("synonyms") or {}
-    hits: list[tuple[dict, str]] = []
-
-    for canonical, aliases in (syns.get("fields") or {}).items():
-        for alias in aliases:
-            if alias.lower() == name_snake.lower():
-                for e in idx["by_field"].get(canonical.lower(), []):
-                    if (e, alias) not in hits:
-                        hits.append((e, alias))
-
-    return hits
-
-
-def _step4_fuzzy(name_snake: str, idx: dict) -> list[dict]:
-    """Fuzzy: last-token of name matches a field key."""
-    hits: list[dict] = []
-    tokens = [t for t in name_snake.split("_") if t]
-    if not tokens:
-        return hits
-    last = tokens[-1].lower()
-    for e in idx["by_field"].get(last, []):
-        if e not in hits:
-            hits.append(e)
-    return hits
-
-
-def match_name(
-    name: str,
-    label: str | None,
-    idx: dict,
-    terminology: dict | None,
-) -> tuple[list[dict], str, str | None]:
-    """5-step name + label match.
-
-    Returns (entries, step_name, alias_if_step3).
-    step_name: 'exact' | 'ci' | 'terminology' | 'fuzzy' | 'none'
-
-    Steps:
-      1. Exact field name match (camelCase)
-      2. CI field name match
-      2b. Exact/CI label match via nearest_label → display_name (high confidence, no JAR needed)
-      3. Terminology synonym match
-      4. Fuzzy last-token match
-    """
-    name_snake = normalize_mapping_field_name(name)
-    name_camel = snake_to_camel(name_snake)
-
-    hits = _step1_exact(name_camel, idx)
-    if hits:
-        return hits, "exact", None
-
-    hits = _step2_ci(name_camel, idx)
-    if hits:
-        return hits, "ci", None
-
-    # Step 2b: label match — nearest_label matches registry display_name
-    if label:
-        label_hits = idx["by_display_name"].get(label.lower(), [])
-        exact_label = [e for e in label_hits if e.get("display_name") == label]
-        if exact_label:
-            return exact_label, "exact", None
-        if label_hits:
-            return label_hits, "ci", None
-
-    if terminology:
-        term_hits = _step3_terminology(name_snake, idx, terminology)
-        if term_hits:
-            return [e for e, _ in term_hits], "terminology", term_hits[0][1]
-
-    hits = _step4_fuzzy(name_snake, idx)
-    if hits:
-        return hits, "fuzzy", None
-
-    return [], "none", None
 
 
 # ---------------------------------------------------------------------------
@@ -625,17 +511,12 @@ NEXT_ACTION_FOR_STATUS: dict[str, str] = {
 
 
 def confidence_grade(match_step: str, sdk_status: str) -> str:
-    """Grade a (placeholder × root) verdict. The JAR can only *demote*: a strong
-    name-match needs `verified` to stay `high`. Strict-token-schema additions:
-    `old-format` and `none` always return `"none"`; terminology is capped at
-    `medium` even when SDK-verified (D7)."""
-    if match_step in ("old-format", "none"):
+    """Grade a (placeholder × root) verdict. Only exact matches qualify for high;
+    everything else is low or none."""
+    if match_step != "exact":
         return "none"
     if sdk_status == "verified":
-        if match_step in ("exact", "ci"):
-            return "high"
-        if match_step == "terminology":
-            return "medium"  # D7 — synonyms capped at medium
+        return "high"
     return "low"
 
 
@@ -645,7 +526,7 @@ def confidence_grade(match_step: str, sdk_status: str) -> str:
 
 
 def derive_variable_candidate(
-    v: dict, idx: dict, terminology: dict | None, schema_index: dict | None = None
+    v: dict, idx: dict, terminology: dict | None, schema_index: dict
 ) -> dict:
     """Name-match a variable to a registry candidate path (root-independent).
 
@@ -655,8 +536,8 @@ def derive_variable_candidate(
     check, so the same verdict is replicated across roots with
     ``sdk_status: skipped``.
 
-    When ``schema_index`` is provided, uses strict ``match_token()`` (dotted-path
-    format required); otherwise falls back to legacy ``match_name()``.
+    Uses strict ``match_token()`` — tokens must be ``EntityType.fieldName``
+    (dotted-path format, see registry/sdk-schema-index.yaml).
     """
     name = v.get("name") or ""
     context = v.get("context") or {}
@@ -670,54 +551,40 @@ def derive_variable_candidate(
             "fallback_confidence": fallback,
         }
 
-    if schema_index is not None:
-        entries, step, alias = match_token(name, schema_index, idx, terminology)
+    entries, step, alias = match_token(name, schema_index, idx, terminology)
 
-        if step == "old-format":
-            return cand(
-                match_step="old-format",
-                base_reason=(
-                    f"token `{name}` uses old format — expected `{{EntityType.fieldName}}`; "
-                    "see registry/sdk-schema-index.yaml — next-action: fix-token"
-                ),
-                terminal=True, fallback="none",
-            )
-        if step == "none":
-            entity = name.split(".")[0] if "." in name else name
-            return cand(
-                match_step="none",
-                base_reason=(
-                    f"token `{name}` — entity `{entity}` or field not found in schema index; "
-                    "see registry/sdk-schema-index.yaml — next-action: fix-token"
-                ),
-                terminal=True, fallback="none",
-            )
+    if step == "old-format":
+        return cand(
+            match_step="old-format",
+            base_reason=(
+                f"token `{name}` uses old format — expected `{{EntityType.fieldName}}`; "
+                "see registry/sdk-schema-index.yaml — next-action: fix-token"
+            ),
+            terminal=True, fallback="none",
+        )
+    if step == "none":
+        entity = name.split(".")[0] if "." in name else name
+        return cand(
+            match_step="none",
+            base_reason=(
+                f"token `{name}` — entity `{entity}` or field not found in schema index; "
+                "see registry/sdk-schema-index.yaml — next-action: fix-token"
+            ),
+            terminal=True, fallback="none",
+        )
 
-        # Schema-validated but no registry entries → terminal, allow JAR probe.
-        field_name = name.split(".", 1)[1] if "." in name else name
-        name_camel = field_name  # exact field name from schema, no normalisation (D8)
+    # Schema-validated but no registry entries → terminal, allow JAR probe.
+    field_name = name.split(".", 1)[1] if "." in name else name
+    name_camel = field_name  # exact field name from schema, no normalisation (D8)
 
-        if not entries:
-            c = cand(
-                match_step=step,  # preserve schema-validated step (D3)
-                base_reason=f"schema-validated but no registry path for {name_camel} — next-action: supply-from-plugin",
-                terminal=True, fallback="low",
-            )
-            c.update({"jar_fallback_ok": True, "name_camel": name_camel, "label": label})
-            return c
-
-    else:
-        entries, step, alias = match_name(name, label, idx, terminology)
-        name_snake = normalize_mapping_field_name(name)
-        name_camel = snake_to_camel(name_snake)
-
-        if not entries:
-            c = cand(
-                base_reason=f"no registry match for {name_camel} — next-action: supply-from-plugin",
-                terminal=True, fallback="low",
-            )
-            c.update({"jar_fallback_ok": True, "name_camel": name_camel, "label": label})
-            return c
+    if not entries:
+        c = cand(
+            match_step=step,  # preserve schema-validated step (D3)
+            base_reason=f"schema-validated but no registry path for {name_camel} — next-action: supply-from-plugin",
+            terminal=True, fallback="low",
+        )
+        c.update({"jar_fallback_ok": True, "name_camel": name_camel, "label": label})
+        return c
 
     ok: list[dict] = []
     violated: list[tuple[dict, str]] = []
@@ -788,30 +655,6 @@ def derive_variable_candidate(
         result["valid_roots"] = list(e.get("valid_roots") or [])
     return result
 
-
-def suggest_variable(
-    v: dict,
-    idx: dict,
-    terminology: dict | None,
-) -> tuple[str, str, str]:
-    """Compatibility shim for pre-root-aware callers. Returns (data_source, confidence, reason).
-
-    Wraps derive_variable_candidate; maps match_step to confidence without JAR
-    verification (legacy name-match-only semantics preserved for tests).
-    """
-    c = derive_variable_candidate(v, idx, terminology)
-    ds = c.get("path") or ""
-    step = c.get("match_step") or "none"
-    reason = c.get("base_reason") or ""
-    if c.get("terminal"):
-        conf = "low"
-    elif step in ("exact", "ci"):
-        conf = "high"
-    elif step in ("fuzzy", "terminology"):
-        conf = "medium"
-    else:
-        conf = "low"
-    return ds, conf, reason
 
 
 def _last_segment(path: str) -> str:
@@ -990,7 +833,7 @@ def suggest_loop_root(
 ) -> tuple[str, str, str, str | None, str | None, list[dict]]:
     """
     Returns (list_velocity, match_step, reasoning, iterator, foreach, available_coverages).
-    ``match_step`` is one of exact|ci|terminology|fuzzy|none (root-independent;
+    ``match_step`` is one of exact|none (root-independent;
     the per-root SDK verdict is graded later). available_coverages may be empty.
     """
     ln = loop_name.lower()
@@ -1000,30 +843,11 @@ def suggest_loop_root(
 
     it: dict | None = None
     step = "none"
-    alias: str | None = None
 
-    # Step 1: exact name
+    # Exact name match only — no ci/terminology fallbacks
     cand = iby_name.get(ln)
     if cand and cand.get("name") == loop_name:
         it, step = cand, "exact"
-    elif cand:
-        it, step = cand, "ci"
-    elif ln in iby_plural:
-        it, step = iby_plural[ln], "ci"
-    elif ln in iby_display and iby_display[ln].get("display_name", "").lower() == ln:
-        it, step = iby_display[ln], "ci"
-    else:
-        # Step 3: terminology exposures
-        if terminology:
-            for canonical, aliases in ((terminology.get("synonyms") or {}).get("exposures") or {}).items():
-                for a in aliases:
-                    if a.lower() == ln:
-                        cand = iby_name.get(canonical.lower())
-                        if cand:
-                            it, step, alias = cand, "terminology", a
-                            break
-                if it:
-                    break
 
     if it is None:
         return (
@@ -1037,10 +861,7 @@ def suggest_loop_root(
     foreach = str(it.get("foreach") or "")
     it_name = str(it.get("name") or "")
 
-    if step == "terminology":
-        reasoning = f"matched via terminology.yaml synonym `{alias}` → canonical `{it_name}` → {list_vel}"
-    else:
-        reasoning = f"loop `{loop_name}` → iterable `{it_name}` → {list_vel}"
+    reasoning = f"loop `{loop_name}` → iterable `{it_name}` → {list_vel}"
 
     # Collect available_coverages from the registry
     cov_manifest: list[dict] = []
@@ -1307,77 +1128,16 @@ def annotate_mapping(
     path_registry_rel: str,
     terminology: dict | None = None,
     *,
-    roots: list[dict] | None = None,
-    classpath: str = "",
-    schema_index: dict | None = None,
+    roots: list[dict],
+    classpath: str,
+    schema_index: dict,
 ) -> dict:
-    """Produce a ``.suggested.yaml`` from the mapping.
+    """Enrich the mapping and produce Schema 2.0 output (written to ``.mapping.yaml``).
 
-    When ``roots`` is provided and ``classpath`` is non-empty: schema **2.0** output with
-    ``rendering_roots`` and per-root ``verdicts`` grounded in the compiled JARs.
-
-    When called without ``roots``/``classpath`` (legacy / test mode): schema **1.0**
-    output with flat ``data_source``, ``confidence``, and ``reasoning`` fields derived
-    from name-match only — no JAR verification.
+    Requires ``roots``, ``classpath``, and ``schema_index`` — all sourced from the
+    compiled JARs. Tokens must use ``EntityType.fieldName`` dotted-path format.
     """
     idx = build_registry_index(reg)
-
-    if not roots or not classpath:
-        # Legacy schema 1.0 path — name-match only, no JAR verification.
-        out = copy.deepcopy(mapping)
-        out["schema_version"] = "1.0"
-        out["path_registry"] = path_registry_rel
-        out["product"] = str((reg.get("meta") or {}).get("product", ""))
-        out["_idx"] = idx
-        for v in out.get("variables") or []:
-            c = derive_variable_candidate(v, idx, terminology)
-            step = c.get("match_step") or "none"
-            ds = c.get("path") or ""
-            reason = c.get("base_reason") or ""
-            if c.get("terminal"):
-                conf = "low"
-            elif step in ("exact", "ci"):
-                conf = "high"
-            elif step in ("fuzzy", "terminology"):
-                conf = "medium"
-            else:
-                conf = "low"
-            v["data_source"] = ds
-            v["confidence"] = conf
-            v["reasoning"] = reason
-        for loop in out.get("loops") or []:
-            ln = loop["name"]
-            list_vel, lstep, lreason, iterator, foreach, cov_manifest = suggest_loop_root(
-                ln, idx, terminology, reg
-            )
-            if lstep in ("exact", "ci"):
-                lconf = "high"
-            elif lstep in ("fuzzy", "terminology"):
-                lconf = "medium"
-            else:
-                lconf = "low"
-            loop["data_source"] = list_vel
-            loop["confidence"] = lconf
-            loop["reasoning"] = lreason
-            if iterator:
-                loop["iterator"] = iterator
-            if foreach:
-                loop["foreach"] = foreach
-            if cov_manifest:
-                loop["available_coverages"] = cov_manifest
-            for fld in loop.get("fields") or []:
-                ph = fld.get("placeholder") or ""
-                fvel, fstep, freason = suggest_loop_field(ph, ln, idx, reg)
-                if fstep in ("exact",):
-                    fconf = "high"
-                elif fstep in ("ci", "fuzzy"):
-                    fconf = "medium"
-                else:
-                    fconf = "low"
-                fld["data_source"] = fvel
-                fld["confidence"] = fconf
-                fld["reasoning"] = freason
-        return out
 
     out = copy.deepcopy(mapping)
     out["schema_version"] = "2.0"
@@ -1399,8 +1159,10 @@ def annotate_mapping(
     root_ids = [r["id"] for r in roots]
 
     for v in out.get("variables") or []:
+        if v.get("data_source"):
+            # Explicit path already set — skip matching, preserve as-is
+            continue
         cand = derive_variable_candidate(v, idx, terminology, schema_index)
-        v.pop("data_source", None)
         v.pop("confidence", None)
         v.pop("reasoning", None)
         cand_block: dict = {
@@ -1424,7 +1186,8 @@ def annotate_mapping(
         list_vel, lstep, lreason, iterator, foreach, cov_manifest = suggest_loop_root(
             ln, idx, terminology, reg
         )
-        loop.pop("data_source", None)
+        if loop.get("data_source"):
+            continue
         loop.pop("confidence", None)
         loop.pop("reasoning", None)
         loop["type"] = "loop"
@@ -1444,9 +1207,10 @@ def annotate_mapping(
             loop["available_coverages"] = cov_manifest
 
         for fld in loop.get("fields") or []:
+            if fld.get("data_source"):
+                continue
             ph = fld.get("placeholder") or ""
             fvel, fstep, freason = suggest_loop_field(ph, ln, idx, reg)
-            fld.pop("data_source", None)
             fld.pop("confidence", None)
             fld.pop("reasoning", None)
             fld["candidate"] = {"velocity": fvel, "match_step": fstep}
@@ -1467,67 +1231,6 @@ def annotate_mapping(
 # Delta merge
 # ---------------------------------------------------------------------------
 
-
-def merge_delta(
-    base: dict, mapping: dict, reg: dict, path_registry_rel: str,
-    terminology: dict | None = None,
-) -> dict:
-    proposed = annotate_mapping(mapping, reg, path_registry_rel, terminology)
-    out = copy.deepcopy(base)
-
-    pvars = {v["name"]: v for v in proposed.get("variables") or []}
-    vars_out = list(out.get("variables") or [])
-    for i, v in enumerate(vars_out):
-        if entry_locked(v):
-            continue
-        p = pvars.get(v["name"])
-        if not p:
-            continue
-        v["data_source"] = p.get("data_source", "")
-        v["confidence"] = p.get("confidence")
-        v["reasoning"] = p.get("reasoning")
-        vars_out[i] = v
-    base_names = {v["name"] for v in vars_out}
-    for v in proposed.get("variables") or []:
-        if v["name"] not in base_names:
-            vars_out.append(copy.deepcopy(v))
-    out["variables"] = vars_out
-
-    ploops = {L["name"]: L for L in proposed.get("loops") or []}
-    loops_out = list(out.get("loops") or [])
-    for i, loop in enumerate(loops_out):
-        if entry_locked(loop):
-            continue
-        p = ploops.get(loop["name"])
-        if not p:
-            continue
-        for key in ("data_source", "confidence", "reasoning", "iterator", "foreach", "available_coverages", "type"):
-            if key in p:
-                loop[key] = copy.deepcopy(p[key])
-        pfields = {f.get("placeholder"): f for f in (p.get("fields") or [])}
-        new_fields = []
-        for fld in loop.get("fields") or []:
-            if entry_locked(fld):
-                new_fields.append(fld)
-                continue
-            pf = pfields.get(fld.get("placeholder"))
-            if pf:
-                nf = copy.deepcopy(fld)
-                nf["data_source"] = pf.get("data_source", "")
-                nf["confidence"] = pf.get("confidence")
-                nf["reasoning"] = pf.get("reasoning")
-                new_fields.append(nf)
-            else:
-                new_fields.append(fld)
-        loop["fields"] = new_fields
-        loops_out[i] = loop
-    base_loop_names = {L["name"] for L in loops_out}
-    for L in proposed.get("loops") or []:
-        if L["name"] not in base_loop_names:
-            loops_out.append(copy.deepcopy(L))
-    out["loops"] = loops_out
-    out["_idx"] = proposed.get("_idx")
-    return out
 
 
 
@@ -1654,7 +1357,7 @@ def main() -> int:
         source_value = args.mapping.name
     root_ids, root_err = parse_rendering_roots(source_value)
 
-    out_stem = args.out.name.replace(".suggested.yaml", "").replace(".yaml", "")
+    out_stem = args.out.name.replace(".suggested.yaml", "").replace(".mapping.yaml", "").replace(".yaml", "")
     if root_err or not product:
         blocker = root_err or "registry meta.product is empty — cannot resolve rendering roots"
         review_path = args.review_out or (args.out.parent / f"{out_stem}.review.md")
@@ -1811,11 +1514,11 @@ def main() -> int:
     root_ids_for_review = suggested.pop("_root_ids", root_ids)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    stem = args.out.name.replace(".suggested.yaml", "").replace(".yaml", "")
+    stem = args.out.name.replace(".suggested.yaml", "").replace(".mapping.yaml", "").replace(".yaml", "")
     header = (
-        f"# {stem}.suggested.yaml\n"
-        "# Suggested mapping — review and confirm each data_source before running the\n"
-        "# substitution step. Edit any data_source value, then save as policy-template.mapping.yaml.\n\n"
+        f"# {stem}.mapping.yaml\n"
+        "# Enriched mapping — review and confirm each data_source before running the\n"
+        "# substitution step (Leg 3). Edit any data_source value then re-run Leg 3.\n\n"
     )
     body = yaml.dump(
         suggested, sort_keys=False, allow_unicode=True,

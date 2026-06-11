@@ -1,0 +1,22 @@
+# Predefined conditions for automated pipeline test runs.
+#
+# Keys match the document stem (filename without extension).
+# Each block number maps to a valid accessor-expression from path-registry.yaml.
+# These are used by run_test_pipeline.py --auto to fill the conditional-form.md
+# before running --parse-conditional-form.
+#
+# Update these if new registry paths are added or the fixtures change.
+
+"TestQuoteSummary(quote)":
+  1: "quoteNumber != null"
+  2: "jurisdiction != null"
+
+"TestItemCert(segment)":
+  1: "item.data.itemInWarrantyAtTakeup != null"
+  2: "item.data.itemInWorkingOrderAtTakeup != null"
+  3: "item.data.purchasePrice != null"
+
+"TestRenewalNotice(segment)":
+  1: "policy.data.discountAmount != null"
+  2: "policy.data.coolingOffPeriod != null"
+  3: "policy.data.gracePeriod != null"

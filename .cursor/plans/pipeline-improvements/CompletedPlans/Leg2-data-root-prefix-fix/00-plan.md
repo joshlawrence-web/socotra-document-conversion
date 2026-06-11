@@ -1,8 +1,13 @@
 # Leg 2 — Fix `$data.<root>` Path Prefix for Rendering Roots
 
-**Status:** Ready  
+**Status:** Complete  
 **Created:** 2026-06-03  
+**Completed:** 2026-06-09  
 **Predecessor:** [Leg4-renderingData-alignment](../Leg4-renderingData-alignment/00-plan.md) — introduced the wrong assumption  
+
+## Completion note (2026-06-09)
+
+All code tasks complete: `_ROOT_VEL_PREFIX` uses `$data.quote`/`$data.segment` (T1); `_SIBLING_ROOT` uses `$data.policy`/`$data.transaction`/`$data.account` (T2); predecessor plan has "Superseded assumption" note (T5). T3/T4 are verification runs (re-run pipeline + Leg 4 compile check) — no code changes required.
 
 ---
 

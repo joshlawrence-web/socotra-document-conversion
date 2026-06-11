@@ -13,8 +13,7 @@ Usage:
 Outputs (normal mode):
     {stem}.raw.html           — raw converted HTML (pre-annotation)
     {stem}.annotated.html     — HTML with {field} → $TBD_field, [[cond]] → $doc.condN
-    {stem}.fields.yaml        — extracted fields (human-editable)
-    {stem}.mapping.yaml       — leg2-compatible mapping (pipeline input)
+    {stem}.mapping.yaml       — leg2-compatible mapping (pipeline input; enriched in-place by Leg 2)
     {stem}.conditional-form.md — customer-facing conditional form
 
 Output (--parse-conditional-form mode):
@@ -212,16 +211,20 @@ def convert_pdf(pdf_path: Path) -> str:
 # Field extraction (E-T1)
 # ---------------------------------------------------------------------------
 
-_FIELD_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
+_FIELD_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_.]*)\}")
 
 
-def extract_fields(html: str) -> list[dict]:
-    """Extract {field_name} tokens from HTML (on plain text). Deduplicates."""
+def extract_fields(html: str, registry_path=None) -> list[dict]:
+    """Extract {field_name} tokens from HTML (on plain text). Deduplicates.
+
+    When registry_path is provided, dotted-path placeholders (e.g. {account.data.firstName})
+    are resolved against the registry and their velocity path written into data_source.
+    Unresolved dotted names get data_source = "UNRESOLVED:<name>" and a stderr warning.
+    """
     try:
         from bs4 import BeautifulSoup
         text = BeautifulSoup(html, "html.parser").get_text()
     except ImportError:
-        # Strip tags crudely if bs4 not available
         text = re.sub(r"<[^>]+>", " ", html)
 
     seen: dict[str, list[int]] = {}
@@ -229,15 +232,43 @@ def extract_fields(html: str) -> list[dict]:
         name = m.group(1)
         seen.setdefault(name, []).append(i)
 
-    return [
-        {
+    lookup: dict = {}
+    if registry_path and any("." in name for name in seen):
+        try:
+            _scripts = str(Path(__file__).parent)
+            if _scripts not in sys.path:
+                sys.path.insert(0, _scripts)
+            from agent_tools import build_velocity_lookup  # noqa: PLC0415
+            lookup = build_velocity_lookup(registry_path)
+        except Exception:
+            pass
+
+    unresolved: list[str] = []
+    fields: list[dict] = []
+    for name in seen:
+        if "." in name and lookup:
+            velocity = lookup.get(name)
+            if velocity:
+                data_source = velocity
+            else:
+                data_source = f"UNRESOLVED:{name}"
+                unresolved.append(name)
+        else:
+            data_source = ""
+        fields.append({
             "name": name,
             "token": f"$TBD_{name}",
-            "data_source": "",
+            "data_source": data_source,
             "confidence": "",
-        }
-        for name in seen
-    ]
+        })
+
+    if unresolved:
+        print(
+            f"WARNING: unresolved dotted placeholders: {', '.join(unresolved)}",
+            file=sys.stderr,
+        )
+
+    return fields
 
 
 def annotate_fields(html: str, fields: list[dict]) -> str:
@@ -357,23 +388,6 @@ def annotate_conditionals(html: str, blocks: list[dict]) -> str:
     return result
 
 
-# ---------------------------------------------------------------------------
-# Write fields YAML (E-T3)
-# ---------------------------------------------------------------------------
-
-def write_fields_yaml(fields: list[dict], output_path: Path) -> None:
-    """Write {stem}.fields.yaml — simplified human-editable format."""
-    data = {
-        "product": "",
-        "variables": fields,
-    }
-    header = "# leg0 extracted fields — review before running leg2\n"
-    output_path.write_text(
-        header + yaml.dump(data, default_flow_style=False, allow_unicode=True),
-        encoding="utf-8",
-    )
-
-
 def _normalise_for_leg2(fields: list[dict], source_name: str) -> dict:
     """Convert fields list to a leg2-compatible .mapping.yaml dict (uses placeholder)."""
     import datetime as dt
@@ -388,7 +402,7 @@ def _normalise_for_leg2(fields: list[dict], source_name: str) -> dict:
                 "line": None,
                 "nearest_label": "",
             },
-            "data_source": "",
+            "data_source": f.get("data_source", ""),
         }
         for f in fields
     ]
@@ -413,6 +427,31 @@ def write_leg2_mapping(fields: list[dict], source_name: str, output_path: Path) 
 # ---------------------------------------------------------------------------
 # Write conditional form (E-T4)
 # ---------------------------------------------------------------------------
+
+_TBD_DISPLAY_RE = re.compile(r"\$TBD_([A-Za-z_][\w.]*)")
+
+
+def _tbd_to_braces(text: str) -> str:
+    """Display conversion: $TBD_name → {name} (customer-facing form only).
+
+    Trailing dots are sentence punctuation, not part of the field name —
+    `$TBD_amount.` becomes `{amount}.`, not `{amount.}`.
+    """
+    def _repl(m: re.Match) -> str:
+        name = m.group(1)
+        stripped = name.rstrip(".")
+        return "{" + stripped + "}" + name[len(stripped):]
+    return _TBD_DISPLAY_RE.sub(_repl, text)
+
+
+def _braces_to_tbd(text: str) -> str:
+    """Inverse of _tbd_to_braces: {name} → $TBD_name (canonical machine form).
+
+    No-op on text already in $TBD_ form, so forms written before the {field}
+    display change still parse.
+    """
+    return _FIELD_RE.sub(lambda m: "$TBD_" + m.group(1), text)
+
 
 def write_conditional_form(blocks: list[dict], stem: str, output_path: Path) -> None:
     """Write {stem}.conditional-form.md — customer-facing conditional form."""
@@ -441,7 +480,7 @@ def write_conditional_form(blocks: list[dict], stem: str, output_path: Path) -> 
             "",
             f"## Block {b['id']}",
             "",
-            f"> {b['source_text']}",
+            f"> {_tbd_to_braces(b['source_text'])}",
             "",
             "Condition: ",
             "",
@@ -464,7 +503,7 @@ def parse_conditional_form(md_path: Path) -> list[dict]:
     )
     for m in block_re.finditer(text):
         block_id = int(m.group(1))
-        source_text = m.group(2).strip()
+        source_text = _braces_to_tbd(m.group(2).strip())
         raw_condition = m.group(3).strip()
         # Take only the first line of the condition (customer may add notes below)
         condition_line = raw_condition.splitlines()[0].strip() if raw_condition else ""
@@ -568,6 +607,21 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     stem = input_path.stem
 
+    # Find registry for explicit path resolution (walk up from input dir)
+    registry_path = None
+    cur = input_path.parent.resolve()
+    for _ in range(8):
+        for rel in ("registry/path-registry.yaml", "path-registry.yaml"):
+            candidate = cur / rel
+            if candidate.is_file():
+                registry_path = candidate
+                break
+        if registry_path:
+            break
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+
     # Convert to raw HTML
     if suffix == ".docx":
         raw_html = convert_docx(input_path)
@@ -580,7 +634,7 @@ def main() -> int:
     print(f"Wrote {raw_path}")
 
     # Extract + annotate fields
-    fields = extract_fields(raw_html)
+    fields = extract_fields(raw_html, registry_path=registry_path)
     annotated = annotate_fields(raw_html, fields)
 
     # Extract + annotate conditionals
@@ -591,11 +645,6 @@ def main() -> int:
     annotated_path = output_dir / f"{stem}.annotated.html"
     annotated_path.write_text(annotated, encoding="utf-8")
     print(f"Wrote {annotated_path}")
-
-    # Write fields YAML (human-editable)
-    fields_path = output_dir / f"{stem}.fields.yaml"
-    write_fields_yaml(fields, fields_path)
-    print(f"Wrote {fields_path}")
 
     # Write leg2-compatible mapping
     mapping_path = output_dir / f"{stem}.mapping.yaml"

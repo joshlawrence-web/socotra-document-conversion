@@ -7,11 +7,11 @@ summary, requires PROCEED confirmation, then dispatches to Leg 1 / Leg 2 / Leg 3
 Usage:
     python3 scripts/agent.py "RUN_PIPELINE leg1 input=samples/input/Simple-form.html"
     python3 scripts/agent.py "RUN_PIPELINE leg1+leg2 input=samples/input/Simple-form.html"
-    python3 scripts/agent.py "RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.suggested.yaml"
-    python3 scripts/agent.py "RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.suggested.yaml high_only=true"
+    python3 scripts/agent.py "RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.mapping.yaml"
+    python3 scripts/agent.py "RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.mapping.yaml high_only=true"
     python3 scripts/agent.py "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml"
     python3 scripts/agent.py "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml high_only=true"
-    python3 scripts/agent.py "RUN_PIPELINE leg4 suggested=samples/output/Simple-form/Simple-form.suggested.yaml"
+    python3 scripts/agent.py "RUN_PIPELINE leg4 suggested=samples/output/Simple-form/Simple-form.mapping.yaml"
     python3 scripts/agent.py "RUN_PIPELINE leg1+leg2+leg3+leg4 input=samples/input/Simple-form.html registry=registry/path-registry.yaml"
     python3 scripts/agent.py --yes "RUN_PIPELINE leg1+leg2+leg3+leg4 input=samples/input/Simple-form.html"
     python3 scripts/agent.py          # interactive stdin mode
@@ -48,11 +48,11 @@ This agent requires an explicit invocation token. Examples:
   RUN_PIPELINE leg2 mode=terse mapping=samples/output/Simple-form/Simple-form.mapping.yaml
   RUN_PIPELINE leg2+leg3 mapping=samples/output/Simple-form/Simple-form.mapping.yaml registry=registry/path-registry.yaml
   RUN_PIPELINE leg1+leg2 input=samples/input/Simple-form.html registry=registry/path-registry.yaml
-  RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.suggested.yaml
-  RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.suggested.yaml high_only=true
+  RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.mapping.yaml
+  RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.mapping.yaml high_only=true
   RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml
   RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml high_only=true
-  RUN_PIPELINE leg4 suggested=samples/output/Simple-form/Simple-form.suggested.yaml
+  RUN_PIPELINE leg4 suggested=samples/output/Simple-form/Simple-form.mapping.yaml
   RUN_PIPELINE leg1+leg2+leg3+leg4 input=samples/input/Simple-form.html registry=registry/path-registry.yaml
   RUN_PIPELINE list_paths registry=registry/path-registry.yaml
   RUN_PIPELINE list_paths registry=registry/path-registry.yaml out=samples/output/field-catalog.md
@@ -64,9 +64,9 @@ Required per operation:
   leg2               : mode=<full|terse|delta|batch>  mapping=<file.mapping.yaml>
   leg2+leg3          : mapping=<file.mapping.yaml>  [mode defaults to terse]
   leg1+leg2          : input=<file.html>  [mode defaults to terse]
-  leg3               : suggested=<file.suggested.yaml>
+  leg3               : suggested=<file.mapping.yaml>
   leg1+leg2+leg3     : input=<file.html>  [mode defaults to terse]
-  leg4               : suggested=<file.suggested.yaml>
+  leg4               : suggested=<file.mapping.yaml>
   leg1+leg2+leg3+leg4: input=<file.html>  [mode defaults to terse]
 
   list_paths         : registry=<path> (optional)  out=<file> (optional)
@@ -116,10 +116,12 @@ def parse_invocation(text: str) -> dict | None:
 
 
 def _derive_leg3_paths(suggested: str) -> dict:
-    """Compute Leg 3 artifact paths from a .suggested.yaml path."""
+    """Compute Leg 3 artifact paths from a .mapping.yaml or .suggested.yaml path."""
     stem = Path(suggested).stem
-    if stem.endswith(".suggested"):
-        stem = stem[: -len(".suggested")]
+    for sfx in (".suggested", ".mapping"):
+        if stem.endswith(sfx):
+            stem = stem[: -len(sfx)]
+            break
     base = str(Path(suggested).parent)
     return {
         "out": f"{base}/{stem}.final.vm",
@@ -133,9 +135,9 @@ def _derive_leg2_paths(input_html: str, output: str) -> dict:
     base = f"{output}/{stem}"
     return {
         "mapping": f"{base}/{stem}.mapping.yaml",
-        "out": f"{base}/{stem}.suggested.yaml",
+        "out": f"{base}/{stem}.mapping.yaml",
         "review_out": f"{base}/{stem}.review.md",
-        "telemetry_log": f"{base}/{stem}.suggester-log.jsonl",
+        "telemetry_log": None,
     }
 
 
@@ -306,7 +308,7 @@ def run(invocation: str, auto_yes: bool) -> int:
 
     if operation in ("leg2", "leg2+leg3", "leg0+leg2+leg3", "leg1+leg2", "leg1+leg2+leg3"):
         if operation == "leg0+leg2+leg3":
-            # Leg 0 wrote {stem}.mapping.yaml — use it directly
+            # Leg 0 wrote {stem}.mapping.yaml — enrich it in place
             m_path = leg0_mapping_path
             stem = Path(m_path).stem
             if stem.endswith(".mapping"):
@@ -314,9 +316,9 @@ def run(invocation: str, auto_yes: bool) -> int:
             base = str(Path(m_path).parent)
             leg2_paths = {
                 "mapping": m_path,
-                "out": f"{base}/{stem}.suggested.yaml",
+                "out": m_path,
                 "review_out": f"{base}/{stem}.review.md",
-                "telemetry_log": f"{base}/{stem}.suggester-log.jsonl",
+                "telemetry_log": None,
             }
         elif operation in ("leg1+leg2", "leg1+leg2+leg3"):
             leg2_paths = _derive_leg2_paths(input_html, output)
@@ -327,9 +329,9 @@ def run(invocation: str, auto_yes: bool) -> int:
             base = str(Path(mapping).parent)
             leg2_paths = {
                 "mapping": mapping,
-                "out": f"{base}/{stem}.suggested.yaml",
+                "out": f"{base}/{stem}.mapping.yaml",
                 "review_out": f"{base}/{stem}.review.md",
-                "telemetry_log": f"{base}/{stem}.suggester-log.jsonl",
+                "telemetry_log": None,
             }
 
         mappings = (
@@ -346,14 +348,14 @@ def run(invocation: str, auto_yes: bool) -> int:
             if stem.endswith(".mapping"):
                 stem = stem[: -len(".mapping")]
             base = str(Path(m).parent)
-            this_suggested = leg2_paths.get("out") or f"{base}/{stem}.suggested.yaml"
+            this_suggested = leg2_paths.get("out") or f"{base}/{stem}.mapping.yaml"
             print(f"\nRunning Leg 2 for {m}…")
             r = run_leg2(
                 mapping=m,
                 registry=registry,
                 out=this_suggested,
                 review_out=leg2_paths.get("review_out") or f"{base}/{stem}.review.md",
-                telemetry_log=leg2_paths.get("telemetry_log") or f"{base}/{stem}.suggester-log.jsonl",
+                telemetry_log=leg2_paths.get("telemetry_log"),
                 mode=mode,
                 terminology=terminology,
             )
@@ -427,7 +429,7 @@ def run(invocation: str, auto_yes: bool) -> int:
         for p in to_delete:
             if p.exists():
                 p.unlink()
-                removed.append(str(p.relative_to(repo_root)))
+                removed.append(str(p.resolve().relative_to(repo_root)))
         if removed:
             print("\nRemoved intermediates:")
             for f in removed:
@@ -459,9 +461,9 @@ def guided_mode() -> str:
     print("  2) leg2               — suggest paths for an existing .mapping.yaml")
     print("  3) leg1+leg2          — end-to-end through Leg 2 (default)")
     print("  4) leg2+leg3          — suggest paths + write final .vm from an existing .mapping.yaml")
-    print("  5) leg3               — write final .vm from an existing .suggested.yaml")
+    print("  5) leg3               — write final .vm from an existing .mapping.yaml")
     print("  6) leg1+leg2+leg3     — full pipeline")
-    print("  7) leg4               — generate DocumentDataSnapshotPlugin from .suggested.yaml")
+    print("  7) leg4               — generate DocumentDataSnapshotPlugin from .mapping.yaml")
     print("  8) leg1+leg2+leg3+leg4 — full pipeline including plugin\n")
     op_choice = _ask("Choose [1/2/3/4/5/6/7/8]", default="3")
     op_map = {
@@ -510,9 +512,12 @@ def guided_mode() -> str:
 
     # Suggested (leg3 / leg4 standalone only)
     if operation in ("leg3", "leg4"):
-        candidates = sorted((repo_root / "samples" / "output").rglob("*.suggested.yaml"))
+        candidates = sorted(
+            list((repo_root / "samples" / "output").rglob("*.mapping.yaml")) +
+            list((repo_root / "samples" / "output").rglob("*.suggested.yaml"))
+        )
         if candidates:
-            print("\nAvailable suggested files:")
+            print("\nAvailable mapping files:")
             for i, c in enumerate(candidates, 1):
                 print(f"  {i}) {c.relative_to(repo_root)}")
             choice = _ask("Pick a number or type a path", default="1")
@@ -521,7 +526,7 @@ def guided_mode() -> str:
             else:
                 suggested = choice
         else:
-            suggested = _ask("Path to .suggested.yaml file")
+            suggested = _ask("Path to .mapping.yaml file")
         parts.append(f"suggested={suggested}")
 
     # Mode (leg2 / leg2+leg3 / leg1+leg2 / combos that include leg2)

@@ -13,6 +13,9 @@ conformance/fixtures/*/actual/
 # Generated pipeline output — not source, don't track
 samples/output/
 
+# Test pipeline runtime output — not source, don't track
+tests/pipeline/output/
+
 # Build artifacts
 build/
 

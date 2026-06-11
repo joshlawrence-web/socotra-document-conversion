@@ -92,6 +92,16 @@ ZenCover is the bundled demo only. Every pipeline command that accepts `registry
 
 ---
 
+### 8 — Conditionals: template-side `#if` (Option B, deferred)
+**Origin:** [10-conditional-field-tokens](./CompletedPlans/10-conditional-field-tokens/00-plan.md) §3 — Status: Deferred
+- Plugin-side concatenation (Option A) shipped for fields inside conditional blocks
+- Option B (plugin puts a boolean; Leg 3 wraps block content in `#if($data.condN)…#end`)
+  would support per-exposure (`item.*`) and account fields inside conditionals naturally
+- Revisit if those become a real customer need; it changes the conditional contract for
+  every existing template/plugin and the additive-mode key semantics
+
+---
+
 ## Active Plans (Ready / In Progress)
 
 | Plan | Status |

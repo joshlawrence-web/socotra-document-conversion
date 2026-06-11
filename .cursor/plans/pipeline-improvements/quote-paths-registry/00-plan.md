@@ -1,6 +1,7 @@
 # Quote Paths Registry — Automated `quote_paths` Generation
 
-**Status:** Ready  
+**Status:** Ready
+**When done:** set `Status: Done`, add `Completed:` date, move folder to `CompletedPlans/` (§7).
 **Created:** 2026-06-09  
 **History:** [history.md](./history.md) (append-only)
 
@@ -227,3 +228,15 @@ python3 scripts/agent.py --yes "RUN_PIPELINE build_quote_paths"
 All three steps are independent CLIs that can be run individually or chained.
 `build_quote_paths.py` is the missing link between the JAR-derived index and the
 human-readable registry.
+
+---
+
+## 7. Self-certification (completing agent — required)
+
+When every item in §4 Definition of done is satisfied:
+
+1. Edit this file: change `**Status:** Ready` → `**Status:** Done` and add `**Completed:** <date>`.
+2. Move this folder: `mv .cursor/plans/pipeline-improvements/quote-paths-registry/ .cursor/plans/pipeline-improvements/CompletedPlans/`
+3. Commit both changes with your implementation (or in a follow-up commit).
+
+**Do not skip this step.** Plans left open after completion create false signals about remaining work.

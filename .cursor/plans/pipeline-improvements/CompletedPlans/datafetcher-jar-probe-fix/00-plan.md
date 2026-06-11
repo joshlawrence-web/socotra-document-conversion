@@ -1,5 +1,18 @@
 # Plan: Fix DataFetcher JAR Probe for Generic Return Types
 
+**Status:** Complete  
+**Completed:** 2026-06-09
+
+## Completion note (2026-06-09)
+
+Steps 1–3 verified done: `_find_customer_type_for_method` + `datafetcher_return_type` fallback in `sdk_introspect.py`; `account_paths` in registry rewritten (firstName/lastName/email/primaryPhone only, bad fields removed); `accountFirstName`/`accountLastName` entries in `datafetcher_paths`.
+
+Step 4 (`_validate_datafetcher_entry` `.data.` sub-path guard) — deferred as low value; the existing `$data.{key}` prefix check already catches the primary mistake and the JAR probe is the authoritative guard.
+
+Step 5 (pipeline re-run smoke test) — run manually any time; no code changes pending.
+
+---
+
 ## Context
 
 `getAccount()` in the `DataFetcher` interface is declared as `<T> T getAccount(ULID)` — a raw generic. `sdk_introspect.py:datafetcher_return_type()` calls `_unwrap_type()` on the return, which returns `None` for bare type params (no dot). This means the JAR probe never runs for any DataFetcher method that returns a generic. The registry falls back to "trusted from registry" (medium confidence, no verification).

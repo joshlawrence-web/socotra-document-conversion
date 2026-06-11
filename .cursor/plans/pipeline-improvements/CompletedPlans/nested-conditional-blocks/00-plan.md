@@ -1,8 +1,13 @@
 # Plan: Nested Conditional Block Extraction
 
-**Status:** Ready to implement
+**Status:** Complete
 **Created:** 2026-06-05
+**Completed:** 2026-06-09
 **Predecessor:** [conditional-blocks](../CompletedPlans/conditional-blocks/00-plan.md)
+
+## Completion note (2026-06-09)
+
+All 8 tasks verified complete: N-pass extraction loop in `convert.py`, `_link_cond_parents()` helper, block dict carries `parent_id`/`depth`, CSV schema updated, `write_conditional_ref_html` reworked to annotate `.vm` text (not original HTML), `load_conditional_registry` in `leg4_generate_plugin.py` reads `parent_id`/`depth`, TODO stubs include parent guard notes, report table includes `depth`/`parent_id` columns.
 
 ---
 

@@ -2,7 +2,7 @@
 """Leg 4 — Document Data Snapshot Plugin Generator.
 
 Reads:
-  - <stem>.suggested.yaml  (Leg 2) — provides `product:` and `variables:`
+  - <stem>.mapping.yaml  (Leg 2, enriched) — provides `product:` and `variables:`
   - build/customer-config.jar       — plugin interface + {Product}* request types
   - build/core-datamodel-*.jar      — DocumentDataSnapshot, Policy, Transaction, ...
 
@@ -44,6 +44,7 @@ from sdk_introspect import (
     _default_slf4j_jar,
     _method_return_type,
     _unwrap_type,
+    _zero_arg_methods,
     validate_path,
 )
 
@@ -97,6 +98,229 @@ def _accessor_to_java(expr: str) -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# Field tokens inside conditional blocks (plan 10-conditional-field-tokens)
+# ---------------------------------------------------------------------------
+
+# Categories whose accessors live on a local variable of the matching overload.
+# Everything else (account, exposure/coverage/charge paths, …) has no local in a
+# document-scoped conditional put and is flagged as unsupported (D4).
+# category → (scope, local Java variable). Policy custom fields ($data.data.*)
+# live on the segment type in Java, not on core Policy.
+_CATEGORY_WIRING = {
+    "quote_system": ("quote", "quote"),
+    "system": ("policy", "policy"),
+    "policy_data": ("policy", "segment"),
+}
+_CORE_POLICY_FQCN = "com.socotra.coremodel.Policy"
+
+_FIELD_TOKEN_FALLBACK_RE = re.compile(r"[A-Za-z_][\w.]*")
+_TBD_PREVIEW_RE = re.compile(r"\$TBD_([A-Za-z_][\w.]*)")
+
+
+def _tbd_preview(text: str) -> str:
+    """Display $TBD_name tokens as {name} in generated comments (never in code)."""
+    def _repl(m: re.Match) -> str:
+        name = m.group(1)
+        stripped = name.rstrip(".")
+        return "{" + stripped + "}" + name[len(stripped):]
+    return _TBD_PREVIEW_RE.sub(_repl, text)
+
+
+def _load_velocity_categories(registry_path: Path | None) -> dict[str, str]:
+    """Build {velocity_path: category} from path-registry.yaml. {} if unreadable."""
+    if not registry_path or not Path(registry_path).is_file():
+        return {}
+    try:
+        data = yaml.safe_load(Path(registry_path).read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+    out: dict[str, str] = {}
+
+    def _walk(node) -> None:
+        if isinstance(node, dict):
+            vel, cat = node.get("velocity"), node.get("category")
+            if vel and cat:
+                out[str(vel)] = str(cat)
+            for v in node.values():
+                _walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                _walk(v)
+
+    _walk(data)
+    return out
+
+
+def _rewrite_condition_root(cond: str, scope: str) -> str:
+    """Rewrite customer accessor roots to the overload's actual Java locals.
+
+    The form convention is `policy.data.<field>` for custom policy fields, but
+    in Java those live on the segment type — core Policy has no data() method.
+    """
+    if scope == "policy":
+        return re.sub(r"\bpolicy\.data\.", "segment.data.", cond)
+    return cond
+
+
+def _walk_java_chain(classpath: str, fqcn: str, parts: list[str]) -> tuple[str | None, str]:
+    """javap-walk parts against fqcn. Returns (final_return_type, "") or (None, reason)."""
+    current = fqcn
+    ret = ""
+    for i, part in enumerate(parts):
+        methods = _zero_arg_methods(classpath, current)
+        short = current.rsplit(".", 1)[-1].rsplit("$", 1)[-1]
+        if not methods:
+            return None, f"could not introspect {short}"
+        if part not in methods:
+            return None, f"{short} has no method {part}()"
+        ret = methods[part]
+        if i < len(parts) - 1:
+            nxt = _unwrap_type(ret)
+            if nxt is None:
+                return None, f"{part}() returns {ret}; cannot navigate further"
+            current = nxt
+    return ret, ""
+
+
+def _build_cond_field_lookup(
+    suggested_flat: dict,
+    vel_to_cat: dict[str, str],
+    classpath: str | None = None,
+    product: str | None = None,
+) -> dict[str, dict]:
+    """Map variable name → wiring info for field tokens inside conditional blocks.
+
+    Each entry: {data_source, scope: 'quote'|'policy'|None, java_expr, unsupported_reason}.
+    Empty data_source (or UNRESOLVED:*) → unresolved, the caller hard-fails (D5).
+    Loop fields and DataFetcher-sourced variables are resolved-but-unsupported (D4).
+
+    With classpath+product the accessor chain is javap-verified against the
+    overload's local type and Optional<> returns are unwrapped; without them
+    (unit tests) the chain is emitted unverified with an Objects.toString wrap.
+    """
+    root_fqcns = {
+        "quote": f"{CUSTOMER_PACKAGE}.{product}Quote" if product else None,
+        "policy": _CORE_POLICY_FQCN,
+        "segment": f"{CUSTOMER_PACKAGE}.{product}Segment" if product else None,
+    }
+    lookup: dict[str, dict] = {}
+    for v in suggested_flat.get("variables") or []:
+        name = (v.get("name") or "").strip()
+        if not name:
+            continue
+        ds = (v.get("data_source") or "").strip()
+        info = {"data_source": ds, "scope": None, "java_expr": "", "unsupported_reason": ""}
+        cand = v.get("candidate") or {}
+        cat = vel_to_cat.get(ds)
+        if not ds or ds.startswith("UNRESOLVED:"):
+            info["data_source"] = ""
+        elif cand.get("source") == "datafetcher":
+            info["unsupported_reason"] = (
+                "DataFetcher-sourced (deferred — needs a fetch before the conditional block)"
+            )
+        elif cat in _CATEGORY_WIRING:
+            scope, root_var = _CATEGORY_WIRING[cat]
+            if not ds.startswith("$data."):
+                info["unsupported_reason"] = f"unexpected velocity shape: {ds}"
+            else:
+                parts = ds[len("$data."):].split(".")
+                expr = root_var + "".join(f".{p}()" for p in parts)
+                fqcn = root_fqcns.get(root_var)
+                final_ret = ""
+                if classpath and fqcn:
+                    final_ret, fail = _walk_java_chain(classpath, fqcn, parts)
+                    if final_ret is None:
+                        info["unsupported_reason"] = f"path does not resolve in Java ({fail})"
+                if not info["unsupported_reason"]:
+                    info["scope"] = scope
+                    if final_ret and final_ret.startswith("java.util.Optional"):
+                        info["java_expr"] = f'{expr}.map(Object::toString).orElse("")'
+                    else:
+                        info["java_expr"] = f'Objects.toString({expr}, "")'
+        elif cat is None:
+            info["unsupported_reason"] = "path not found in registry (cannot derive Java accessor)"
+        else:
+            info["unsupported_reason"] = (
+                f"category '{cat}' has no local accessor in a document-scoped conditional"
+            )
+        lookup[name] = info
+    for loop in suggested_flat.get("loops") or []:
+        for f in loop.get("fields") or []:
+            name = (f.get("name") or "").strip()
+            if name and name not in lookup:
+                lookup[name] = {
+                    "data_source": (f.get("data_source") or "").strip(),
+                    "scope": None,
+                    "java_expr": "",
+                    "unsupported_reason": (
+                        "per-exposure (loop) field — conditional puts are document-scoped"
+                    ),
+                }
+    return lookup
+
+
+def _find_field_tokens(text: str, known_names: set[str]) -> list[tuple[int, int, str]]:
+    """Find $TBD_<name> tokens in text. Returns [(start, end, name)] in order.
+
+    Longest-match against known_names (D8) so sentence punctuation after a token
+    is not swallowed (`$TBD_name.` → name, not `name.`). Names absent from the
+    mapping fall back to a regex match with trailing dots stripped.
+    """
+    out: list[tuple[int, int, str]] = []
+    for m in re.finditer(r"\$TBD_", text):
+        rest = text[m.end():]
+        best: str | None = None
+        for name in known_names:
+            if rest.startswith(name) and (best is None or len(name) > len(best)):
+                nxt = rest[len(name): len(name) + 1]
+                if not nxt or not (nxt.isalnum() or nxt == "_"):
+                    best = name
+        if best is None:
+            m2 = _FIELD_TOKEN_FALLBACK_RE.match(rest)
+            if not m2:
+                continue
+            best = m2.group(0).rstrip(".")
+            if not best:
+                continue
+        out.append((m.start(), m.end() + len(best), best))
+    return out
+
+
+def _analyse_cond_fields(
+    cond_blocks: list[dict], field_lookup: dict[str, dict]
+) -> tuple[list[dict], list[dict], list[int]]:
+    """Classify field tokens inside conditional blocks.
+
+    Returns (unresolved, unsupported, mixed_scope_block_ids):
+      unresolved:  [{block_id, name}]          — no data_source; caller hard-fails (D5)
+      unsupported: [{block_id, name, reason}]  — resolved but not wireable (D4)
+      mixed_scope_block_ids: blocks mixing quote- and policy-scoped fields —
+                   such a block renders empty in BOTH overloads.
+    """
+    unresolved: list[dict] = []
+    unsupported: list[dict] = []
+    mixed: list[int] = []
+    known = set(field_lookup)
+    for b in cond_blocks:
+        scopes: set[str] = set()
+        for _s, _e, name in _find_field_tokens(b.get("source_text") or "", known):
+            info = field_lookup.get(name)
+            if info is None:
+                unresolved.append({"block_id": b["id"], "name": name})
+            elif info.get("unsupported_reason"):
+                unsupported.append(
+                    {"block_id": b["id"], "name": name, "reason": info["unsupported_reason"]}
+                )
+            elif not info.get("data_source"):
+                unresolved.append({"block_id": b["id"], "name": name})
+            else:
+                scopes.add(info["scope"])
+        if {"quote", "policy"} <= scopes:
+            mixed.append(b["id"])
+    return unresolved, unsupported, mixed
+
+
 def _repo_root() -> Path:
     """Walk up from this script until a .cursor/ directory is found."""
     p = Path(__file__).resolve().parent
@@ -141,9 +365,9 @@ def _flatten_to_segment_root(suggested: dict) -> dict:
         verdict = (entry.get("verdicts") or {}).get(seg_id) or {}
         return {
             **entry,
-            "data_source": verdict.get("data_source") or "",
-            "confidence": verdict.get("confidence") or "",
-            "reasoning": verdict.get("reasoning") or "",
+            "data_source": verdict.get("data_source") or entry.get("data_source") or "",
+            "confidence": verdict.get("confidence") or entry.get("confidence") or "",
+            "reasoning": verdict.get("reasoning") or entry.get("reasoning") or "",
         }
 
     new_vars = [_promote(v) for v in (suggested.get("variables") or [])]
@@ -296,6 +520,97 @@ def _parse_existing_cond_high_water(java_path: Path) -> int:
     return max((int(m) for m in matches), default=0)
 
 
+def parse_plugin_keys(java_path: Path) -> dict:
+    """Parse and validate an existing SnapshotPlugin .java file.
+
+    Returns a dict with:
+      existing_keys: set[str]  — string literals from renderingData.put("key", ...) calls
+      cond_high_water: int     — highest condN index found (0 if none)
+      is_valid: bool           — False if structure is unrecognisable or has errors
+      errors: list[str]        — human-readable validation errors
+    """
+    errors: list[str] = []
+
+    try:
+        text = java_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        return {
+            "existing_keys": set(),
+            "cond_high_water": 0,
+            "is_valid": False,
+            "errors": [f"File is not valid UTF-8: {exc}"],
+        }
+
+    if not text.strip():
+        return {
+            "existing_keys": set(),
+            "cond_high_water": 0,
+            "is_valid": False,
+            "errors": ["File is empty"],
+        }
+
+    # The generated template uses DocumentDataSnapshot.builder(), not renderingData.builder()
+    if "DocumentDataSnapshot.builder()" not in text:
+        errors.append("Builder pattern not found: missing 'DocumentDataSnapshot.builder()'")
+    if ".build()" not in text:
+        errors.append("Builder pattern not found: missing '.build()'")
+
+    put_re = re.compile(r'renderingData\.put\(\s*"([^"]+)"')
+    bad_put_re = re.compile(r'renderingData\.put\(\s*(?!")')
+
+    all_seen_keys: set[str] = set()
+    bad_lines: list[int] = []
+
+    # Duplicate detection is per renderingData scope — each overload has its own HashMap
+    # so identical keys across overloads are intentional (not duplicates).
+    current_scope: dict[str, list[int]] = {}
+    scope_active = False
+
+    for lineno, line in enumerate(text.splitlines(), 1):
+        if "renderingData" in line and "new HashMap<>()" in line:
+            if scope_active:
+                for key, lnos in current_scope.items():
+                    if len(lnos) > 1:
+                        errors.append(
+                            f'Duplicate key "{key}" on lines {" and ".join(str(n) for n in lnos)}'
+                        )
+            current_scope = {}
+            scope_active = True
+            continue
+
+        for m in put_re.finditer(line):
+            key = m.group(1)
+            all_seen_keys.add(key)
+            if scope_active:
+                current_scope.setdefault(key, []).append(lineno)
+
+        for _ in bad_put_re.finditer(line):
+            bad_lines.append(lineno)
+
+    if scope_active:
+        for key, lnos in current_scope.items():
+            if len(lnos) > 1:
+                errors.append(
+                    f'Duplicate key "{key}" on lines {" and ".join(str(n) for n in lnos)}'
+                )
+
+    if not all_seen_keys and not bad_lines:
+        errors.append("No renderingData.put() calls found")
+
+    for lineno in bad_lines:
+        errors.append(f"put() call on line {lineno} has wrong argument format (not a quoted key)")
+
+    cond_nums = [int(k[4:]) for k in all_seen_keys if re.fullmatch(r"cond\d+", k)]
+    cond_high_water = max(cond_nums, default=0)
+
+    return {
+        "existing_keys": all_seen_keys,
+        "cond_high_water": cond_high_water,
+        "is_valid": len(errors) == 0,
+        "errors": errors,
+    }
+
+
 def _required_keys(suggested: dict, cond_blocks: list[dict]) -> dict[str, str]:
     """Return {key: root_id | "cond"} for DataFetcher variables and conditional blocks.
 
@@ -356,18 +671,20 @@ def _append_to_plugin(
     missing_quote_df: list[dict],
     missing_policy_df: list[dict],
     offset_cond_blocks: list[dict],
+    field_lookup: dict[str, dict] | None = None,
 ) -> None:
     """Write a backup then insert missing puts before each overload's builder return.
 
     Quote DataFetcher calls → quote overload.
     Policy DataFetcher calls → policy overload.
     Conditional puts → both overloads (document-scoped, decision A4).
-    Also inserts any new dynamic imports needed for new DataFetcher return types.
+    Also inserts any new dynamic imports needed for new DataFetcher return types,
+    and java.util.Objects when conditional field concatenation is generated.
     """
     quote_df_code = _generate_datafetcher_extras(missing_quote_df)
     policy_df_code = _generate_datafetcher_extras(missing_policy_df)
-    quote_cond_code = render_conditional_puts(offset_cond_blocks, scope="quote")
-    policy_cond_code = render_conditional_puts(offset_cond_blocks, scope="policy")
+    quote_cond_code = render_conditional_puts(offset_cond_blocks, scope="quote", field_lookup=field_lookup)
+    policy_cond_code = render_conditional_puts(offset_cond_blocks, scope="policy", field_lookup=field_lookup)
 
     if not quote_df_code and not policy_df_code and not quote_cond_code:
         return
@@ -379,6 +696,8 @@ def _append_to_plugin(
 
     # Insert missing dynamic imports for new DataFetcher return types.
     new_imports = _generate_dynamic_imports(missing_quote_df + missing_policy_df)
+    if "Objects.toString(" in quote_cond_code + policy_cond_code:
+        new_imports = (new_imports + "\n" if new_imports else "") + "import java.util.Objects;"
     if new_imports:
         for imp_line in new_imports.splitlines():
             if imp_line and imp_line not in text:
@@ -434,7 +753,7 @@ def _collect_datafetcher_calls(
         if cand.get("source") != "datafetcher":
             continue
         verdict = (v.get("verdicts") or {}).get(root_id) or {}
-        if verdict.get("confidence") not in ("high", "medium"):
+        if not (v.get("data_source") or "").strip():
             continue
         key = cand.get("datafetcher_key", "")
         method = cand.get("datafetcher_method", "")
@@ -507,35 +826,142 @@ def load_conditional_registry(yaml_path: Path) -> list[dict]:
     return blocks
 
 
-def render_conditional_puts(blocks: list[dict], scope: str = "quote") -> str:
+def _count_annotated_conditionals(out_dir: Path, stem: str) -> int:
+    """Count unique $doc.condN markers in {stem}.annotated.html. Returns 0 if file absent."""
+    annotated = out_dir / f"{stem}.annotated.html"
+    if not annotated.exists():
+        return 0
+    return len(set(re.findall(r'\$doc\.cond\d+', annotated.read_text(encoding="utf-8"))))
+
+
+def _topo_sort_cond_blocks(blocks: list[dict]) -> list[dict]:
+    """Return blocks sorted so dependencies (referenced via $doc.condN) come first."""
+    id_map = {b["id"]: b for b in blocks}
+    visited: set[int] = set()
+    result: list[dict] = []
+
+    def _deps(block: dict) -> list[int]:
+        return [int(m) for m in re.findall(r'\$doc\.cond(\d+)', block.get("source_text") or "")]
+
+    def visit(bid: int) -> None:
+        if bid in visited:
+            return
+        visited.add(bid)
+        b = id_map.get(bid)
+        if b:
+            for dep_id in _deps(b):
+                visit(dep_id)
+            result.append(b)
+
+    for b in blocks:
+        visit(b["id"])
+    return result
+
+
+def _source_text_to_java(source_text: str, field_exprs: dict[str, str] | None = None) -> str:
+    """Escape source_text for a Java string literal, replacing $doc.condN refs with concat.
+
+    field_exprs maps a field name to its Java expression; matching $TBD_<name>
+    tokens become string concatenation (`" + <expr> + "`). Tokens for names not
+    in field_exprs are left literal (the caller flags them in the report).
+    """
+    escaped = source_text.replace("\\", "\\\\").replace('"', '\\"')
+    if field_exprs:
+        # Escaping never alters $TBD_ tokens, so spans found here are stable.
+        spans = _find_field_tokens(escaped, set(field_exprs))
+        for start, end, name in reversed(spans):
+            expr = field_exprs.get(name)
+            if expr:
+                escaped = escaped[:start] + f'" + {expr} + "' + escaped[end:]
+    # Replace $doc.condN with Java variable concatenation
+    result = re.sub(r'\$doc\.cond(\d+)', lambda m: f'" + cond{m.group(1)} + "', escaped)
+    result = '"' + result + '"'
+    # Drop empty string segments produced by refs at string boundaries
+    result = re.sub(r'"" \+ ', '', result)
+    result = re.sub(r' \+ ""', '', result)
+    return result
+
+
+def render_conditional_puts(
+    blocks: list[dict], scope: str = "quote", field_lookup: dict[str, dict] | None = None
+) -> str:
     """Generate renderingData.put(...) lines for conditional blocks.
 
     scope: "quote" emits full if-conditions; "policy" emits empty puts for any
     condition that references quote.* (which is out of scope in that overload).
+    field_lookup (plan 10) wires $TBD_<name> tokens in source_text to Java
+    accessor concatenation. A block whose fields belong to the *other* overload
+    gets an empty put (mirror of the quote-scoped-condition treatment, D6);
+    unsupported fields stay literal with a TODO comment (D4).
+    Blocks are topologically sorted so any $doc.condN reference in source_text
+    points to a Java variable already declared earlier in the method.
     """
     if not blocks:
         return ""
+    field_lookup = field_lookup or {}
+    known_names = set(field_lookup)
+    sorted_blocks = _topo_sort_cond_blocks(blocks)
     lines = []
-    for b in blocks:
+    for b in sorted_blocks:
         bid = b["id"]
-        src = b["source_text"].replace("\\", "\\\\").replace('"', '\\"')
-        truncated = b["source_text"][:60] + ("..." if len(b["source_text"]) > 60 else "")
+        preview = _tbd_preview(b["source_text"])
+        truncated = preview[:60] + ("..." if len(preview) > 60 else "")
         raw_conds = b["conditions"]
         quote_scoped = any(c.strip().startswith("quote.") for c in raw_conds)
-        if raw_conds and not (scope == "policy" and quote_scoped):
+        policy_scoped = any(c.strip().startswith("policy.") for c in raw_conds)
+
+        # Classify this block's field tokens for the current scope.
+        field_exprs: dict[str, str] = {}
+        todo_fields: list[tuple[str, str]] = []
+        other_scope_fields: list[str] = []
+        for _s, _e, name in _find_field_tokens(b.get("source_text") or "", known_names):
+            info = field_lookup.get(name)
+            if info is None or not (info.get("data_source") or info.get("unsupported_reason")):
+                # Unresolved — main hard-fails before rendering; keep literal defensively.
+                todo_fields.append((name, "unresolved data_source"))
+            elif info.get("unsupported_reason"):
+                todo_fields.append((name, info["unsupported_reason"]))
+            elif info["scope"] != scope:
+                other_scope_fields.append(name)
+            else:
+                field_exprs[name] = info["java_expr"]
+
+        # A block belongs to one overload: the other gets an empty put so the
+        # generated Java never references locals that don't exist in its scope.
+        blocked_reason = ""
+        if raw_conds and scope == "policy" and quote_scoped:
+            blocked_reason = "quote-scoped, n/a in policy context"
+        elif raw_conds and scope == "quote" and policy_scoped:
+            blocked_reason = "policy-scoped condition(s), n/a in quote context"
+        elif raw_conds and other_scope_fields:
+            other = "policy" if scope == "quote" else "quote"
+            blocked_reason = (
+                f"contains {other}-scoped field(s) "
+                f'({", ".join(sorted(set(other_scope_fields)))}), n/a in {scope} context'
+            )
+
+        if raw_conds and not blocked_reason:
             joiner = " || " if b["operator"] == "OR" else " && "
-            java_cond = joiner.join(_accessor_to_java(c) for c in raw_conds)
+            java_cond = joiner.join(
+                _accessor_to_java(_rewrite_condition_root(c, scope)) for c in raw_conds
+            )
+            java_val = _source_text_to_java(b["source_text"], field_exprs)
+            todo_comment = "".join(
+                f'        // TODO: field {name} not wired — {reason}\n'
+                for name, reason in todo_fields
+            )
             lines.append(
                 f'        // Conditional block {bid}: {truncated}\n'
+                f'{todo_comment}'
                 f'        String cond{bid} = "";\n'
                 f'        if ({java_cond}) {{\n'
-                f'            cond{bid} = "{src}";\n'
+                f'            cond{bid} = {java_val};\n'
                 f'        }}\n'
                 f'        renderingData.put("cond{bid}", cond{bid});'
             )
-        elif scope == "policy" and quote_scoped:
+        elif raw_conds:
             lines.append(
-                f'        // Conditional block {bid}: quote-scoped, n/a in policy context\n'
+                f'        // Conditional block {bid}: {blocked_reason}\n'
                 f'        renderingData.put("cond{bid}", "");'
             )
         else:
@@ -554,15 +980,18 @@ def render_java(
     quote_df_calls: list[dict] | None = None,
     policy_df_calls: list[dict] | None = None,
     cond_blocks: list[dict] | None = None,
+    field_lookup: dict[str, dict] | None = None,
 ) -> str:
     quote_extras = _generate_datafetcher_extras(quote_df_calls or [])
     policy_extras = _generate_datafetcher_extras(policy_df_calls or [])
     all_calls = (quote_df_calls or []) + (policy_df_calls or [])
     dyn_imports = _generate_dynamic_imports(all_calls)
+    quote_cond_puts = render_conditional_puts(cond_blocks or [], scope="quote", field_lookup=field_lookup)
+    policy_cond_puts = render_conditional_puts(cond_blocks or [], scope="policy", field_lookup=field_lookup)
+    if "Objects.toString(" in quote_cond_puts + policy_cond_puts:
+        dyn_imports = (dyn_imports + "\n" if dyn_imports else "") + "import java.util.Objects;"
     if dyn_imports:
         dyn_imports = dyn_imports + "\n"
-    quote_cond_puts = render_conditional_puts(cond_blocks or [], scope="quote")
-    policy_cond_puts = render_conditional_puts(cond_blocks or [], scope="policy")
     return JAVA_TEMPLATE % {
         "class_name": f"{product}DocumentDataSnapshotPluginImpl",
         "quote_request": f"{product}QuoteRequest",
@@ -599,6 +1028,7 @@ def write_report(
     generated_at: str,
     cond_blocks: list[dict] | None = None,
     additive_summary: dict | None = None,
+    cond_field_rows: list[dict] | None = None,
 ) -> None:
     seg = f"{product}Segment"
     quote = f"{product}Quote"
@@ -616,6 +1046,28 @@ def write_report(
         "",
         "---",
         "",
+    ]
+    if additive_summary is not None:
+        preflight = additive_summary.get("preflight") or {}
+        pf_errors = preflight.get("errors") or []
+        pf_key_count = len(preflight.get("existing_keys") or set())
+        pf_cond_hw = preflight.get("cond_high_water", 0)
+        builder_ok = not any("DocumentDataSnapshot.builder()" in e for e in pf_errors)
+        dup_errors = [e for e in pf_errors if e.startswith("Duplicate key")]
+        lines += [
+            "## Pre-flight validation (additive mode)",
+            "",
+            "| Check | Result |",
+            "|-------|--------|",
+            f"| Builder pattern found | {'✓' if builder_ok else '✗'} |",
+            f"| Duplicate keys | {'None' if not dup_errors else '; '.join(dup_errors)} |",
+            f"| Existing keys | {pf_key_count} |",
+            f"| Highest condN | {pf_cond_hw} |",
+            "",
+            "---",
+            "",
+        ]
+    lines += [
         "## Rendering strategy",
         "",
         f"renderingData is a `HashMap<String, Object>` with named keys per request type:",
@@ -628,7 +1080,7 @@ def write_report(
         "",
         "---",
         "",
-        f"## High-confidence paths (validated against `{seg}` or `{quote}`) ({len(high_results)})",
+        f"## Resolved paths (validated against `{seg}` or `{quote}`) ({len(high_results)})",
         "",
     ]
     if high_results:
@@ -649,23 +1101,22 @@ def write_report(
                 "(`next-action: supply-from-plugin`).",
             ]
     else:
-        lines.append("_No high-confidence variables with a data_source._")
+        lines.append("_No resolved variables with a data_source._")
     lines += ["", "---", ""]
 
     lines += [
-        f"## Ignored — medium / low confidence ({len(ignored_vars)})",
+        f"## Unresolved — no data_source ({len(ignored_vars)})",
         "",
-        "Not validated in this run (D5). Promote to `high` in the `.suggested.yaml` "
-        "to include in future validation runs.",
+        "These variables have no data_source and were not wired into the plugin. "
+        "Assign a path in the `.mapping.yaml` and re-run Leg 4.",
         "",
-        "| Variable | confidence | data_source |",
-        "|---|---|---|",
+        "| Variable | data_source |",
+        "|---|---|",
     ]
     for v in ignored_vars:
         name = v.get("name") or ""
-        conf = v.get("confidence") or ""
         ds = v.get("data_source") or ""
-        lines.append(f"| {name} | {conf} | `{ds or '(empty)'}` |")
+        lines.append(f"| {name} | `{ds or '(empty)'}` |")
     lines += ["", "---", ""]
 
     lines += ["## Compile check", ""]
@@ -713,8 +1164,57 @@ def write_report(
             depth = b.get("depth", 0)
             lines.append(f"| {b['id']} | {depth} | {parent_id} | {truncated} | `{conds}` | **{status}** |")
     else:
-        lines.append("_No conditional-registry.yaml found alongside this .suggested.yaml._")
+        report_out_dir = report_path.parent
+        n_conds = _count_annotated_conditionals(report_out_dir, stem)
+        if n_conds > 0:
+            form_path = report_out_dir / f"{stem}.conditional-form.md"
+            if form_path.exists():
+                fix_cmd = (
+                    f"python3 scripts/leg0_ingest.py "
+                    f"--parse-conditional-form {form_path} "
+                    f"--output-dir {report_out_dir}"
+                )
+            else:
+                fix_cmd = "(conditional-form.md not found — re-run Leg 0 first)"
+            lines.append(
+                f"> ⚠ WARNING: {n_conds} conditional(s) detected in `{stem}.annotated.html` "
+                f"but no `conditional-registry.yaml` was found — all conditionals were omitted from the plugin.\n"
+                f"> Fix: `{fix_cmd}`"
+            )
+        else:
+            lines.append("_No conditional-registry.yaml found alongside this .mapping.yaml._")
     lines += [""]
+
+    cond_field_rows = cond_field_rows or []
+    if cond_field_rows:
+        warn_count = sum(1 for r in cond_field_rows if r["status"].startswith("WARN"))
+        lines += [
+            "---",
+            "",
+            f"## Field tokens inside conditional blocks ({len(cond_field_rows)})",
+            "",
+            "Fields referenced inside `[[...]]` blocks are concatenated into the plugin's",
+            "conditional strings (the template only outputs `${data.condN}`). Java renders",
+            "values via `Objects.toString(...)` — formatted fields (BigDecimal, dates) may",
+            "need a custom format call.",
+            "",
+            "| Block | Field | data_source | Status |",
+            "|---|---|---|---|",
+        ]
+        for r in cond_field_rows:
+            ds = r.get("data_source") or "(empty)"
+            status = r["status"]
+            if status.startswith("WARN"):
+                status = f"⚠ **{status}**"
+            lines.append(f"| {r['block_id']} | {r['name']} | `{ds}` | {status} |")
+        if warn_count:
+            lines += [
+                "",
+                f"> ⚠ {warn_count} field(s) were **not wired** — the literal `$TBD_*` token "
+                "remains in the plugin string and will appear verbatim in rendered documents "
+                "until addressed.",
+            ]
+        lines += [""]
 
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -753,7 +1253,7 @@ def main() -> int:
     repo_root = _repo_root()
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--suggested", type=Path, required=True,
-                    help=".suggested.yaml produced by Leg 2")
+                    help=".mapping.yaml (enriched by Leg 2) or legacy .suggested.yaml")
     ap.add_argument("--output-dir", type=Path, default=None,
                     help="Where to write the .java (default: dir of --suggested)")
     ap.add_argument("--customer-jar", type=Path,
@@ -764,8 +1264,14 @@ def main() -> int:
     ap.add_argument("--slf4j-jar", type=Path,
                     default=None,
                     help="slf4j-api jar for the compile check (default: auto-discover build/slf4j-api-*.jar)")
+    ap.add_argument("--registry", type=Path, default=None,
+                    help="path-registry.yaml for deriving Java accessors of fields inside "
+                         "conditional blocks (default: mapping's path_registry, then "
+                         "<repo>/registry/path-registry.yaml)")
     ap.add_argument("--compile-check", action="store_true", default=False,
                     help="Run javac against the JARs after generating")
+    ap.add_argument("--validate-only", action="store_true", default=False,
+                    help="Parse and validate existing plugin file only; no files written")
     args = ap.parse_args()
 
     suggested_path = args.suggested.resolve()
@@ -774,12 +1280,38 @@ def main() -> int:
         return 1
 
     stem = suggested_path.name
-    for suffix in (".suggested.yaml", ".yaml"):
+    for suffix in (".suggested.yaml", ".mapping.yaml", ".yaml"):
         if stem.endswith(suffix):
             stem = stem[: -len(suffix)]
             break
 
     out_dir = (args.output_dir.resolve() if args.output_dir else suggested_path.parent)
+
+    suggested_raw = _load_yaml(suggested_path)
+    product = (suggested_raw.get("product") or "").strip()
+    if not product:
+        print(f"ERROR: 'product' missing from {suggested_path.name}", file=sys.stderr)
+        return 1
+
+    # --validate-only: parse existing plugin file and exit without writing anything
+    if args.validate_only:
+        _vonly_class = f"{product}DocumentDataSnapshotPluginImpl"
+        _vonly_java = out_dir / f"{_vonly_class}.java"
+        if not _vonly_java.exists():
+            print(f"No existing plugin file: {_vonly_java.name}")
+            return 0
+        _vonly_result = parse_plugin_keys(_vonly_java)
+        print(f"Plugin: {_vonly_java.name}")
+        if _vonly_result["errors"]:
+            for _err in _vonly_result["errors"]:
+                print(f"ERROR: {_err}")
+            _n = len(_vonly_result["errors"])
+            print(f"Status: INVALID ({_n} error{'s' if _n != 1 else ''})")
+            return 1
+        print(f"Keys: {len(_vonly_result['existing_keys'])}")
+        print(f"Highest condN: {_vonly_result['cond_high_water']}")
+        print("Status: VALID")
+        return 0
 
     customer_jar = args.customer_jar.resolve()
     if not customer_jar.exists():
@@ -800,12 +1332,6 @@ def main() -> int:
     )
     if slf4j_jar is None or not slf4j_jar.exists():
         print("ERROR: no slf4j-api jar found (pass --slf4j-jar)", file=sys.stderr)
-        return 1
-
-    suggested_raw = _load_yaml(suggested_path)
-    product = (suggested_raw.get("product") or "").strip()
-    if not product:
-        print(f"ERROR: 'product' missing from {suggested_path.name}", file=sys.stderr)
         return 1
 
     classpath = f"{customer_jar}:{datamodel_jar}"
@@ -860,6 +1386,86 @@ def main() -> int:
     # --- Load conditional registry (Leg 1 artifact) --------------------------
     cond_yaml = out_dir / f"{stem}.conditional-registry.yaml"
     cond_blocks = load_conditional_registry(cond_yaml)
+    if not cond_yaml.exists():
+        n_conds = _count_annotated_conditionals(out_dir, stem)
+        if n_conds > 0:
+            form_path = out_dir / f"{stem}.conditional-form.md"
+            if form_path.exists():
+                fix_cmd = (
+                    f"python3 scripts/leg0_ingest.py "
+                    f"--parse-conditional-form {form_path} "
+                    f"--output-dir {out_dir}"
+                )
+            else:
+                fix_cmd = "(conditional-form.md not found — re-run Leg 0 first)"
+            print(
+                f"WARNING: {n_conds} conditional(s) detected in {stem}.annotated.html "
+                f"but no conditional-registry.yaml found.\nRun: {fix_cmd}",
+                file=sys.stderr,
+            )
+
+    # --- Field tokens inside conditional blocks (plan 10) ---------------------
+    registry_path = args.registry.resolve() if args.registry else None
+    if registry_path is None:
+        pr = str(suggested_raw.get("path_registry") or "").strip()
+        if pr:
+            cand = (suggested_path.parent / pr).resolve()
+            if cand.is_file():
+                registry_path = cand
+    if registry_path is None:
+        cand = repo_root / "registry" / "path-registry.yaml"
+        if cand.is_file():
+            registry_path = cand
+
+    field_lookup = _build_cond_field_lookup(
+        suggested, _load_velocity_categories(registry_path),
+        classpath=classpath, product=product,
+    )
+    unresolved_fields, unsupported_fields, mixed_scope_ids = _analyse_cond_fields(
+        cond_blocks, field_lookup
+    )
+    if unresolved_fields:
+        print(
+            "ERROR: conditional block(s) reference fields with no resolved data_source:",
+            file=sys.stderr,
+        )
+        for u in unresolved_fields:
+            print(f"  - block {u['block_id']}: {u['name']}", file=sys.stderr)
+        print(
+            "Run Leg 2 first to enrich the mapping "
+            f"(RUN_PIPELINE leg2 mapping={suggested_path}), or fill data_source "
+            "manually, then re-run Leg 4. No plugin was written.",
+            file=sys.stderr,
+        )
+        return 1
+    for u in unsupported_fields:
+        print(
+            f"WARNING: conditional block {u['block_id']} field {u['name']} not wired — {u['reason']}",
+            file=sys.stderr,
+        )
+    for bid in mixed_scope_ids:
+        print(
+            f"WARNING: conditional block {bid} mixes quote- and policy-scoped fields — "
+            "it renders empty in both overloads",
+            file=sys.stderr,
+        )
+
+    cond_field_rows: list[dict] = []
+    for b in cond_blocks:
+        for _s, _e, name in _find_field_tokens(b.get("source_text") or "", set(field_lookup)):
+            info = field_lookup.get(name) or {}
+            if info.get("unsupported_reason"):
+                status = f"WARN: {info['unsupported_reason']}"
+            elif b["id"] in mixed_scope_ids:
+                status = "WARN: mixed-scope block — empty in both overloads"
+            else:
+                status = f"wired ({info.get('scope')})"
+            cond_field_rows.append({
+                "block_id": b["id"],
+                "name": name,
+                "data_source": info.get("data_source", ""),
+                "status": status,
+            })
 
     # --- Render + write Java (additive if file exists, fresh otherwise) ------
     class_name = f"{product}DocumentDataSnapshotPluginImpl"
@@ -870,8 +1476,12 @@ def main() -> int:
     additive_summary: dict | None = None
 
     if additive_mode:
-        existing_keys = _parse_existing_plugin_keys(java_path)
-        cond_high_water = _parse_existing_cond_high_water(java_path)
+        preflight = parse_plugin_keys(java_path)
+        if preflight["errors"]:
+            for _pf_err in preflight["errors"]:
+                print(f"Pre-flight warning: {_pf_err}", file=sys.stderr)
+        existing_keys = preflight["existing_keys"]
+        cond_high_water = preflight["cond_high_water"]
 
         required = _required_keys(suggested_raw, cond_blocks)
         missing_vars, missing_conds = _diff_keys(required, existing_keys, cond_high_water)
@@ -886,7 +1496,8 @@ def main() -> int:
             if b["id"] in local_to_global
         ]
 
-        _append_to_plugin(java_path, missing_quote_df, missing_policy_df, offset_cond_blocks)
+        _append_to_plugin(java_path, missing_quote_df, missing_policy_df, offset_cond_blocks,
+                          field_lookup=field_lookup)
 
         added_keys = {c["key"] for c in missing_quote_df + missing_policy_df}
         additive_summary = {
@@ -894,6 +1505,7 @@ def main() -> int:
             "keys_added": added_keys,
             "cond_high_water_before": cond_high_water,
             "new_cond_ids": [global_id for _, global_id in missing_conds],
+            "preflight": preflight,
         }
         print(
             f"Additive mode: {len(added_keys)} key(s) added, "
@@ -903,21 +1515,20 @@ def main() -> int:
         java_path.write_text(
             render_java(product, suggested_path.name,
                         quote_df_calls=quote_df_calls, policy_df_calls=policy_df_calls,
-                        cond_blocks=cond_blocks),
+                        cond_blocks=cond_blocks, field_lookup=field_lookup),
             encoding="utf-8",
         )
 
     # --- Categorise + validate variables -------------------------------------
     variables = suggested.get("variables") or []
-    high_vars = [
+    resolved_vars = [
         v for v in variables
-        if (v.get("confidence") or "").lower() == "high"
-        and (v.get("data_source") or "").strip()
+        if (v.get("data_source") or "").strip()
     ]
-    ignored_vars = [v for v in variables if v not in high_vars]
+    unresolved_vars = [v for v in variables if v not in resolved_vars]
 
     high_results: list[tuple[dict, str, str]] = []
-    for v in high_vars:
+    for v in resolved_vars:
         if validate_ok:
             status, detail = validate_path(
                 classpath, validate_fqcn, v.get("data_source") or "",
@@ -948,18 +1559,19 @@ def main() -> int:
         suggested_path=suggested_path,
         java_path=java_path,
         high_results=high_results,
-        ignored_vars=ignored_vars,
+        ignored_vars=unresolved_vars,
         compile_status=compile_status,
         compile_detail=compile_detail,
         generated_at=generated_at,
         cond_blocks=cond_blocks,
         additive_summary=additive_summary,
+        cond_field_rows=cond_field_rows,
     )
 
     print(f"Wrote {_rel(java_path, repo_root)}")
     print(f"Wrote {_rel(report_path, repo_root)}")
     print(
-        f"Product={product}  high={len(high_results)}  ignored={len(ignored_vars)}"
+        f"Product={product}  resolved={len(high_results)}  unresolved={len(unresolved_vars)}"
         + (f"  compile={compile_status}" if compile_status else "")
     )
 

@@ -314,7 +314,7 @@ def _write_review_md(
     if not assumption_pairs:
         lines.append("No assumptions to confirm.")
     elif mode == "terse":
-        lines.append(f"{len(assumption_pairs)} assumption(s) to confirm — see .suggested.yaml")
+        lines.append(f"{len(assumption_pairs)} assumption(s) to confirm — see .mapping.yaml")
     else:
         for e, root_id in assumption_pairs:
             ph = e.get("placeholder") or e.get("name") or ""

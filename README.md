@@ -2,40 +2,71 @@
 
 **Repository:** [github.com/joshlawrence-web/socotra-document-conversion](https://github.com/joshlawrence-web/socotra-document-conversion)
 
-A three-leg pipeline that turns an HTML mockup into a production-ready Socotra document template.
+Update a Socotra document template without redeploying your product config — author in Word or HTML, run the pipeline, deploy the `.vm`.
 
 ## Pipeline overview
 
 ```mermaid
 flowchart LR
-  HTML["HTML mockup\n({{vars}}, *loops*)"]
-  Leg1["Leg 1\nhtml-to-velocity\n(convert.py)"]
-  Mapping[".mapping.yaml\n(TBD placeholders)"]
-  Registry["registry/path-registry.yaml\n(extract_paths.py)"]
-  Leg2["Leg 2\nmapping-suggester\n(AI skill)"]
-  Suggested[".suggested.yaml\n+ .review.md"]
-  Human["Human review\n(optional)"]
+  DOC["Word / PDF\n(.docx / .pdf)"]
+  HTML[".html mockup"]
+  Leg0["Leg 0\nleg0_ingest.py"]
+  Leg1["Leg 1\nconvert.py"]
+  Leg2["Leg 2\nleg2_fill_mapping.py"]
   Leg3["Leg 3\nleg3_substitute.py"]
-  VM[".final.vm\n(production)"]
+  Leg4["Leg 4\nleg4_generate_plugin.py"]
+  REGISTRY[("registry/\npath-registry.yaml\n+ sdk-schema-index.yaml")]
+  RAW[".raw.html"]
+  ANN[".annotated.html"]
+  L0MAP[".mapping.yaml\n(TBD placeholders)"]
+  FORM[/".conditional-form.md\nsend to customer"/]
+  CONDREG[".conditional-registry.yaml"]
+  L1MAP[".mapping.yaml\n(TBD placeholders)"]
+  ENRICHED[".mapping.yaml\n(path suggestions)"]
+  REVIEW[/".review.md\noptional review"/]
+  FINALVM[".final.vm\nproduction template"]
+  L3RPT[/".leg3-report.md\ncheck unresolved"/]
+  JAVA["SnapshotPlugin.java"]
+  L4RPT[/".plugin-report.md\nvalidate paths"/]
+  DEPLOY[("socotra-config/\nhot-swap deploy")]
 
-  HTML --> Leg1
-  Leg1 --> Mapping
-  Registry --> Leg2
-  Mapping --> Leg2
-  Leg2 --> Suggested
-  Suggested --> Human
-  Human --> Leg3
-  Suggested --> Leg3
-  Leg3 --> VM
+  DOC -->|"leg0"| Leg0
+  Leg0 --> RAW & ANN & L0MAP & FORM
+  FORM -->|"parse-conditional-form\nafter customer fills"| CONDREG
+
+  HTML -->|"leg1"| Leg1
+  Leg1 --> L1MAP
+
+  L0MAP -->|"leg0+leg2+leg3"| Leg2
+  L1MAP -->|"leg1+leg2+leg3"| Leg2
+  CONDREG -.->|"if exists"| Leg2
+  REGISTRY --> Leg2
+
+  Leg2 --> ENRICHED & REVIEW
+
+  ENRICHED -->|"leg3"| Leg3
+  ENRICHED -->|"leg4"| Leg4
+
+  Leg3 --> FINALVM & L3RPT
+  Leg4 --> JAVA & L4RPT
+
+  FINALVM -->|"deploy"| DEPLOY
+  JAVA -->|"deploy"| DEPLOY
 ```
 
-**Leg 1** (`html-to-velocity`) converts an HTML mockup — annotated with `{{variable_name}}` placeholders and `*loop_name*` markers — into a Velocity `.vm` template and a `.mapping.yaml` file whose `data_source` fields are populated with `$TBD_*` placeholders.
+> Full data-flow reference: [docs/pipeline-dataflow.md](docs/pipeline-dataflow.md)
 
-**Leg 2** (`mapping-suggester`) reads the `.mapping.yaml` alongside `registry/path-registry.yaml` (produced by `extract_paths.py` from your Socotra config) and suggests real Socotra Velocity paths for every `$TBD_*` variable and loop. It outputs a `.suggested.yaml` for human review and a `.review.md` summary.
+This is a **five-leg pipeline (Leg 0–4)**:
 
-**Leg 3** (`leg3_substitute.py`) reads the `.suggested.yaml` and writes the final `.final.vm` template, substituting `$TBD_*` placeholders with confirmed Socotra paths. A `.leg3-report.md` summarises what was resolved and what remains unresolved. Use `high_only=true` to substitute only `confidence: high` suggestions, leaving medium/low tokens as `$TBD_*` for human review.
+**Leg 0** (`leg0_ingest.py`) ingests a Word/PDF doc; extracts HTML + a conditional-form for the customer to fill in.
 
-**Leg 4** (`leg4_generate_plugin.py`) reads the `.suggested.yaml` and emits a compile-correct `{Product}DocumentDataSnapshotPluginImpl.java` plus a `<stem>.plugin-report.md` validation summary. See `.cursor/skills/plugin-builder/SKILL.md`.
+**Leg 1** (`convert.py`) converts an HTML mockup — annotated with `{{variable_name}}` placeholders and `*loop_name*` markers — into a Velocity `.vm` template and a `.mapping.yaml` file whose `data_source` fields are populated with `$TBD_*` placeholders.
+
+**Leg 2** (`leg2_fill_mapping.py`) reads the `.mapping.yaml` alongside `registry/path-registry.yaml` and suggests real Socotra Velocity paths for every `$TBD_*` variable and loop. It enriches the `.mapping.yaml` in-place (overwriting it with Schema 2.0 suggestions) and writes a `.review.md` summary.
+
+**Leg 3** (`leg3_substitute.py`) reads the enriched `.mapping.yaml` and writes the final `.final.vm` template, substituting `$TBD_*` placeholders with confirmed Socotra paths. A `.leg3-report.md` summarises what was resolved and what remains unresolved. Use `high_only=true` to substitute only `confidence: high` suggestions, leaving medium/low tokens as `$TBD_*` for human review.
+
+**Leg 4** (`leg4_generate_plugin.py`) reads the enriched `.mapping.yaml` and emits a compile-correct `{Product}DocumentDataSnapshotPluginImpl.java` plus a `<stem>.plugin-report.md` validation summary. See `.cursor/skills/plugin-builder/SKILL.md`.
 
 ## Using with Claude Code (recommended)
 
@@ -83,7 +114,16 @@ run leg 1 on templates/claim-form.html
 suggest paths for velocity-output/claim-form/claim-form.mapping.yaml
 ```
 ```
-write the final template for velocity-output/claim-form/claim-form.suggested.yaml
+write the final template for velocity-output/claim-form/claim-form.mapping.yaml
+```
+```
+ingest my Word document at /path/to/policy-form.docx
+```
+```
+list what Velocity paths I can use in my template
+```
+```
+generate the snapshot plugin from samples/output/ZenCover/ZenCover.mapping.yaml
 ```
 
 Claude figures out which tool to call. You never need to know the tool names or command syntax.
@@ -97,9 +137,8 @@ Output lands in `velocity-output/<filename>/` by default (you can specify a diff
 | File | What it is |
 |------|-----------|
 | `<stem>.vm` | Template with `$TBD_*` placeholders (Leg 1 output) |
-| `<stem>.mapping.yaml` | Token-to-placeholder mapping |
-| `<stem>.suggested.yaml` | Path suggestions with confidence scores (Leg 2 output) |
-| `<stem>.review.md` | Human-readable confidence breakdown |
+| `<stem>.mapping.yaml` | Token-to-placeholder mapping, enriched in-place by Leg 2 with path suggestions |
+| `<stem>.review.md` | Human-readable confidence breakdown (Leg 2 output) |
 | `<stem>.final.vm` | **The production template** — this is what you ship |
 | `<stem>.leg3-report.md` | What resolved and what still needs manual attention |
 
@@ -156,11 +195,11 @@ If you say *"only fill the high confidence fields"*, the server substitutes only
    # Leg 2 only (suggest paths for an existing .mapping.yaml)
    python3 scripts/agent.py "RUN_PIPELINE leg2 mode=terse mapping=samples/output/Simple-form/Simple-form.mapping.yaml"
 
-   # Leg 3 only (write final .vm from a reviewed .suggested.yaml)
-   python3 scripts/agent.py "RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.suggested.yaml"
+   # Leg 3 only (write final .vm from a reviewed .mapping.yaml)
+   python3 scripts/agent.py "RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.mapping.yaml"
 
    # Leg 3 only, high-confidence substitutions only
-   python3 scripts/agent.py "RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.suggested.yaml high_only=true"
+   python3 scripts/agent.py "RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.mapping.yaml high_only=true"
    ```
 
    The orchestrator shows a preflight summary and requires you to type `PROCEED` before running. Add `--yes` to skip confirmation in CI/headless use.
@@ -220,6 +259,6 @@ The runner fails fast if a legacy root-level `path-registry.yaml` is reintroduce
 python3 -m unittest discover -s tests -v
 ```
 
-Use `scripts/suggester_inspect.py` to list runs and inspect provenance inside a `<stem>.suggester-log.jsonl` file.
+Use `scripts/suggester_inspect.py` to list runs and inspect provenance from a `<stem>.suggester-log.jsonl` file (opt-in via `--telemetry-log` on `leg2_fill_mapping.py`).
 
 See [conformance/README.md](conformance/README.md) for full workflow details, including how to refresh goldens and add new fixtures.

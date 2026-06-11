@@ -14,8 +14,11 @@ from mcp.server.fastmcp import FastMCP
 
 INSTALL_ROOT = Path(__file__).parent
 _CONVERT = INSTALL_ROOT / ".cursor" / "skills" / "html-to-velocity" / "scripts" / "convert.py"
+_LEG0 = INSTALL_ROOT / "scripts" / "leg0_ingest.py"
 _LEG2 = INSTALL_ROOT / "scripts" / "leg2_fill_mapping.py"
 _LEG3 = INSTALL_ROOT / "scripts" / "leg3_substitute.py"
+_LEG4 = INSTALL_ROOT / "scripts" / "leg4_generate_plugin.py"
+_LIST_PATHS = INSTALL_ROOT / "scripts" / "list_paths.py"
 _DEFAULT_REGISTRY = INSTALL_ROOT / "registry" / "path-registry.yaml"
 
 mcp = FastMCP("velocity-converter")
@@ -234,6 +237,142 @@ def write_final_template(
         lines.append(f"  {f.name}")
     lines.append(f"\nCheck {stem}.leg3-report.md for resolved/unresolved tokens.")
     return "\n".join(lines)
+
+
+@mcp.tool()
+def ingest_document(
+    input_path: str,
+    output_dir: str = "samples/output",
+) -> str:
+    """Ingest a Word (.docx) or PDF document into raw HTML and a conditional form.
+
+    Runs Leg 0 of the pipeline:
+      - Converts .docx or .pdf to raw HTML
+      - Annotates {field} tokens as $TBD_* placeholders
+      - Extracts conditional blocks into a customer-facing form
+      - Writes .mapping.yaml for Leg 2 input
+
+    Use when the user says: "convert my Word document", "ingest this PDF",
+    "process my docx", "run leg 0".
+
+    Args:
+        input_path: Path to the .docx or .pdf file (absolute, or relative to CWD).
+        output_dir: Directory for all output files. Default: samples/output/
+    """
+    inp = _resolve(input_path)
+    out = _resolve(output_dir)
+    stem = inp.stem
+
+    ok, msg = _run([sys.executable, str(_LEG0), "--input", str(inp), "--output-dir", str(out)])
+    if not ok:
+        return f"ERROR: Leg 0 failed:\n{msg}"
+
+    artifact_names = [
+        f"{stem}.raw.html",
+        f"{stem}.annotated.html",
+        f"{stem}.mapping.yaml",
+        f"{stem}.conditional-form.md",
+    ]
+    lines = [f"Leg 0 complete. Output: {out}"]
+    for name in artifact_names:
+        if (out / name).exists():
+            lines.append(f"  {name}")
+    lines.append(f"\nSend {stem}.conditional-form.md to the customer for conditional logic review.")
+    lines.append(f"Then run suggest_velocity_paths on {out}/{stem}.mapping.yaml to continue.")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def generate_snapshot_plugin(
+    suggested_path: str,
+    customer_jar: str,
+    datamodel_jar: str,
+    compile_check: bool = True,
+) -> str:
+    """Generate (or additively update) a DocumentDataSnapshotPluginImpl.java from a .mapping.yaml.
+
+    Runs Leg 4 of the pipeline. If the plugin already exists in the output
+    directory, runs in additive mode (adds missing keys, never removes existing
+    ones, writes a .java.bak backup first).
+
+    Use when the user says: "generate the plugin", "build the snapshot plugin",
+    "run leg 4", "create the DocumentDataSnapshotPluginImpl".
+
+    Args:
+        suggested_path: Path to the .mapping.yaml (absolute, or relative to CWD).
+        customer_jar:   Path to the customer config JAR.
+        datamodel_jar:  Path to the core-datamodel JAR.
+        compile_check:  If true (default), compile the generated Java class.
+    """
+    sugg = _resolve(suggested_path)
+    cjar = _resolve(customer_jar)
+    djar = _resolve(datamodel_jar)
+    base = sugg.parent
+    stem = sugg.stem
+    for sfx in (".mapping", ".suggested"):
+        if stem.endswith(sfx):
+            stem = stem[: -len(sfx)]
+            break
+
+    cmd = [
+        sys.executable, str(_LEG4),
+        "--suggested", str(sugg),
+        "--customer-jar", str(cjar),
+        "--datamodel-jar", str(djar),
+    ]
+    if compile_check:
+        cmd.append("--compile-check")
+
+    ok, msg = _run(cmd)
+    if not ok:
+        return f"ERROR: Leg 4 failed:\n{msg}"
+
+    lines = [f"Leg 4 complete. Files written to {base}:"]
+    for f in sorted(base.glob("*PluginImpl*.java")):
+        lines.append(f"  {f.name}")
+    report = base / f"{stem}.plugin-report.md"
+    if report.exists():
+        lines.append(f"  {report.name}")
+    lines.append(f"\nCheck {stem}.plugin-report.md for path validation + compile result.")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def list_velocity_paths(
+    registry_path: str = "",
+    out_path: str = "",
+) -> str:
+    """Render a Markdown catalog of all available Velocity paths for this product.
+
+    If out_path is given, writes the catalog to that file and returns a summary.
+    Otherwise returns the full Markdown string (suitable for Claude to read and
+    answer questions about available fields).
+
+    Use when the user says: "what fields can I use", "list available paths",
+    "show me the field catalog", "what data is available in the template".
+
+    Args:
+        registry_path: Path to path-registry.yaml. Defaults to the built-in registry.
+        out_path:      Optional file to write the catalog to. If omitted, returns inline.
+    """
+    reg = _resolve(registry_path) if registry_path else _DEFAULT_REGISTRY
+
+    try:
+        scripts_dir = str(INSTALL_ROOT / "scripts")
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        from list_paths import render_catalog  # noqa: PLC0415
+        catalog = render_catalog(str(reg))
+    except Exception as e:
+        return f"ERROR: {e}"
+
+    if out_path:
+        out = _resolve(out_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(catalog, encoding="utf-8")
+        return f"Field catalog written to {out}\n({len(catalog.splitlines())} lines)"
+
+    return catalog
 
 
 if __name__ == "__main__":

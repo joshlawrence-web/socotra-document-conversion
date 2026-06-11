@@ -1,8 +1,24 @@
 # Strict SDK-Grounded Token Schema
 
-**Status:** Ready to implement
+**Status:** Complete — closed 2026-06-09 (implemented with design evolution)
 **Created:** 2026-06-05
 **History:** [history.md](./history.md)
+
+## Completion note (2026-06-09)
+
+Core goals achieved. Design evolved from "hard remove fuzzy" to "conditional dispatch" — both are correct outcomes.
+
+**Done:**
+- `build_schema_index.py` + `registry/sdk-schema-index.yaml` (Phase 1 complete)
+- `match_token()` added to `leg2_fill_mapping.py` — strict lookup when schema_index present
+- Dispatch is conditional: `match_token` when schema_index provided, `match_name` as intentional legacy fallback (better than hard removal)
+- `old-format` / `confidence: none` path works correctly
+- Pilot HTML `Simple-form(quote).html` already uses `{{ZenCoverQuote.productName}}` etc. (P3.3 done)
+
+**Deliberately not done:**
+- `_step4_fuzzy` kept inside `match_name` — legacy fallback only, never reached when schema_index is present
+- `VAR_RE` `*`→`+` (require dot) — deferred; old-format tokens already get `confidence: none` via `match_token`, and `VAR_RE` is about to be extended for the incoming single-brace `{EntityType.fieldName}` quantifier format anyway
+- P4 conformance test suite — deferred to a dedicated testing plan
 
 ---
 

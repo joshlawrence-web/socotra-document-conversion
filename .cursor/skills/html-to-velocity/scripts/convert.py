@@ -55,6 +55,30 @@ except ImportError:
         "pip install pyyaml --break-system-packages"
     )
 
+# Resolve sibling scripts/ dir for shared helpers (optional — degrades gracefully)
+def _find_scripts_dir() -> Optional[Path]:
+    p = Path(__file__).resolve().parent
+    for _ in range(8):
+        candidate = p / "scripts" / "agent_tools.py"
+        if candidate.is_file():
+            return p / "scripts"
+        if p.parent == p:
+            break
+        p = p.parent
+    return None
+
+_scripts_dir = _find_scripts_dir()
+if _scripts_dir:
+    _sd = str(_scripts_dir)
+    if _sd not in sys.path:
+        sys.path.insert(0, _sd)
+
+try:
+    from agent_tools import build_velocity_lookup as _build_velocity_lookup  # noqa: PLC0415
+except ImportError:
+    def _build_velocity_lookup(registry_path):  # type: ignore[misc]
+        return {}
+
 
 # ---------------------------------------------------------------------------
 # Patterns + tag sets
@@ -273,6 +297,7 @@ class Mapping:
     loops: list[dict] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     conditional_blocks: list[dict] = field(default_factory=list)
+    velocity_lookup: dict = field(default_factory=dict, repr=False)
 
     def to_yaml_dict(self) -> dict:
         out = {
@@ -318,12 +343,21 @@ def _record_var(
     if in_loop and loop_name:
         context["loop"] = loop_name
 
+    data_source = ""
+    if mapping.velocity_lookup and "." in name:
+        resolved = mapping.velocity_lookup.get(name)
+        if resolved:
+            data_source = resolved
+        else:
+            data_source = f"UNRESOLVED:{name}"
+            mapping.warnings.append(f"Unresolved dotted placeholder: {{{{{name}}}}}")
+
     entry = {
         "name": name,
         "placeholder": placeholder,
         "type": "loop_field" if in_loop else "variable",
         "context": context,
-        "data_source": "",
+        "data_source": data_source,
     }
     bucket = loop_fields if in_loop and loop_fields is not None else mapping.variables
     for existing in bucket:
@@ -1150,6 +1184,7 @@ def convert(
     auto_detect: bool = False,
     registry_path: Optional[Path] = None,
     iterables: Optional[list[dict]] = None,
+    velocity_lookup: Optional[dict] = None,
 ):
     html = input_path.read_text(encoding="utf-8")
 
@@ -1160,11 +1195,15 @@ def convert(
     soup = BeautifulSoup(html, "html.parser")
     mapping = Mapping(source=input_path.name)
 
-    # Load iterables for loop-hint tagging. In batch mode, iterables are
-    # pre-loaded once by the caller and passed in to avoid redundant file reads.
-    if iterables is None:
+    # Load iterables and velocity lookup. In batch mode both are pre-loaded
+    # once by the caller and passed in to avoid redundant file reads.
+    if iterables is None or velocity_lookup is None:
         resolved_registry = registry_path or _default_registry_path(input_path)
-        iterables = load_iterables(resolved_registry)
+        if iterables is None:
+            iterables = load_iterables(resolved_registry)
+        if velocity_lookup is None:
+            velocity_lookup = _build_velocity_lookup(resolved_registry) if resolved_registry else {}
+    mapping.velocity_lookup = velocity_lookup
 
     # 1. Process Mustache loops (innermost first — handles nesting)
     process_all_mustache_loops(soup, mapping)
@@ -1277,6 +1316,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         if registry_path is None:
             registry_path = _default_registry_path(args.batch[0])
         iterables = load_iterables(registry_path)
+        batch_velocity_lookup = _build_velocity_lookup(registry_path) if registry_path else {}
 
         total_vars = 0
         total_loops = 0
@@ -1293,6 +1333,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 with_conditionals=not args.no_conditionals,
                 auto_detect=args.auto_detect_loops,
                 iterables=iterables,
+                velocity_lookup=batch_velocity_lookup,
             )
             target_dir = vm_path.parent
             print(f"✓ {stem:<20} → {target_dir}/  ({var_count} vars, {loop_count} loops, {cond_count} conds)")

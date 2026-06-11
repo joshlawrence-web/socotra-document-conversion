@@ -2,8 +2,8 @@
 """Leg 3 — Substitution Writer.
 
 Reads:
-  - <stem>.vm          (Leg 1) — template with $TBD_* placeholders and #if guards
-  - <stem>.suggested.yaml  (Leg 2) — confirmed data_source paths
+  - <stem>.vm           (Leg 1) — template with $TBD_* placeholders and #if guards
+  - <stem>.mapping.yaml (Leg 2) — enriched mapping with confirmed data_source paths
 
 Writes:
   - <stem>.final.vm        — production-ready Velocity template
@@ -23,7 +23,7 @@ Design decisions (DD — recorded here and in docs/SCHEMA.md):
         and get their own report section. Rationale: lets users ship a
         partial template while fuzzy/unconfirmed matches await human review.
         Re-run without --high-only once deferred entries are confirmed in
-        the .suggested.yaml.
+        the .mapping.yaml.
 """
 
 from __future__ import annotations
@@ -87,34 +87,110 @@ def _condition_to_velocity(condition: str) -> str:
 
 
 def build_cond_map(cond_blocks: list[dict]) -> dict[str, str]:
-    """Map '$doc.condN' → '#if(velocity_expr)source_text#end' for each block."""
-    result: dict[str, str] = {}
-    for block in cond_blocks:
-        bid = block.get("id")
-        conditions = block.get("conditions") or []
-        source_text = block.get("source_text") or ""
-        operator = block.get("operator", "AND")
-        if bid is None or not conditions:
-            continue
-        vel_conds = [_condition_to_velocity(c) for c in conditions]
-        joiner = " && " if operator == "AND" else " || "
-        cond_expr = joiner.join(vel_conds)
-        result[f"$doc.cond{bid}"] = f"#if({cond_expr}){source_text}#end"
-    return result
+    """Map '$doc.condN' → '${data.condN}' — the plugin owns the conditional logic."""
+    return {
+        f"$doc.cond{b['id']}": f"${{data.cond{b['id']}}}"
+        for b in cond_blocks
+        if b.get("id") is not None
+    }
 
 
 def apply_cond_substitutions(vm_text: str, cond_map: dict[str, str]) -> str:
-    """Replace $doc.condN tokens with Velocity #if blocks; multi-pass for nesting."""
-    if not cond_map:
-        return vm_text
+    """Replace [[text]]$doc.condN with ${data.condN}; multi-pass for nesting.
+
+    The plugin owns conditional text — it puts the resolved string (or "") into
+    renderingData under "condN". The template just outputs ${data.condN}.
+
+    Two phases:
+      1. Resolve [[...]]$doc.condN blocks innermost-first (repeated until stable).
+         Bare $doc.condN tokens are left untouched so outer blocks can still match
+         on the next pass.
+      2. Replace any remaining bare $doc.condN tokens (e.g. inside a cond block's
+         source_text that the annotator left un-bracketed).
+    """
+    # Phase 1: peel [[...]]$doc.condN from innermost outward
     for _ in range(10):
-        new_text = vm_text
-        for token, replacement in cond_map.items():
-            new_text = new_text.replace(token, replacement)
+        new_text = _COND_BLOCK_RE.sub(
+            lambda m: f"${{data.cond{m.group(2)}}}",
+            vm_text,
+        )
         if new_text == vm_text:
             break
         vm_text = new_text
+    # Phase 2: bare $doc.condN tokens not wrapped in [[...]]
+    for token, replacement in cond_map.items():
+        vm_text = vm_text.replace(token, replacement)
     return vm_text
+
+
+def _cond_block_spans(vm_text: str) -> list[tuple[int, int, str]]:
+    """Spans of [[...]] regions (incl. nested) with their trailing $doc.condN id.
+
+    Returns [(start, end, cond_id_str)]; end includes the ]]$doc.condN suffix.
+    cond_id_str is "" when a closing ]] has no $doc.condN annotation.
+    """
+    spans: list[tuple[int, int, str]] = []
+    stack: list[int] = []
+    i, n = 0, len(vm_text)
+    while i < n - 1:
+        two = vm_text[i: i + 2]
+        if two == "[[":
+            stack.append(i)
+            i += 2
+        elif two == "]]":
+            if stack:
+                start = stack.pop()
+                m = re.match(r"\$doc\.cond(\d+)", vm_text[i + 2:])
+                end = i + 2 + (m.end() if m else 0)
+                spans.append((start, end, m.group(1) if m else ""))
+            i += 2
+        else:
+            i += 1
+    return spans
+
+
+def split_delegated(vm_text: str, entries: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Split entries whose placeholder occurs ONLY inside [[...]]$doc.condN blocks (D9).
+
+    Those tokens are removed from the template by apply_cond_substitutions — the
+    plugin's conditional string carries their value instead, so reporting them as
+    template-resolved would be a lie. Each delegated entry gains a `_cond_ids`
+    list (innermost containing block per occurrence).
+    Returns (template_entries, delegated_entries).
+    """
+    spans = _cond_block_spans(vm_text)
+    kept: list[dict] = []
+    delegated: list[dict] = []
+    for v in entries:
+        ph = v.get("placeholder") or ""
+        occs = []
+        for m in re.finditer(re.escape(ph), vm_text):
+            # Reject prefix matches of a longer token ($TBD_a inside $TBD_ab,
+            # $TBD_x.y inside $TBD_x.y.z); a bare trailing dot is sentence punctuation.
+            tail = vm_text[m.end(): m.end() + 2]
+            if tail[:1].isalnum() or tail[:1] == "_":
+                continue
+            if tail[:1] == "." and (tail[1:2].isalnum() or tail[1:2] == "_"):
+                continue
+            occs.append(m)
+        if not ph or not occs or not spans:
+            kept.append(v)
+            continue
+        cond_ids: set[str] = set()
+        all_inside = True
+        for m in occs:
+            containing = [s for s in spans if s[0] <= m.start() and m.end() <= s[1]]
+            if not containing:
+                all_inside = False
+                break
+            innermost = max(containing, key=lambda s: s[0])
+            if innermost[2]:
+                cond_ids.add(innermost[2])
+        if all_inside:
+            delegated.append({**v, "_cond_ids": sorted(cond_ids, key=int)})
+        else:
+            kept.append(v)
+    return kept, delegated
 
 
 def _primary_root_id(suggested: dict) -> str | None:
@@ -144,9 +220,9 @@ def _flatten_to_primary_root(suggested: dict) -> dict:
         verdict = (entry.get("verdicts") or {}).get(root_id) or {}
         return {
             **entry,
-            "data_source": verdict.get("data_source") or "",
-            "confidence": verdict.get("confidence") or "",
-            "reasoning": verdict.get("reasoning") or "",
+            "data_source": verdict.get("data_source") or entry.get("data_source") or "",
+            "confidence": verdict.get("confidence") or entry.get("confidence") or "",
+            "reasoning": verdict.get("reasoning") or entry.get("reasoning") or "",
         }
 
     new_vars = [_promote(v) for v in (suggested.get("variables") or [])]
@@ -226,6 +302,9 @@ _IF_OR_FOREACH_RE = re.compile(r"^\s*#(if|foreach)\b")
 _END_RE = re.compile(r"^\s*#end\s*$")
 _FOREACH_LINE_RE = re.compile(r"^\s*#foreach\b")
 _BRACE_REF_RE = re.compile(r"\{\$([a-zA-Z_][a-zA-Z0-9_.]*)\}")
+# Matches [[content]]$doc.condN where content contains no nested brackets.
+# Used in multi-pass to resolve innermost conditional blocks first.
+_COND_BLOCK_RE = re.compile(r"\[\[([^\[\]]*)\]\]\$doc\.cond(\d+)", re.DOTALL)
 
 
 def _substitute_tokens(line: str, smap: dict[str, str]) -> str:
@@ -340,12 +419,12 @@ _ACTION_GUIDANCE: dict[str, str] = {
     ),
     "pick-one": (
         "Multiple registry paths are equally plausible. "
-        "Review the candidates in the .suggested.yaml, set `data_source` "
+        "Review the candidates in the .mapping.yaml, set `data_source` "
         "to the correct one, then re-run Leg 3."
     ),
     "confirm-assumption": (
         "Leg 2 made a fuzzy match — confirm the suggested path is correct "
-        "before deploying. Edit `data_source` in the .suggested.yaml if needed, "
+        "before deploying. Edit `data_source` in the .mapping.yaml if needed, "
         "then re-run Leg 3."
     ),
     "delete-from-template": (
@@ -368,6 +447,7 @@ def write_report(
     unresolved_loops: list[dict],
     deferred_vars: list[dict] | None = None,
     deferred_loops: list[dict] | None = None,
+    delegated_vars: list[dict] | None = None,
     high_only: bool = False,
     generated_at: str,
     repo_root: Path,
@@ -375,25 +455,30 @@ def write_report(
 ) -> None:
     deferred_vars = deferred_vars or []
     deferred_loops = deferred_loops or []
+    delegated_vars = delegated_vars or []
     cond_blocks = cond_blocks or []
     cond_count = len(cond_blocks)
     total_all = (
         len(resolved_vars) + len(unresolved_vars)
         + len(resolved_loops) + len(unresolved_loops)
         + len(deferred_vars) + len(deferred_loops)
+        + len(delegated_vars)
     )
     resolved_all = len(resolved_vars) + len(resolved_loops)
     deferred_all = len(deferred_vars) + len(deferred_loops)
     unresolved_all = len(unresolved_vars) + len(unresolved_loops)
+    delegated_all = len(delegated_vars)
 
     cond_suffix = f", {cond_count} conditional block(s) applied" if cond_count else ""
+    if delegated_all:
+        cond_suffix += f", {delegated_all} token(s) delegated to plugin"
     if total_all == 0 and cond_count == 0:
         status = "EMPTY — no placeholders found"
     elif total_all == 0 and cond_count > 0:
         status = f"CONDITIONAL-ONLY — {cond_count} conditional block(s) applied"
     elif unresolved_all == 0 and deferred_all == 0:
-        status = f"COMPLETE — all {total_all} token(s) resolved{cond_suffix}"
-    elif resolved_all == 0 and deferred_all == 0:
+        status = f"COMPLETE — all {total_all} token(s) {'handled' if delegated_all else 'resolved'}{cond_suffix}"
+    elif resolved_all == 0 and deferred_all == 0 and delegated_all == 0:
         status = f"BLOCKED — 0 of {total_all} resolved{cond_suffix}"
     elif high_only and deferred_all > 0 and unresolved_all == 0:
         status = f"HIGH-ONLY — {resolved_all} substituted, {deferred_all} deferred for review{cond_suffix}"
@@ -468,6 +553,26 @@ def write_report(
         lines.append("_Nothing resolved this run._")
     lines += ["", "---", ""]
 
+    # ---- §1b Delegated to plugin (D9, plan 10) --------------------------------
+    if delegated_vars:
+        lines += [
+            f"## Delegated to plugin ({len(delegated_vars)})",
+            "",
+            "These tokens occur **only inside `[[...]]` conditional blocks**. The block",
+            "text (including these field values) is built by the Leg 4 plugin and emitted",
+            "via `${data.condN}` — the tokens are not substituted in this template.",
+            "Run Leg 4 to wire them; see the plugin report for their status.",
+            "",
+            "| Placeholder | Velocity Path | Conditional block(s) |",
+            "|---|---|---|",
+        ]
+        for v in delegated_vars:
+            ph = v.get("placeholder") or ""
+            ds = v.get("data_source") or ""
+            conds = ", ".join(f"cond{c}" for c in v.get("_cond_ids") or []) or "?"
+            lines.append(f"| `{ph}` | `{ds}` | {conds} |")
+        lines += ["", "---", ""]
+
     # ---- §2 Deferred (high-only mode) ----------------------------------------
     if high_only:
         lines += [
@@ -479,7 +584,7 @@ def write_report(
         else:
             lines += [
                 "These entries have a suggested path but were **not substituted** because",
-                "confidence is medium or low. Confirm each path in the `.suggested.yaml`,",
+                "confidence is medium or low. Confirm each path in the `.mapping.yaml`,",
                 "then re-run Leg 3 without `high_only=true` to apply them.",
                 "",
                 "| Type | Placeholder | Label | Suggested path | Confidence | Reasoning |",
@@ -620,7 +725,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
         "--suggested", type=Path, required=True,
-        help=".suggested.yaml produced by Leg 2",
+        help=".mapping.yaml (enriched by Leg 2) or legacy .suggested.yaml",
     )
     ap.add_argument(
         "--vm", type=Path, default=None,
@@ -647,7 +752,7 @@ def main() -> int:
         return 1
 
     stem = suggested_path.name
-    for suffix in (".suggested.yaml", ".yaml"):
+    for suffix in (".suggested.yaml", ".mapping.yaml", ".yaml"):
         if stem.endswith(suffix):
             stem = stem[: -len(suffix)]
             break
@@ -702,6 +807,10 @@ def main() -> int:
         deferred_loops = []
         unresolved_loops = [L for L in loops if not L.get("data_source")]
 
+    # Tokens living only inside [[...]]$doc.condN blocks are wired by the Leg 4
+    # plugin, not this template — report them separately (D9, plan 10).
+    resolved_vars, delegated_vars = split_delegated(vm_text, resolved_vars)
+
     # --- Write ---------------------------------------------------------------
     out_dir.mkdir(parents=True, exist_ok=True)
     out_vm_path.write_text(final_vm, encoding="utf-8")
@@ -719,6 +828,7 @@ def main() -> int:
         unresolved_loops=unresolved_loops,
         deferred_vars=deferred_vars,
         deferred_loops=deferred_loops,
+        delegated_vars=delegated_vars,
         high_only=high_only,
         generated_at=generated_at,
         repo_root=repo_root,
