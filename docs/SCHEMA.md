@@ -719,8 +719,49 @@ After editing, the reviewer copies the `data_source` value into the
 
 ---
 
+## Artifact: `<stem>.conditional-registry.yaml`
+
+Produced by: `leg0_ingest.py --parse-conditional-form` (after the customer
+returns the filled conditional form). Consumed by: Leg 2 (automatically when
+present beside the mapping), Leg 3 (optional enrichment — warns and ignores
+an invalid file), Leg 4 (required when present — halts on an invalid file).
+
+**Unversioned**: the document is a bare YAML list with no `schema_version`
+key. The contract is enforced by `velocity_converter/models.py`
+(`ConditionalBlock` / `ConditionalRegistry`).
+
+### Block entry shape
+
+| Key | Type | Required | Description |
+|---|---|---|---|
+| `id` | int | **yes** | Unique block id; `$doc.condN` markers reference it |
+| `source_text` | string | **yes** | The conditional text shown to the customer (with `{field}` tokens) |
+| `conditions` | list of string | no (default `[]`) | Condition expressions, e.g. `quoteNumber != null`; blank entries are dropped |
+| `operator` | string | no (default `AND`) | Combinator for multiple conditions; normalised to upper case |
+| `parent_id` | int or null | no | Enclosing block id for nested blocks |
+| `depth` | int | no (default 0) | Nesting depth |
+
+```yaml
+- id: 1
+  source_text: Accidental Damage cover is included in your plan.
+  conditions:
+  - quoteNumber != null
+  operator: AND
+```
+
 ## Change log
 
+- **(enforcement) — 2026-06-11 — Typed contract models.**
+  `velocity_converter/models.py` now enforces this document's contracts at
+  every pipeline read/write boundary (pydantic v2, unknown keys preserved
+  via `extra="allow"`). The MAJOR-halt / MINOR-warn rule above is enforced
+  by `check_contract_version`; structural violations raise a `ContractError`
+  naming the offending entries. Models are validators only — output YAML is
+  always dumped from the original dict, never from a model, so key order
+  and bytes are unchanged. Telemetry records are validated against
+  `conformance/schemas/suggester-log.schema.json` in the test suite. No
+  schema_version bumps: shapes are unchanged; this entry records the
+  enforcement mechanism only.
 - **2.0 — 2026-06-03 — Root-aware, SDK-grounded confidence (MAJOR on
   `.suggested.yaml` + `.review.md`).** Leg 2 now grades confidence per
   **(placeholder × rendering root)** by introspecting the compiled
