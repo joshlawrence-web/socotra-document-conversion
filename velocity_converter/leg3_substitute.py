@@ -29,6 +29,8 @@ from pathlib import Path
 
 import yaml
 
+from velocity_converter.models import ConditionalRegistry, ContractError, validate_contract
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -61,12 +63,23 @@ def _load_yaml(path: Path) -> dict:
 
 
 def _load_cond_registry(path: Path) -> list[dict]:
-    """Load a conditional-registry.yaml; return [] if absent or unreadable."""
+    """Load a conditional-registry.yaml; return [] if absent or invalid.
+
+    Conditional substitution is an optional enrichment here, so a malformed
+    registry degrades with a warning instead of halting (Leg 4, which needs
+    the blocks, halts).
+    """
     if not path.exists():
         return []
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, list) else []
+        if not isinstance(data, list):
+            return []
+        validate_contract(data, ConditionalRegistry, artifact="conditional-registry.yaml", path=path)
+        return data
+    except ContractError as exc:
+        print(f"WARNING: ignoring invalid conditional registry\n{exc}", file=sys.stderr)
+        return []
     except Exception:
         return []
 

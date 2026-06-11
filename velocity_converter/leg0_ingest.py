@@ -32,6 +32,8 @@ from pathlib import Path
 
 import yaml
 
+from velocity_converter.models import ConditionalRegistry, validate_contract
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -520,6 +522,9 @@ def parse_conditional_form(md_path: Path) -> list[dict]:
 
 def write_conditional_registry(blocks: list[dict], output_path: Path) -> None:
     """Write {stem}.conditional-registry.yaml for Leg 4."""
+    validate_contract(
+        blocks, ConditionalRegistry, artifact="conditional-registry.yaml", path=output_path
+    )
     output_path.write_text(
         yaml.dump(blocks, default_flow_style=False, allow_unicode=True),
         encoding="utf-8",

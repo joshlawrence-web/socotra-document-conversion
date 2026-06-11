@@ -33,6 +33,8 @@ from pathlib import Path
 
 import yaml
 
+from velocity_converter.models import ConditionalRegistry, ContractError, validate_contract
+
 # Shared SDK-introspection helpers (Leg 2 plan P1.1 — single source of JAR truth).
 from velocity_converter.sdk_introspect import (
     CUSTOMER_PACKAGE,
@@ -807,23 +809,28 @@ def _generate_dynamic_imports(all_calls: list[dict]) -> str:
 
 
 def load_conditional_registry(yaml_path: Path) -> list[dict]:
-    """Load conditional-registry.yaml. Returns [] if absent or empty."""
+    """Load + validate conditional-registry.yaml. Returns [] if absent or empty.
+
+    Raises models.ContractError (with the offending entries named) on a
+    malformed registry instead of a bare KeyError.
+    """
     if not yaml_path.exists():
         return []
     rows = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or []
-    blocks = []
-    for row in rows:
-        conditions = [str(c).strip() for c in (row.get("conditions") or []) if str(c).strip()]
-        operator = (row.get("operator") or "AND").strip().upper()
-        blocks.append({
-            "id": int(row["id"]),
-            "source_text": row["source_text"],
-            "parent_id": row.get("parent_id"),
-            "depth": int(row.get("depth") or 0),
-            "conditions": conditions,
-            "operator": operator,
-        })
-    return blocks
+    registry = validate_contract(
+        rows, ConditionalRegistry, artifact="conditional-registry.yaml", path=yaml_path
+    )
+    return [
+        {
+            "id": b.id,
+            "source_text": b.source_text,
+            "parent_id": b.parent_id,
+            "depth": b.depth,
+            "conditions": b.conditions,
+            "operator": b.operator,
+        }
+        for b in registry.root
+    ]
 
 
 def _count_annotated_conditionals(out_dir: Path, stem: str) -> int:
@@ -1405,7 +1412,11 @@ def _process_form(
 
     # --- Load conditional registry (Leg 1 artifact) --------------------------
     cond_yaml = form_dir / f"{stem}.conditional-registry.yaml"
-    cond_blocks = load_conditional_registry(cond_yaml)
+    try:
+        cond_blocks = load_conditional_registry(cond_yaml)
+    except ContractError as exc:
+        print(exc, file=sys.stderr)
+        return 1
     if not cond_yaml.exists():
         n_conds = _count_annotated_conditionals(form_dir, stem)
         if n_conds > 0:

@@ -162,3 +162,34 @@ def test_load_contract_version_halt(tmp_path):
         load_contract(
             p, PathRegistry, artifact="path-registry.yaml", expected_versions=("1.1",)
         )
+
+
+# ---------------------------------------------------------------------------
+# leg4 integration — malformed conditional registry yields ContractError
+# ---------------------------------------------------------------------------
+
+
+def test_leg4_load_conditional_registry_clean_error(tmp_path):
+    from velocity_converter.leg4_generate_plugin import load_conditional_registry
+
+    bad = tmp_path / "x.conditional-registry.yaml"
+    bad.write_text("- conditions: ['a != null']\n  operator: AND\n", encoding="utf-8")
+    with pytest.raises(ContractError) as exc:
+        load_conditional_registry(bad)
+    assert "source_text: Field required" in str(exc.value)
+    assert "KeyError" not in str(exc.value)
+
+
+def test_leg4_load_conditional_registry_valid(tmp_path):
+    from velocity_converter.leg4_generate_plugin import load_conditional_registry
+
+    good = tmp_path / "x.conditional-registry.yaml"
+    good.write_text(
+        "- id: 1\n  source_text: Some text\n  conditions: ['a != null']\n  operator: and\n",
+        encoding="utf-8",
+    )
+    blocks = load_conditional_registry(good)
+    assert blocks == [{
+        "id": 1, "source_text": "Some text", "parent_id": None,
+        "depth": 0, "conditions": ["a != null"], "operator": "AND",
+    }]
