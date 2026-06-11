@@ -33,7 +33,7 @@ from pathlib import Path
 
 import yaml
 
-from velocity_converter.models import ConditionalRegistry, ContractError, validate_contract
+from velocity_converter.models import ConditionalRegistry, ContractError, PathRegistry, validate_contract
 
 # Shared SDK-introspection helpers (Leg 2 plan P1.1 — single source of JAR truth).
 from velocity_converter.sdk_introspect import (
@@ -135,6 +135,10 @@ def _load_velocity_categories(registry_path: Path | None) -> dict[str, str]:
         return {}
     try:
         data = yaml.safe_load(Path(registry_path).read_text(encoding="utf-8")) or {}
+        validate_contract(data, PathRegistry, artifact="path-registry.yaml", path=Path(registry_path))
+    except ContractError as exc:
+        print(f"WARNING: ignoring invalid registry (category lookup disabled)\n{exc}", file=sys.stderr)
+        return {}
     except Exception:
         return {}
     out: dict[str, str] = {}

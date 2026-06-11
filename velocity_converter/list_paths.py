@@ -89,7 +89,12 @@ def _charge_rows(charges: list) -> list[str]:
 
 def render_catalog(registry_path: str) -> str:
     """Read the registry YAML and return the full Markdown catalog."""
+    from velocity_converter.models import PathRegistry, load_contract
+
     reg = Path(registry_path)
+    load_contract(
+        reg, PathRegistry, artifact="path-registry.yaml", expected_versions=("1.1",)
+    )
     data = yaml.safe_load(reg.read_text(encoding="utf-8"))
 
     product = (data.get("meta") or {}).get("display_name", "Product")

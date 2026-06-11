@@ -722,6 +722,12 @@ def main():
         output_path = config_dir.parent / "registry" / "path-registry.yaml"
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Validate-on-write: a malformed registry is an extractor bug — fail here,
+    # not in a downstream leg. The original dict is dumped, never the model.
+    from velocity_converter.models import PathRegistry, validate_contract
+
+    validate_contract(registry, PathRegistry, artifact="path-registry.yaml", path=output_path)
+
     with open(output_path, "w", encoding="utf-8") as f:
         yaml.dump(registry, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
 

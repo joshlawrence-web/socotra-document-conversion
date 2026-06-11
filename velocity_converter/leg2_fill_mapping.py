@@ -20,6 +20,14 @@ from pathlib import Path
 import yaml
 
 from velocity_converter.leg2_review_writer import _write_review_md
+from velocity_converter.models import (
+    ContractError,
+    MappingDoc,
+    PathRegistry,
+    SuggestedDoc,
+    check_contract_version,
+    validate_contract,
+)
 from velocity_converter.sdk_introspect import (
     ALLOWED_ROOTS,
     _class_exists,
@@ -1320,6 +1328,16 @@ def main() -> int:
     registry_text = args.registry.read_text(encoding="utf-8")
     mapping = yaml.safe_load(mapping_text)
     reg = yaml.safe_load(registry_text)
+    try:
+        validate_contract(mapping, MappingDoc, artifact="mapping.yaml", path=args.mapping)
+        check_contract_version(
+            (reg or {}).get("schema_version") if isinstance(reg, dict) else None,
+            ("1.1",), artifact="path-registry.yaml", path=args.registry,
+        )
+        validate_contract(reg, PathRegistry, artifact="path-registry.yaml", path=args.registry)
+    except ContractError as exc:
+        print(exc, file=sys.stderr)
+        return 1
     meta = reg.get("meta") if isinstance(reg.get("meta"), dict) else {}
 
     # --- Rendering roots from the filename brackets (D2, §8) -----------------

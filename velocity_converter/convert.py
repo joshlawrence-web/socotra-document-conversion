@@ -56,6 +56,7 @@ except ImportError:
     )
 
 from velocity_converter.agent_tools import build_velocity_lookup as _build_velocity_lookup
+from velocity_converter.models import ContractError, PathRegistry, validate_contract
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +216,10 @@ def load_iterables(registry_path: Optional[Path]) -> list[dict]:
         return []
     try:
         data = yaml.safe_load(registry_path.read_text(encoding="utf-8")) or {}
+        validate_contract(data, PathRegistry, artifact="path-registry.yaml", path=registry_path)
+    except ContractError as exc:
+        print(f"WARNING: ignoring invalid registry (loop hints disabled)\n{exc}", file=sys.stderr)
+        return []
     except yaml.YAMLError:
         return []
     raw = data.get("iterables") or []
