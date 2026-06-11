@@ -1,0 +1,35 @@
+product: TestProduct
+variables:
+  - name: policyNumber
+    placeholder: $TBD_policyNumber
+    type: variable
+    confidence: high
+    data_source: "$data.policyNumber"
+    context:
+      nearest_label: "Policy Number"
+      line: 1
+    candidate:
+      source: system
+      velocity: "$data.policyNumber"
+  - name: insuredName
+    placeholder: $TBD_insuredName
+    type: variable
+    confidence: medium
+    data_source: ""
+    context:
+      nearest_label: "Insured Name"
+      line: 2
+    candidate:
+      source: system
+      velocity: "$data.policyHolder.name"
+  - name: effectiveDate
+    placeholder: $TBD_effectiveDate
+    type: variable
+    confidence: low
+    data_source: ""
+    context:
+      nearest_label: "Effective Date"
+      line: 3
+    candidate:
+      source: system
+      velocity: "$data.policy.startDate"
