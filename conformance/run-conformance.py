@@ -23,7 +23,7 @@ Per fixture, the runner:
 3. Canonicalises both the actual and the golden registries (strips
    volatile fields — see IGNORED_REGISTRY_PATHS below) and diffs.
 4. JAR-backed fixtures only (those with a leg2.json marker): runs
-   leg2_fill_mapping.py in deterministic terse mode against the frozen
+   leg2_fill_mapping.py deterministically against the frozen
    golden registry + the build/*.jar set, writing actual/suggested.yaml
    + actual/review.md. This is the schema-2.0, SDK-grounded confidence
    path (Leg2-root-aware-confidence plan, D1) — it needs the compiled
@@ -40,7 +40,7 @@ What the runner does NOT automate
 ---------------------------------
 
 The runner never invokes the mapping-suggester skill's *narrative* (full
-mode) step. For non-JAR fixtures it does not run Leg 2 at all. To refresh
+step. For non-JAR fixtures it does not run Leg 2 at all. To refresh
 suggested/review goldens for a fixture without a leg2.json marker:
 
 1. Have an agent run the suggester on a fixture's mapping.yaml with
@@ -72,6 +72,7 @@ import importlib.util
 import shutil
 import subprocess
 import sys
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -90,7 +91,7 @@ LEGACY_ROOT_REGISTRY = REPO_ROOT / "path-registry.yaml"
 
 # A fixture opts in to a JAR-backed Leg 2 run (schema 2.0, SDK-grounded
 # confidence) by dropping a leg2.json marker beside its mapping. The runner
-# then runs leg2_fill_mapping.py in deterministic terse mode against the
+# then runs leg2_fill_mapping.py deterministically against the
 # build/*.jar set and diffs the actual suggested/review against the 2.0
 # goldens. Fixtures without the marker keep registry-only behaviour: their
 # suggested/review goldens are only compared if an agent leaves an actual/.
@@ -248,19 +249,38 @@ def _run_extract_paths(fixture: Path) -> Path:
     return actual_registry
 
 
+def _jar_has_product(fixture: Path) -> bool:
+    """True if build/customer-config.jar contains the fixture's product classes.
+
+    The JAR-backed fixture goldens were frozen against a specific product
+    (e.g. ItemCare). When build/ holds a different product's JARs, the leg2
+    run cannot reproduce them — skip instead of failing.
+    """
+    jar = REPO_ROOT / "build" / "customer-config.jar"
+    if not jar.is_file():
+        return False
+    golden_registry = fixture / "golden" / "path-registry.yaml"
+    try:
+        meta = (yaml.safe_load(golden_registry.read_text(encoding="utf-8")) or {}).get("meta") or {}
+        product = str(meta.get("product") or "")
+    except Exception:
+        return False
+    if not product:
+        return False
+    prefix = "com/socotra/deployment/customer/{}".format(product)
+    with zipfile.ZipFile(jar) as zf:
+        return any(n.startswith(prefix) for n in zf.namelist())
+
+
 def _run_leg2(fixture: Path) -> None:
     """Run leg2_fill_mapping.py for a JAR-backed fixture (opt-in via leg2.json).
 
-    Deterministic terse mode against the frozen golden registry + the build/*.jar
+    Deterministic run against the frozen golden registry + the build/*.jar
     set; writes <fixture>/actual/suggested.yaml + actual/review.md so the existing
     diff logic compares them against the 2.0 goldens. All paths are repo-root
     relative so the review's path bullets are stable (and normalised regardless).
     Raises RuntimeError on a non-zero exit (e.g. missing JARs — Leg2 plan D1).
     """
-    marker = fixture / LEG2_MARKER
-    cfg = yaml.safe_load(marker.read_text(encoding="utf-8")) or {}
-    mode = str(cfg.get("mode", "terse"))
-
     actual_dir = fixture / "actual"
     actual_dir.mkdir(exist_ok=True)
     rel = lambda p: str(p.relative_to(REPO_ROOT))
@@ -271,7 +291,6 @@ def _run_leg2(fixture: Path) -> None:
         "--registry",   rel(fixture / "golden" / "path-registry.yaml"),
         "--out",        rel(actual_dir / "suggested.yaml"),
         "--review-out", rel(actual_dir / "review.md"),
-        "--mode",       mode,
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True, cwd=str(REPO_ROOT))
     if proc.returncode != 0:
@@ -327,9 +346,20 @@ def _evaluate_fixture(fixture: Path) -> FixtureResult:
         diffs["path-registry.yaml"] = registry_diff
 
     # JAR-backed fixtures (leg2.json marker): run Leg 2 now so the suggested/
-    # review diffs below exercise SDK-grounded 2.0 output end-to-end.
+    # review diffs below exercise SDK-grounded 2.0 output end-to-end. Skipped
+    # when build/ holds a different product's JARs than the goldens were
+    # frozen against (stale actual/ outputs are cleared so the diff below
+    # reports skipped, not a misleading pass/fail).
     if (fixture / LEG2_MARKER).exists():
-        _run_leg2(fixture)
+        if _jar_has_product(fixture):
+            _run_leg2(fixture)
+        else:
+            print("  WARNING: leg2 skipped — build/customer-config.jar lacks "
+                  "this fixture's product classes")
+            for name in ("suggested.yaml", "review.md"):
+                stale = fixture / "actual" / name
+                if stale.exists():
+                    stale.unlink()
 
     actual_suggested = fixture / "actual" / "suggested.yaml"
     golden_suggested = fixture / "golden" / "suggested.yaml"
