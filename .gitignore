@@ -21,3 +21,6 @@ build/
 
 # IDE
 .vscode/
+
+# Archived plans (kept in git history only)
+.cursor/plans/

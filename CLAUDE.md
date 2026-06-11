@@ -260,3 +260,12 @@ once to register it with Claude Code — then you can convert HTML from any proj
 without keeping this repo open. See [README.md](README.md) § "Using with Claude Code".
 
 This CLAUDE.md covers the **in-repo script workflow** when working directly in a clone.
+
+---
+
+## Historical plans
+
+Implementation plans that drove past work were removed from the tree to avoid stale
+context. They are preserved in git history at the tag `plans-archive`. Recover with:
+`git checkout plans-archive -- .cursor/plans`. Do not treat old plan documents as
+current requirements.
