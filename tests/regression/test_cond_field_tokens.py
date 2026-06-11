@@ -10,6 +10,8 @@ import sys
 import unittest
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parent.parent.parent
 
 from velocity_converter.leg0_ingest import (  # noqa: E402
@@ -262,6 +264,7 @@ _HAVE_JARS = _CUSTOMER_JAR.is_file() and any(
 )
 
 
+@pytest.mark.jar
 @unittest.skipUnless(_HAVE_JARS, "SDK jars not present under build/")
 class TestJarVerifiedWiring(unittest.TestCase):
     """javap-backed wiring: Optional unwrap + chain misses (needs build/ jars)."""
