@@ -86,14 +86,14 @@ Canonical location in this repository: **`registry/path-registry.yaml`** (not at
 
 ### Registry config fingerprint (`meta.source_config_sha256`, v1.1+)
 
-Implemented in `scripts/socotra_config_fingerprint.py` and invoked from `extract_paths.py` and Leg 2 tooling.
+Implemented in `velocity_converter/socotra_config_fingerprint.py` and invoked from `extract_paths.py` and Leg 2 tooling.
 
 - **Root:** resolved `socotra-config/` directory.
 - **Files:** every `config.json` under `products/`, `exposures/`, `coverages/`, `charges/`, `accounts/`, `customDataTypes/`, and `perils/` (recursive), sorted by relative POSIX path.
 - **Payload:** for each file, append `relative_path + "\n" + utf8_text + "\n"` to a running SHA-256 (UTF-8 decode with replacement on invalid bytes).
 - **Output:** lowercase hex digest of the final hash.
 
-Leg 2 (`scripts/leg2_fill_mapping.py` and the mapping-suggester skill) may recompute the same digest from `--config-dir` and **refuse to run** when it disagrees with `meta.source_config_sha256` unless an explicit escape hatch is used (see provenance keys `registry_config_check` / `registry_config_verified` on `<stem>.suggested.yaml` and JSONL summaries).
+Leg 2 (`velocity_converter/leg2_fill_mapping.py` and the mapping-suggester skill) may recompute the same digest from `--config-dir` and **refuse to run** when it disagrees with `meta.source_config_sha256` unless an explicit escape hatch is used (see provenance keys `registry_config_check` / `registry_config_verified` on `<stem>.suggested.yaml` and JSONL summaries).
 
 ### `feature_support` keys (v1.0)
 
@@ -207,7 +207,7 @@ must land in the same PR or the contract is broken.
 
 ## Artifact: `<stem>.mapping.yaml`
 
-Produced by: `html-to-velocity/scripts/convert.py` (Leg 1).
+Produced by: `html-to-velocity/velocity_converter/convert.py` (Leg 1).
 Current version: **1.0**.
 
 ### Top-level sections
@@ -407,7 +407,7 @@ A missing/invalid rendering-root declaration short-circuits to a `## Blockers`
 review with no verdicts (Leg2 plan §8).
 
 **v1.1 extensions (tool-emitted; optional in frozen conformance goldens):**
-between Section 1 and `## Summary`, `scripts/leg2_fill_mapping.py` may emit
+between Section 1 and `## Summary`, `velocity_converter/leg2_fill_mapping.py` may emit
 provenance bullets (`run_id`, paths, hashes, registry lineage,
 `registry_config_check`), a `---` separator, and
 `## State summary`. Hand-authored `conformance/fixtures/*/golden/review.md`
@@ -735,7 +735,7 @@ After editing, the reviewer copies the `data_source` value into the
   a "JAR can only demote" grading rule (D8). The canonical fix: `$data.policyNumber`
   on the `ItemCare` segment root is now `low` + `sibling_only` +
   `Policy.policyNumber()` instead of a false `high`. Added shared
-  `scripts/sdk_introspect.py` (factored from Leg 4's `javap` helpers; Leg 4
+  `velocity_converter/sdk_introspect.py` (factored from Leg 4's `javap` helpers; Leg 4
   imports them back, behaviour unchanged). `--mode delta` is blocked on 2.0
   (D10). Invoice-root resolution is out of the first cut (D5). **Downstream
   impact:** Leg 3 / Leg 4 support only `1.x` and MUST halt with an upgrade
@@ -793,9 +793,9 @@ After editing, the reviewer copies the `data_source` value into the
   `--config-dir` hash gate with escape hatches) stamped on
   `<stem>.suggested.yaml`, `<stem>.review.md`, and JSONL summaries;
   delta runs carry `delta_changes` + `registry_or_config_changed`.
-  Added `scripts/socotra_config_fingerprint.py`,
-  `scripts/suggester_state.py`, `scripts/suggester_inspect.py`, and
-  extended `scripts/leg2_fill_mapping.py` + `emit_telemetry.py`.
+  Added `velocity_converter/socotra_config_fingerprint.py`,
+  `velocity_converter/suggester_state.py`, `velocity_converter/suggester_inspect.py`, and
+  extended `velocity_converter/leg2_fill_mapping.py` + `emit_telemetry.py`.
   Conformance runner rejects a stray root-level `path-registry.yaml`.
   `html-to-velocity` auto-discovery checks `registry/path-registry.yaml`
   before `path-registry.yaml` per directory.
@@ -840,7 +840,7 @@ After editing, the reviewer copies the `data_source` value into the
 - **1.0 — 2026-06-02 — Leg 4 / plugin-builder (additive, two new
   artifacts).** Introduced `{Product}DocumentDataSnapshotPluginImpl.java`
   and `<stem>.plugin-report.md` as the tenth and eleventh pipeline
-  artifacts. Added `scripts/leg4_generate_plugin.py` (deterministic Java
+  artifacts. Added `velocity_converter/leg4_generate_plugin.py` (deterministic Java
   codegen via `javap` introspection) and
   `.cursor/skills/plugin-builder/SKILL.md` (skill registration). Java
   output is not a versioned YAML artifact — no `schema_version` key.
@@ -849,9 +849,9 @@ After editing, the reviewer copies the `data_source` value into the
 - **1.0 — 2026-05-01 — Leg 3 / substitution-writer (additive, two new
   artifacts).** Introduced `<stem>.final.vm` and `<stem>.leg3-report.md`
   as the eighth and ninth pipeline artifacts. Added
-  `scripts/leg3_substitute.py` (core substitution logic),
+  `velocity_converter/leg3_substitute.py` (core substitution logic),
   `.cursor/skills/substitution-writer/SKILL.md` (skill registration),
-  and extended `scripts/agent.py` + `scripts/agent_tools.py` to support
+  and extended `velocity_converter/agent.py` + `velocity_converter/agent_tools.py` to support
   `leg3` and `leg1+leg2+leg3` pipeline operations. `CLAUDE.md` updated
   with leg3 trigger phrases and the full-pipeline default changed to
   `leg1+leg2+leg3`. Three design decisions recorded (DD-1: strip

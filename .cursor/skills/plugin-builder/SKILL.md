@@ -2,7 +2,7 @@
 name: plugin-builder
 description: >
   Given a Leg 2 `.suggested.yaml` (with a `product:` key and high-confidence
-  `data_source` paths), runs `scripts/leg4_generate_plugin.py` to emit a
+  `data_source` paths), runs `velocity_converter/leg4_generate_plugin.py` to emit a
   Socotra `DocumentDataSnapshotPlugin` Java implementation and a
   `<stem>.plugin-report.md` validation summary.
   Use when the user wants to generate the snapshot plugin, build the Java
@@ -38,19 +38,19 @@ Outputs (written to `--output-dir`, default = directory of the suggested file):
 
 ```bash
 # Minimal (from repo root)
-python3 scripts/leg4_generate_plugin.py \
+python3 -m velocity_converter.leg4_generate_plugin \
   --suggested samples/output/<stem>/<stem>.suggested.yaml \
   --customer-jar build/customer-config.jar
 
 # With compile check (recommended)
-python3 scripts/leg4_generate_plugin.py \
+python3 -m velocity_converter.leg4_generate_plugin \
   --suggested samples/output/Simple-form/Simple-form.suggested.yaml \
   --customer-jar build/customer-config.jar \
   --datamodel-jar build/core-datamodel-v1.7.61.jar \
   --compile-check
 
 # Custom output directory
-python3 scripts/leg4_generate_plugin.py \
+python3 -m velocity_converter.leg4_generate_plugin \
   --suggested samples/output/<stem>/<stem>.suggested.yaml \
   --customer-jar build/customer-config.jar \
   --output-dir /path/to/socotra-config/plugins/java
@@ -124,7 +124,7 @@ Pipeline integration (`RUN_PIPELINE leg4`) is planned for Phase 3 — see
 
 ## Important constraints
 
-- **JAR required at generation time.** `scripts/leg4_generate_plugin.py` calls
+- **JAR required at generation time.** `velocity_converter/leg4_generate_plugin.py` calls
   `javap` to verify the plugin interface and nested request types. It exits 1
   if `build/customer-config.jar` is absent or the expected types are missing.
 - **Never copy to `socotra-config/` automatically.** Deployment is a human step

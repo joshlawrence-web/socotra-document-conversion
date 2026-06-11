@@ -3,7 +3,7 @@ name: mapping-suggester
 description: >
   Given a Leg 1 `.mapping.yaml` (with blank `data_source` fields) and a
   `registry/path-registry.yaml` produced by `extract_paths.py`, runs
-  `scripts/leg2_fill_mapping.py` to suggest real Socotra Velocity paths for
+  `velocity_converter/leg2_fill_mapping.py` to suggest real Socotra Velocity paths for
   every `$TBD_*` variable and loop.  The script handles all deterministic
   matching (Rules 1-6) and writes the full `.suggested.yaml` + `.review.md`
   + `.suggester-log.jsonl`.  The AI then reads the script output and adds
@@ -91,7 +91,7 @@ A `batch` run runs `terse` automatically for every document in the batch.
 | Artifact | How to obtain |
 |---|---|
 | `<stem>.mapping.yaml` | Run the `html-to-velocity` skill on your HTML file |
-| `registry/path-registry.yaml` | Run `python3 .cursor/skills/mapping-suggester/scripts/extract_paths.py --config-dir <socotra-config/>` (default output; or pass `--output`). |
+| `registry/path-registry.yaml` | Run `python3 -m velocity_converter.extract_paths --config-dir <socotra-config/>` (default output; or pass `--output`). |
 | `terminology.yaml` (optional, Phase E) | Sibling of the registry file (e.g. `registry/terminology.yaml`), or `--terminology <path>`. See `docs/SCHEMA.md` → "Artifact: `terminology.yaml`". When absent, skip synonym lookup silently. |
 | `build/customer-config.jar` + `build/core-datamodel-v*.jar` (**required, 2.0**) | The compiled SDK that decides which `$data.*` paths exist per rendering root. Defaults: `--customer-jar build/customer-config.jar`, `--datamodel-jar` newest under `build/`. If absent the script fails loud. |
 
@@ -104,7 +104,7 @@ skill; `terminology.yaml` is optional; the build JARs are **required** (2.0).
 
 Confidence is no longer a name-match scalar. It is a verdict per
 **(placeholder × rendering root)**, decided by introspecting the compiled JARs
-with `javap` via `scripts/sdk_introspect.py` (shared with Leg 4).
+with `javap` via `velocity_converter/sdk_introspect.py` (shared with Leg 4).
 
 - **The JARs are the authority.** The registry only proposes a *candidate*
   `$data.*` path (the `match_step`: exact / ci / terminology / fuzzy). Whether
@@ -235,10 +235,10 @@ depth guidance.  For `terse`, `delta`, `batch`: do not read it.
 
 ### Step 0 — Run the script
 
-Run `scripts/leg2_fill_mapping.py` to produce all three output artifacts:
+Run `velocity_converter/leg2_fill_mapping.py` to produce all three output artifacts:
 
 ```bash
-python3 scripts/leg2_fill_mapping.py \
+python3 -m velocity_converter.leg2_fill_mapping \
     --mapping <stem>.mapping.yaml \
     --registry registry/path-registry.yaml \
     --customer-jar build/customer-config.jar \

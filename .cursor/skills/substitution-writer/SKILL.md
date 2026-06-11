@@ -3,7 +3,7 @@ name: substitution-writer
 description: >
   Given a Leg 1 `.vm` template (with `$TBD_*` placeholders and `#if` guards)
   and a Leg 2 `.suggested.yaml` (with confirmed `data_source` paths), runs
-  `scripts/leg3_substitute.py` to produce a production-ready `.final.vm` and
+  `velocity_converter/leg3_substitute.py` to produce a production-ready `.final.vm` and
   a human-editable `.leg3-report.md` remedy form.
   Use whenever the user wants to finalise a template, write out resolved paths,
   generate the final Velocity file, or run Leg 3.
@@ -74,8 +74,8 @@ Outputs (all written to `samples/output/<stem>/`):
 
 ## How to run
 
-Leg 3 is always run via `scripts/agent.py`. Do **not** call
-`scripts/leg3_substitute.py` directly when inside a pipeline context.
+Leg 3 is always run via `velocity_converter/agent.py`. Do **not** call
+`velocity_converter/leg3_substitute.py` directly when inside a pipeline context.
 
 ### Leg 3 only (finalise an existing .suggested.yaml)
 

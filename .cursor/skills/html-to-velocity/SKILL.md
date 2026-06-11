@@ -92,7 +92,7 @@ to the input file. The skill creates the subdirectory automatically if it does n
 The conversion is done by a bundled Python script. Invoke it from the skill directory or anywhere on disk:
 
 ```bash
-python3 <skill-path>/scripts/convert.py <path-to-input.html> [--output-dir <dir>] [--no-conditionals] [--registry <path>]
+python3 -m velocity_converter.convert <path-to-input.html> [--output-dir <dir>] [--no-conditionals] [--registry <path>]
 ```
 
 ### CLI flags
@@ -117,7 +117,7 @@ The script is self-contained — it does not need to be imported. Call it as a s
 ### Batch example (all files in a folder)
 
 ```bash
-python3 .cursor/skills/html-to-velocity/scripts/convert.py \
+python3 -m velocity_converter.convert \
     --batch samples/input/*.html \
     --output-dir samples/output \
     --registry registry/path-registry.yaml

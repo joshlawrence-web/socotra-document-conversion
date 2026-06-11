@@ -80,7 +80,7 @@ The easiest way to use this tool is as an **MCP server** for [Claude Code](https
 ```bash
 git clone https://github.com/joshlawrence-web/socotra-document-conversion.git
 cd socotra-document-conversion
-pip3 install -r requirements.txt
+pip3 install -e ".[dev]"
 ```
 
 **2. Register with Claude Code**
@@ -167,7 +167,7 @@ If you say *"only fill the high confidence fields"*, the server substitutes only
 ## Prerequisites
 
 - Python 3.10+
-- `pip3 install -r requirements.txt` (beautifulsoup4, pyyaml, mcp)
+- `pip3 install -e ".[dev]"` (installs the velocity_converter package + beautifulsoup4, pyyaml, mcp, pdfplumber, python-docx, pytest)
 - [Claude Code](https://claude.ai/code) for MCP usage — or [Cursor](https://www.cursor.com/) for the script-based workflow below
 
 ## Quick start (script-based)
@@ -177,23 +177,23 @@ If you say *"only fill the high confidence fields"*, the server substitutes only
    ```bash
    git clone https://github.com/joshlawrence-web/socotra-document-conversion.git
    cd socotra-document-conversion
-   pip3 install -r requirements.txt
+   pip3 install -e ".[dev]"
    ```
 
-2. **Run the pipeline** using the orchestrator (`scripts/agent.py`):
+2. **Run the pipeline** using the orchestrator (`velocity_converter/agent.py`):
 
    ```bash
    # Full pipeline — HTML → .final.vm (most common)
-   python3 scripts/agent.py "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml output=samples/output"
+   python3 -m velocity_converter.agent "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml output=samples/output"
 
    # Leg 1 only (HTML → .vm + .mapping.yaml)
-   python3 scripts/agent.py "RUN_PIPELINE leg1 input=samples/input/Simple-form.html output=samples/output"
+   python3 -m velocity_converter.agent "RUN_PIPELINE leg1 input=samples/input/Simple-form.html output=samples/output"
 
    # Leg 2 only (suggest paths for an existing .mapping.yaml)
-   python3 scripts/agent.py "RUN_PIPELINE leg2 mapping=samples/output/Simple-form/Simple-form.mapping.yaml"
+   python3 -m velocity_converter.agent "RUN_PIPELINE leg2 mapping=samples/output/Simple-form/Simple-form.mapping.yaml"
 
    # Leg 3 only (write final .vm from a reviewed .mapping.yaml)
-   python3 scripts/agent.py "RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.mapping.yaml"
+   python3 -m velocity_converter.agent "RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.mapping.yaml"
    ```
 
    The orchestrator shows a preflight summary and requires you to type `PROCEED` before running. Add `--yes` to skip confirmation in CI/headless use.
@@ -208,7 +208,7 @@ If you say *"only fill the high confidence fields"*, the server substitutes only
 2. Generate `registry/path-registry.yaml` from your own Socotra config (default output when `--output` is omitted writes next to the repo root’s `registry/` folder):
 
    ```bash
-   python3 .cursor/skills/mapping-suggester/scripts/extract_paths.py \
+   python3 -m velocity_converter.extract_paths \
      --config-dir <path-to-your-socotra-config/>
    ```
 
@@ -221,8 +221,9 @@ If you say *"only fill the high confidence fields"*, the server substitutes only
 |---|---|
 | `README.md` | This file — setup, usage, and layout |
 | `install.py` / `mcp_server.py` | One-time MCP setup and Claude Code server entrypoint |
-| `scripts/` | Pipeline scripts (`agent.py`, `leg2_fill_mapping.py`, `leg3_substitute.py`, …) |
-| `.cursor/skills/` | Leg 1 and Leg 2 agent skills |
+| `velocity_converter/` | Installable pipeline package (`agent.py`, `leg2_fill_mapping.py`, `leg3_substitute.py`, …) |
+| `tools/` | Dev tooling (`generate_test_fixtures.py`) |
+| `.cursor/skills/` | Leg 1 and Leg 2 agent runbooks (docs only — code lives in the package) |
 | `samples/input/` | Sample HTML mockups (`Simple-form`, `Additional-form`, `Policy-summary`) |
 | `samples/output/` | Generated pipeline outputs (gitignored — run the pipeline to populate) |
 | `registry/` | Pre-generated path registry plus Leg 2 config (`terminology.yaml`, `skill-lessons.yaml`) |
@@ -253,6 +254,6 @@ The runner fails fast if a legacy root-level `path-registry.yaml` is reintroduce
 python3 -m unittest discover -s tests -v
 ```
 
-Use `scripts/suggester_inspect.py` to list runs and inspect provenance from a `<stem>.suggester-log.jsonl` file (opt-in via `--telemetry-log` on `leg2_fill_mapping.py`).
+Use `velocity_converter/suggester_inspect.py` to list runs and inspect provenance from a `<stem>.suggester-log.jsonl` file (opt-in via `--telemetry-log` on `leg2_fill_mapping.py`).
 
 See [conformance/README.md](conformance/README.md) for full workflow details, including how to refresh goldens and add new fixtures.

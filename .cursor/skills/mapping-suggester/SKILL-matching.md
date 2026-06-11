@@ -1,6 +1,6 @@
 # mapping-suggester — Matching rules (reference only, post-Stage-4)
 
-> **NOTE (post-Stage-4):** `scripts/leg2_fill_mapping.py` implements these rules.
+> **NOTE (post-Stage-4):** `velocity_converter/leg2_fill_mapping.py` implements these rules.
 > This file is the authoritative spec — read it when debugging script behavior,
 > not during normal AI-skill runs.
 

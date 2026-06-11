@@ -61,7 +61,7 @@ Per fixture, the runner:
 
 1. Deletes any stale `actual/path-registry.yaml`.
 2. Runs
-   `python3 .cursor/skills/mapping-suggester/scripts/extract_paths.py
+   `python3 -m velocity_converter.extract_paths
    --config-dir <fixture>/socotra-config
    --output <fixture>/actual/path-registry.yaml`.
 3. Diffs `actual/path-registry.yaml` against `golden/path-registry.yaml`,
@@ -69,7 +69,7 @@ Per fixture, the runner:
    fields (see `_canonicalize_registry` in the runner source for the
    exact list of ignored keys).
 4. **JAR-backed fixtures only** (a `leg2.json` marker is present): runs
-   `python3 scripts/leg2_fill_mapping.py --mode terse` against the frozen
+   `python3 -m velocity_converter.leg2_fill_mapping --mode terse` against the frozen
    `golden/path-registry.yaml` + the `build/*.jar` set, writing
    `actual/suggested.yaml` + `actual/review.md`. `terse` mode is fully
    deterministic (no AI narrative), so this half is automatable. Needs the
@@ -133,7 +133,7 @@ Only viable for a product with **compiled JARs** in `build/` (today: the real
 3. Drop a `leg2.json` marker: `{"mode": "terse"}`.
 4. Generate the registry golden, then let the runner produce the 2.0 goldens:
    ```bash
-   python3 .cursor/skills/mapping-suggester/scripts/extract_paths.py \
+   python3 -m velocity_converter.extract_paths \
      --config-dir conformance/fixtures/<name>/socotra-config \
      --output     conformance/fixtures/<name>/golden/path-registry.yaml
    python3 conformance/run-conformance.py --only <name>                 # writes actual/, will FAIL (no goldens yet)

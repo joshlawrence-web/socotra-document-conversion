@@ -27,17 +27,17 @@ When the user provides a `.docx` or `.pdf` file, run Leg 0 (then optionally full
 
 **Leg 0 only** (convert doc → raw HTML + extract fields + conditional form):
 ```
-python3 scripts/agent.py --yes "RUN_PIPELINE leg0 input=<path.docx|path.pdf> output=samples/output"
+python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg0 input=<path.docx|path.pdf> output=samples/output"
 ```
 
 **Full customer flow** (doc → HTML → suggested paths → final template):
 ```
-python3 scripts/agent.py --yes "RUN_PIPELINE leg0+leg2+leg3 input=<path.docx|path.pdf> registry=registry/path-registry.yaml output=samples/output"
+python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg0+leg2+leg3 input=<path.docx|path.pdf> registry=registry/path-registry.yaml output=samples/output"
 ```
 
 **After customer returns the filled conditional form:**
 ```
-python3 scripts/leg0_ingest.py --parse-conditional-form samples/output/<stem>/<stem>.conditional-form.md --output-dir samples/output/<stem>/
+python3 -m velocity_converter.leg0_ingest --parse-conditional-form samples/output/<stem>/<stem>.conditional-form.md --output-dir samples/output/<stem>/
 ```
 
 **Trigger phrases — Leg 0** (not exhaustive — use judgment):
@@ -75,7 +75,7 @@ python3 scripts/leg0_ingest.py --parse-conditional-form samples/output/<stem>/<s
 3. If the **registry does NOT exist** and the **form DOES exist** → parse the conditional form first, then proceed:
 
 ```
-python3 scripts/leg0_ingest.py --parse-conditional-form samples/output/<stem>/<stem>.conditional-form.md --output-dir samples/output/<stem>/
+python3 -m velocity_converter.leg0_ingest --parse-conditional-form samples/output/<stem>/<stem>.conditional-form.md --output-dir samples/output/<stem>/
 ```
 
 4. Only after the registry is written (or confirmed to already exist) → run the requested downstream legs.
@@ -91,7 +91,7 @@ When the user asks to convert HTML files, run the full pipeline. No explanation 
 **Steps:**
 1. List `samples/input/` to find available `.html` files
 2. If ambiguous which files, ask. If they said "all" or "my files", run all of them.
-3. Run from repo root: `python3 scripts/agent.py --yes "RUN_PIPELINE leg1+leg2+leg3 input=<path> registry=registry/path-registry.yaml output=samples/output"`
+3. Run from repo root: `python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg1+leg2+leg3 input=<path> registry=registry/path-registry.yaml output=samples/output"`
 4. Report what was written. Tell the user to check `<stem>.leg3-report.md` for any unresolved tokens.
 
 **Trigger phrases** (not exhaustive — use judgment):
@@ -106,27 +106,27 @@ When the user asks to convert HTML files, run the full pipeline. No explanation 
 
 **Leg 1 only** (HTML → `.vm` + `.mapping.yaml`, no path suggestions):
 ```
-python3 scripts/agent.py --yes "RUN_PIPELINE leg1 input=<path> output=samples/output"
+python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg1 input=<path> output=samples/output"
 ```
 
 **Leg 2 only** (suggest paths for an existing mapping):
 ```
-python3 scripts/agent.py --yes "RUN_PIPELINE leg2 mapping=<path> registry=registry/path-registry.yaml"
+python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg2 mapping=<path> registry=registry/path-registry.yaml"
 ```
 
 **Leg 2+3** (suggest paths + write final template, starting from an existing mapping — use after leg0 + parsing the conditional form):
 ```
-python3 scripts/agent.py --yes "RUN_PIPELINE leg2+leg3 mapping=<path> registry=registry/path-registry.yaml"
+python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg2+leg3 mapping=<path> registry=registry/path-registry.yaml"
 ```
 
 **Leg 3 only** (finalise an existing `.mapping.yaml` into a `.final.vm`):
 ```
-python3 scripts/agent.py --yes "RUN_PIPELINE leg3 suggested=<path.mapping.yaml>"
+python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg3 suggested=<path.mapping.yaml>"
 ```
 
 **Leg 1+2 only** (HTML → suggested paths, no final write — useful when many tokens are unresolved and need human review first):
 ```
-python3 scripts/agent.py --yes "RUN_PIPELINE leg1+leg2 input=<path> registry=registry/path-registry.yaml output=samples/output"
+python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg1+leg2 input=<path> registry=registry/path-registry.yaml output=samples/output"
 ```
 
 **Output lands in** `samples/output/<stem>/`:
@@ -149,7 +149,7 @@ python3 scripts/agent.py --yes "RUN_PIPELINE leg1+leg2 input=<path> registry=reg
 
 **Leg 4** (`.mapping.yaml` → Java plugin + report):
 ```
-python3 scripts/leg4_generate_plugin.py \
+python3 -m velocity_converter.leg4_generate_plugin \
   --suggested samples/output/<stem>/<stem>.mapping.yaml \
   --customer-jar build/customer-config.jar \
   --datamodel-jar build/core-datamodel-v1.7.61.jar \
@@ -190,17 +190,17 @@ When the user wants to know what fields/paths are available in a template, rende
 
 **Print to stdout:**
 ```
-python3 scripts/agent.py --yes "RUN_PIPELINE list_paths registry=registry/path-registry.yaml"
+python3 -m velocity_converter.agent --yes "RUN_PIPELINE list_paths registry=registry/path-registry.yaml"
 ```
 
 **Write to file:**
 ```
-python3 scripts/agent.py --yes "RUN_PIPELINE list_paths registry=registry/path-registry.yaml out=samples/output/field-catalog.md"
+python3 -m velocity_converter.agent --yes "RUN_PIPELINE list_paths registry=registry/path-registry.yaml out=samples/output/field-catalog.md"
 ```
 
 **Direct script:**
 ```
-python3 scripts/list_paths.py [--registry registry/path-registry.yaml] [--out <path>]
+python3 -m velocity_converter.list_paths [--registry registry/path-registry.yaml] [--out <path>]
 ```
 
 Output: grouped Markdown — System → Account → Policy Custom Fields → Policy Charges → Per-Exposure (system/custom/coverages/charges) → DataFetcher Paths.
@@ -235,7 +235,7 @@ python3 tests/pipeline/run_test_pipeline.py
 
 **Regenerate DOCX fixtures** (run this if fixtures are missing or after changing `generate_test_fixtures.py`):
 ```
-python3 scripts/generate_test_fixtures.py
+python3 tools/generate_test_fixtures.py
 ```
 
 Output lands in `tests/pipeline/output/<stem>/`. Exit code is non-zero on failure.
@@ -244,10 +244,10 @@ Output lands in `tests/pipeline/output/<stem>/`. Exit code is non-zero on failur
 across three fixtures: `TestQuoteSummary(quote)`, `TestItemCert(segment)`, `TestRenewalNotice(segment)`.
 
 **Adding a new fixture** (four-step checklist):
-1. Add a builder function to `scripts/generate_test_fixtures.py` and append it to `FIXTURES`.
+1. Add a builder function to `tools/generate_test_fixtures.py` and append it to `FIXTURES`.
 2. Add the filename to `ALL_FIXTURES` in `tests/pipeline/run_test_pipeline.py`.
 3. Add condition seeds for its blocks in `tests/pipeline/condition_seeds.yaml`.
-4. Run `python3 scripts/generate_test_fixtures.py` to write the DOCX.
+4. Run `python3 tools/generate_test_fixtures.py` to write the DOCX.
 
 > Full details: [tests/pipeline/README.md](tests/pipeline/README.md)
 

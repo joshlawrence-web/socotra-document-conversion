@@ -1,6 +1,6 @@
 # mapping-suggester — Output formats (reference only, post-Stage-4)
 
-> **NOTE (post-Stage-4):** `scripts/leg2_fill_mapping.py` handles all output formatting.
+> **NOTE (post-Stage-4):** `velocity_converter/leg2_fill_mapping.py` handles all output formatting.
 > This file is the authoritative spec — read it when debugging script behavior,
 > not during normal AI-skill runs.
 
@@ -397,7 +397,7 @@ reasons do not need to be captured, the agent MAY author the JSONL by
 invoking the derivation helper instead of hand-building records:
 
 ```bash
-python3 .cursor/skills/mapping-suggester/scripts/emit_telemetry.py \
+python3 -m velocity_converter.emit_telemetry \
     --suggested samples/output/<stem>/<stem>.suggested.yaml \
     --registry path-registry.yaml \
     --log samples/output/<stem>/<stem>.suggester-log.jsonl

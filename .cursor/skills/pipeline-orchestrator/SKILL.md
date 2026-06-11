@@ -11,13 +11,13 @@ description: >
 This skill delegates to the Python agent. Run from the repo root:
 
 ```bash
-python3 scripts/agent.py "RUN_PIPELINE <operation> [key=value ...]"
+python3 -m velocity_converter.agent "RUN_PIPELINE <operation> [key=value ...]"
 ```
 
 Or with auto-confirm for CI/headless use:
 
 ```bash
-python3 scripts/agent.py --yes "RUN_PIPELINE <operation> [key=value ...]"
+python3 -m velocity_converter.agent --yes "RUN_PIPELINE <operation> [key=value ...]"
 ```
 
 The agent enforces the `RUN_PIPELINE` gate, shows a preflight summary, requires
@@ -29,25 +29,25 @@ The agent enforces the `RUN_PIPELINE` gate, shows a preflight summary, requires
 
 ```bash
 # Leg 1 only
-python3 scripts/agent.py "RUN_PIPELINE leg1 input=samples/input/Simple-form.html output=samples/output"
+python3 -m velocity_converter.agent "RUN_PIPELINE leg1 input=samples/input/Simple-form.html output=samples/output"
 
 # Leg 2 only
-python3 scripts/agent.py "RUN_PIPELINE leg2 mode=terse mapping=samples/output/Simple-form/Simple-form.mapping.yaml"
+python3 -m velocity_converter.agent "RUN_PIPELINE leg2 mode=terse mapping=samples/output/Simple-form/Simple-form.mapping.yaml"
 
 # End-to-end Leg 1 + Leg 2 (mode defaults to terse)
-python3 scripts/agent.py "RUN_PIPELINE leg1+leg2 input=samples/input/Simple-form.html registry=registry/path-registry.yaml output=samples/output"
+python3 -m velocity_converter.agent "RUN_PIPELINE leg1+leg2 input=samples/input/Simple-form.html registry=registry/path-registry.yaml output=samples/output"
 
 # Full pipeline through Leg 3
-python3 scripts/agent.py "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml output=samples/output"
+python3 -m velocity_converter.agent "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml output=samples/output"
 
 # Leg 4 only — generate DocumentDataSnapshotPlugin from existing .suggested.yaml
-python3 scripts/agent.py "RUN_PIPELINE leg4 suggested=samples/output/Simple-form/Simple-form.suggested.yaml"
+python3 -m velocity_converter.agent "RUN_PIPELINE leg4 suggested=samples/output/Simple-form/Simple-form.suggested.yaml"
 
 # Full pipeline including Leg 4 (HTML → .vm + plugin)
-python3 scripts/agent.py "RUN_PIPELINE leg1+leg2+leg3+leg4 input=samples/input/Simple-form.html registry=registry/path-registry.yaml output=samples/output"
+python3 -m velocity_converter.agent "RUN_PIPELINE leg1+leg2+leg3+leg4 input=samples/input/Simple-form.html registry=registry/path-registry.yaml output=samples/output"
 
 # Batch Leg 2
-python3 scripts/agent.py "RUN_PIPELINE leg2 mode=batch mapping=[samples/output/Simple-form/Simple-form.mapping.yaml, samples/output/Additional-form/Additional-form.mapping.yaml]"
+python3 -m velocity_converter.agent "RUN_PIPELINE leg2 mode=batch mapping=[samples/output/Simple-form/Simple-form.mapping.yaml, samples/output/Additional-form/Additional-form.mapping.yaml]"
 ```
 
 ---

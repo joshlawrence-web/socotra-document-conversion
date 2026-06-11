@@ -2,7 +2,7 @@
 
 **Status:** Living matrix. Seeded in session B1 (2026-04-22) against
 `socotra-config/CommercialAuto`. Every PR that touches
-`.cursor/skills/mapping-suggester/scripts/extract_paths.py` or
+`velocity_converter/extract_paths.py` or
 `.cursor/skills/mapping-suggester/SKILL.md` MUST review and update the
 rows whose "Handled in SKILL today?" status would change, per the
 governance rule in §5 below.
@@ -150,7 +150,7 @@ current regression run. The rule is dormant but contractually in place.
 ## 5. Governance rule (from .cursor/plans/pipeline-improvements/CompletedPlans/alpha-beta-plan/PIPELINE_EVOLUTION_PLAN.md §3.3)
 
 Every PR that touches
-`.cursor/skills/mapping-suggester/scripts/extract_paths.py` or
+`velocity_converter/extract_paths.py` or
 `.cursor/skills/mapping-suggester/SKILL.md` MUST:
 
 1. Review this matrix for any row whose "Handled in SKILL today?"
@@ -263,7 +263,7 @@ the row out with a changelog note pointing at the release).
   `peril_based` (deferred per above), `coverage_terms`,
   `default_option_prefix` — all queued for C4. Incidental code
   change: `build_registry()` in
-  `.cursor/skills/mapping-suggester/scripts/extract_paths.py` now
+  `velocity_converter/extract_paths.py` now
   sorts product subdirectories by name before picking the first one,
   so multi-product fixtures are reproducible across filesystems
   rather than dependent on `iterdir()` order. Verified no impact on
