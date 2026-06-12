@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generate the three canonical test DOCX fixtures for the pipeline test suite.
+Generate the canonical test DOCX fixtures for the pipeline test suite.
 
 Usage:
     python3 scripts/generate_test_fixtures.py [--out-dir tests/pipeline/fixtures]
@@ -12,6 +12,7 @@ Documents:
     TestQuoteSummary(quote).docx      — quote-level fields, 2 conditionals
     TestItemCert(segment).docx        — item/coverage fields, 3 conditionals
     TestRenewalNotice(segment).docx   — policy renewal fields, 3 conditionals
+    TestItemsSchedule(segment).docx   — [Item] loop over the items array, 1 conditional
 """
 from __future__ import annotations
 
@@ -202,6 +203,71 @@ def _build_renewal_notice(doc):
 
 
 # ---------------------------------------------------------------------------
+# Document 4: TestItemsSchedule(segment) — [Item] loop over the items array
+# ---------------------------------------------------------------------------
+
+def _build_items_schedule(doc):
+    _heading(doc, "Covered Items Schedule")
+
+    _para(doc, "Dear {account.data.firstName} {account.data.lastName},")
+    _para(doc, "")
+    _para(doc, "The items covered under your ZenCover policy are listed below.")
+    _para(doc, "")
+
+    _heading(doc, "Your Covered Items", level=2)
+    # [Item]/[/Item] rows mark the repeating section — Leg 0 turns them into
+    # a #foreach scaffold so each item renders one row; the header stays once.
+    tbl = doc.add_table(rows=1, cols=4)
+    tbl.rows[0].cells[0].text = "Item Type"
+    tbl.rows[0].cells[1].text = "Purchase Date"
+    tbl.rows[0].cells[2].text = "Purchase Price"
+    tbl.rows[0].cells[3].text = "Serial Number"
+    tbl.add_row().cells[0].text = "[Item]"
+    row = tbl.add_row()
+    row.cells[0].text = "{item.data.itemTypeCode}"
+    row.cells[1].text = "{item.data.purchaseDate}"
+    row.cells[2].text = "{item.data.purchasePrice}"
+    row.cells[3].text = "{item.data.serialNumber}"
+    tbl.add_row().cells[0].text = "[/Item]"
+    _para(doc, "")
+
+    _heading(doc, "Coverage Notes", level=2)
+    _para(doc, "Breakdown Cover is included as standard for every listed item.")
+    _para(doc, "")
+    _para(doc,
+          "[[Accidental Damage Cover applies to the items listed above. "
+          "Each item is protected against unexpected physical damage.]]")
+    _para(doc, "")
+
+    _para(doc, "ZenCover Limited")
+
+
+# ---------------------------------------------------------------------------
+# Document 5: TestGiftSchedule(segment) — [Item] loop inside a [[conditional]]
+# ---------------------------------------------------------------------------
+
+def _build_gift_schedule(doc):
+    _heading(doc, "Promotional Gift Schedule")
+
+    _para(doc, "Dear {account.data.firstName} {account.data.lastName},")
+    _para(doc, "")
+
+    # The whole gift section (including the repeating item list) only appears
+    # when the condition holds — Leg 0 flips this block to render: template
+    # (#if guard stays in the .vm; the plugin puts the condition as a Boolean).
+    _para(doc, "[[The following promotional gift items are included with your policy:")
+    _para(doc, "[Item]")
+    _para(doc, "Gift: {item.data.itemTypeCode} valued at {item.data.purchasePrice}")
+    _para(doc, "[/Item]")
+    _para(doc, "Gift items are subject to availability.]]")
+    _para(doc, "")
+
+    _para(doc, "[[Theft cover is included in your plan.]]")
+    _para(doc, "")
+    _para(doc, "ZenCover Limited")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -209,6 +275,8 @@ FIXTURES = [
     ("TestQuoteSummary(quote).docx", _build_quote_summary),
     ("TestItemCert(segment).docx", _build_item_cert),
     ("TestRenewalNotice(segment).docx", _build_renewal_notice),
+    ("TestItemsSchedule(segment).docx", _build_items_schedule),
+    ("TestGiftSchedule(segment).docx", _build_gift_schedule),
 ]
 
 

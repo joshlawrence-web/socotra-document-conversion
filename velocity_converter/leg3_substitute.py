@@ -113,13 +113,19 @@ def apply_cond_substitutions(vm_text: str, cond_map: dict[str, str]) -> str:
     The plugin owns conditional text — it puts the resolved string (or "") into
     renderingData under "condN". The template just outputs ${data.condN}.
 
-    Two phases:
+    Three phases:
+      0. Rewrite #if($doc.condN) guards → #if($data.condN). These come from
+         Leg 0's render-template blocks (a [[conditional]] containing a loop):
+         the content stays in the template and the plugin puts condN as a
+         Boolean, so only the guard token needs renaming.
       1. Resolve [[...]]$doc.condN blocks innermost-first (repeated until stable).
          Bare $doc.condN tokens are left untouched so outer blocks can still match
          on the next pass.
       2. Replace any remaining bare $doc.condN tokens (e.g. inside a cond block's
          source_text that the annotator left un-bracketed).
     """
+    # Phase 0: template-rendered conditional guards
+    vm_text = re.sub(r"#if\(\$doc\.cond(\d+)\)", r"#if($data.cond\1)", vm_text)
     # Phase 1: peel [[...]]$doc.condN from innermost outward
     for _ in range(10):
         new_text = _COND_BLOCK_RE.sub(
@@ -259,18 +265,22 @@ def build_substitution_map(suggested: dict) -> dict[str, str]:
     """
     suggested = _flatten_to_primary_root(suggested)
     smap: dict[str, str] = {}
+    def _clean_data_source(value: str) -> str:
+        ds = (value or "").strip()
+        return "" if ds.startswith("UNRESOLVED:") else ds
+
     for v in suggested.get("variables") or []:
         ph = v.get("placeholder") or ""
         if ph:
-            smap[ph] = v.get("data_source") or ""
+            smap[ph] = _clean_data_source(v.get("data_source") or "")
     for loop in suggested.get("loops") or []:
         ph = loop.get("placeholder") or ""
         if ph:
-            smap[ph] = loop.get("data_source") or ""
+            smap[ph] = _clean_data_source(loop.get("data_source") or "")
         for fld in loop.get("fields") or []:
             fph = fld.get("placeholder") or ""
             if fph:
-                smap[fph] = fld.get("data_source") or ""
+                smap[fph] = _clean_data_source(fld.get("data_source") or "")
     return smap
 
 
@@ -742,10 +752,14 @@ def main() -> int:
     variables = suggested.get("variables") or []
     loops = suggested.get("loops") or []
 
-    resolved_vars = [v for v in variables if v.get("data_source")]
-    unresolved_vars = [v for v in variables if not v.get("data_source")]
-    resolved_loops = [L for L in loops if L.get("data_source")]
-    unresolved_loops = [L for L in loops if not L.get("data_source")]
+    def _is_resolved(entry: dict) -> bool:
+        ds = (entry.get("data_source") or "").strip()
+        return bool(ds) and not ds.startswith("UNRESOLVED:")
+
+    resolved_vars = [v for v in variables if _is_resolved(v)]
+    unresolved_vars = [v for v in variables if not _is_resolved(v)]
+    resolved_loops = [L for L in loops if _is_resolved(L)]
+    unresolved_loops = [L for L in loops if not _is_resolved(L)]
 
     # Tokens living only inside [[...]]$doc.condN blocks are wired by the Leg 4
     # plugin, not this template — report them separately (D9, plan 10).

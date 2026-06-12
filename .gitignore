@@ -7,6 +7,9 @@ __pycache__/
 .DS_Store
 .cursor/.DS_Store
 
+# Office lock/temp files
+~$*
+
 # Pipeline actual/ outputs (test run artefacts, not golden)
 conformance/fixtures/*/actual/
 

@@ -3,8 +3,11 @@
 Leg 0 — Document Ingestion (PDF / Word → raw HTML) + Field/Conditional Extraction
 
 Converts a customer's source document (PDF or Word) into a rough HTML file
-suitable for the existing Leg 1 pipeline, then extracts {field_name} tokens
-and [[conditional]] blocks, annotates them, and writes all pipeline-ready artifacts.
+suitable for the existing Leg 1 pipeline, then extracts {field_name} tokens,
+[[conditional]] blocks, and [Name]...[/Name] loop sections, annotates them,
+and writes all pipeline-ready artifacts. Loop section names must exactly match
+a registry iterable name (e.g. [Item] ... [/Item]); fields inside become the
+loop's fields in the mapping and the markers become a #foreach scaffold.
 
 Usage:
     python3 -m velocity_converter.leg0_ingest --input <path.docx|path.pdf> [--output-dir <dir>]
@@ -213,16 +216,26 @@ def convert_pdf(pdf_path: Path) -> str:
 # Field extraction (E-T1)
 # ---------------------------------------------------------------------------
 
-_FIELD_RE = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_.]*)\}")
+# Group 1: optional occurrence symbol ($ optional, + one-or-more, * zero-or-more;
+# bare = required). Group 2: field name. See models.OCCURRENCE_SYMBOLS.
+_FIELD_RE = re.compile(r"\{([$+*]?)([a-zA-Z_][a-zA-Z0-9_.]*)\}")
 
 
 def extract_fields(html: str, registry_path=None) -> list[dict]:
     """Extract {field_name} tokens from HTML (on plain text). Deduplicates.
 
+    An occurrence symbol may prefix the name — {$x} optional, {x} required,
+    {+x} one or more, {*x} zero or more — and is recorded as a normalized
+    ``occurrence`` value on the field. The canonical token never carries the
+    symbol ($TBD_x for all four forms). Conflicting symbols for the same name
+    keep the first one seen and warn on stderr.
+
     When registry_path is provided, dotted-path placeholders (e.g. {account.data.firstName})
     are resolved against the registry and their velocity path written into data_source.
     Unresolved dotted names get data_source = "UNRESOLVED:<name>" and a stderr warning.
     """
+    from velocity_converter.models import OCCURRENCE_SYMBOLS
+
     try:
         from bs4 import BeautifulSoup
         text = BeautifulSoup(html, "html.parser").get_text()
@@ -230,40 +243,75 @@ def extract_fields(html: str, registry_path=None) -> list[dict]:
         text = re.sub(r"<[^>]+>", " ", html)
 
     seen: dict[str, list[int]] = {}
+    occurrences: dict[str, str] = {}
+    conflicts: list[str] = []
     for i, m in enumerate(re.finditer(_FIELD_RE, text)):
-        name = m.group(1)
+        symbol, name = m.group(1), m.group(2)
         seen.setdefault(name, []).append(i)
+        if name not in occurrences:
+            occurrences[name] = OCCURRENCE_SYMBOLS[symbol]
+        elif occurrences[name] != OCCURRENCE_SYMBOLS[symbol]:
+            conflicts.append(name)
 
     lookup: dict = {}
+    meta_lookup: dict = {}
     if registry_path and any("." in name for name in seen):
         try:
             _scripts = str(Path(__file__).parent)
             if _scripts not in sys.path:
                 sys.path.insert(0, _scripts)
-            from agent_tools import build_velocity_lookup  # noqa: PLC0415
+            from agent_tools import build_velocity_lookup, build_velocity_meta_lookup  # noqa: PLC0415
             lookup = build_velocity_lookup(registry_path)
+            meta_lookup = build_velocity_meta_lookup(registry_path)
         except Exception:
             pass
 
     unresolved: list[str] = []
     fields: list[dict] = []
     for name in seen:
+        candidate = None
         if "." in name and lookup:
             velocity = lookup.get(name)
             if velocity:
                 data_source = velocity
+                # DataFetcher-sourced paths (e.g. account.data.firstName →
+                # getAccount) share their velocity path with a phantom direct
+                # row, so the path alone can't drive the fetch. Stamp a
+                # candidate block here so Leg 4 wires the DataFetcher call.
+                meta = meta_lookup.get(name)
+                if meta and meta.get("source") == "datafetcher":
+                    candidate = {
+                        "path": meta.get("velocity") or velocity,
+                        "match_step": "exact",
+                        "source": "datafetcher",
+                        "datafetcher_method": meta.get("datafetcher_method", ""),
+                        "datafetcher_arg": meta.get("datafetcher_arg"),
+                        "datafetcher_key": meta.get("datafetcher_key", ""),
+                    }
+                    if meta.get("valid_roots"):
+                        candidate["valid_roots"] = meta["valid_roots"]
             else:
                 data_source = f"UNRESOLVED:{name}"
                 unresolved.append(name)
         else:
             data_source = ""
-        fields.append({
+        field = {
             "name": name,
             "token": f"$TBD_{name}",
             "data_source": data_source,
             "confidence": "",
-        })
+            "occurrence": occurrences.get(name, "required"),
+        }
+        if candidate:
+            field["candidate"] = candidate
+        fields.append(field)
 
+    if conflicts:
+        print(
+            "WARNING: conflicting occurrence symbols for: "
+            f"{', '.join(sorted(set(conflicts)))} — first symbol seen wins",
+            file=sys.stderr,
+        )
     if unresolved:
         print(
             f"WARNING: unresolved dotted placeholders: {', '.join(unresolved)}",
@@ -274,11 +322,13 @@ def extract_fields(html: str, registry_path=None) -> list[dict]:
 
 
 def annotate_fields(html: str, fields: list[dict]) -> str:
-    """Replace {field_name} → $TBD_field_name in the HTML string."""
-    result = html
-    for f in fields:
-        result = result.replace("{" + f["name"] + "}", f["token"])
-    return result
+    """Replace {field_name} → $TBD_field_name in the HTML string.
+
+    Occurrence symbols are accepted and stripped: {$x}, {+x}, {*x} all become
+    the same canonical token as {x}.
+    """
+    tokens = {f["name"]: f["token"] for f in fields}
+    return _FIELD_RE.sub(lambda m: tokens.get(m.group(2), m.group(0)), html)
 
 
 # ---------------------------------------------------------------------------
@@ -390,36 +440,240 @@ def annotate_conditionals(html: str, blocks: list[dict]) -> str:
     return result
 
 
-def _normalise_for_leg2(fields: list[dict], source_name: str) -> dict:
+# ---------------------------------------------------------------------------
+# Loop section extraction ([Name] ... [/Name])
+# ---------------------------------------------------------------------------
+
+# Single-bracket loop markers: [Name] opens a repeating section, [/Name]
+# closes it. Lookarounds exclude [[conditional]] double brackets. The name
+# must exactly match a registry iterable name (e.g. [Item]) — Leg 2 resolves
+# loop roots by exact name only.
+_LOOP_MARKER_RE = re.compile(r"(?<!\[)\[(/?)([A-Za-z_]\w*)\](?!\])")
+
+# A directive that ended up as the sole content of a paragraph or a table row
+# (other cells empty) collapses to a bare line so Leg 3's line-level #foreach
+# replacement applies.
+_DIRECTIVE_LINE_CLEANUP = [
+    (re.compile(r"^(\s*)<p>(#foreach \([^)]*\)|#end)</p>$", re.M), r"\1\2"),
+    (re.compile(r"^(\s*)<tr><td>(#foreach \([^)]*\)|#end)</td>(?:<td></td>)*</tr>$", re.M), r"\1\2"),
+]
+
+
+def _annotated_cond_spans(html: str) -> list[tuple[int, int, int | None]]:
+    """Spans of [[...]]$doc.condN regions (incl. nested) in annotated HTML.
+
+    Returns [(start, end, cond_id)]; end includes the ]]$doc.condN suffix.
+    cond_id is None when the closing ]] carries no annotation. Mirrors Leg 3's
+    _cond_block_spans so both legs agree on block boundaries.
+    """
+    spans: list[tuple[int, int, int | None]] = []
+    stack: list[int] = []
+    i, n = 0, len(html)
+    while i < n - 1:
+        two = html[i : i + 2]
+        if two == "[[":
+            stack.append(i)
+            i += 2
+        elif two == "]]":
+            if stack:
+                start = stack.pop()
+                m = re.match(r"\$doc\.cond(\d+)", html[i + 2 :])
+                end = i + 2 + (m.end() if m else 0)
+                spans.append((start, end, int(m.group(1)) if m else None))
+            i += 2
+        else:
+            i += 1
+    return spans
+
+
+def extract_loops(
+    html: str, fields: list[dict], cond_blocks: list[dict] | None = None
+) -> tuple[str, list[dict], list[dict]]:
+    """Detect [Name]...[/Name] repeating sections in annotated HTML.
+
+    Returns (html, top_level_fields, loops):
+      - markers become ``#foreach ($<name> in $TBD_<Name>)`` / ``#end``
+        scaffold lines (Leg 2 supplies the real directive, Leg 3 swaps it in);
+      - a field whose every occurrence falls inside one section moves from
+        the top level into that loop's ``fields`` list;
+      - loops is a list of {name, token, iterator, fields} dicts.
+
+    Interaction with [[conditional]] blocks (cond_blocks from
+    extract_conditionals, mutated in place):
+      - a section fully inside a top-level block flips that block to
+        ``render: template`` — the block becomes ``#if($doc.condN)``…``#end``
+        in the HTML (content, loop included, stays in the template; the
+        plugin supplies condN as a Boolean instead of a rendered string);
+      - a section crossing a block boundary, or inside a *nested* block,
+        is refused: warning, markers left as literal text;
+      - a block fully inside a section is allowed but warned — conditions
+        are document-scoped, so it renders identically for every item.
+
+    Unmatched markers warn on stderr and stay as literal text.
+    """
+    pairs: list[tuple[int, int, int, int, str]] = []
+    pending: dict[str, tuple[int, int]] = {}
+    for m in _LOOP_MARKER_RE.finditer(html):
+        name = m.group(2)
+        if m.group(1) != "/":
+            if name in pending:
+                print(
+                    f"WARNING: loop [{name}] reopened before [/{name}] — earlier opener ignored",
+                    file=sys.stderr,
+                )
+            pending[name] = (m.start(), m.end())
+        elif name in pending:
+            o_start, o_end = pending.pop(name)
+            pairs.append((o_start, o_end, m.start(), m.end(), name))
+        else:
+            print(f"WARNING: [/{name}] closer without opener — left as literal text", file=sys.stderr)
+    for name in pending:
+        print(f"WARNING: loop [{name}] never closed — left as literal text", file=sys.stderr)
+    if not pairs:
+        return html, fields, []
+
+    # Classify each pair against conditional block spans.
+    cond_spans = _annotated_cond_spans(html)
+    blocks_by_id = {b["id"]: b for b in (cond_blocks or [])}
+    template_spans: dict[int, tuple[int, int]] = {}  # cond_id -> (start, end)
+    kept_pairs: list[tuple[int, int, int, int, str]] = []
+    for pair in pairs:
+        o_start, o_end, c_start, c_end, name = pair
+        overlapping = [s for s in cond_spans if s[0] < c_end and o_start < s[1]]
+        containing = [s for s in overlapping if s[0] <= o_start and c_end <= s[1]]
+        inside = [s for s in overlapping if o_end <= s[0] and s[1] <= c_start]
+        crossing = [s for s in overlapping if s not in containing and s not in inside]
+        if crossing:
+            print(
+                f"WARNING: loop [{name}] crosses a [[conditional]] block boundary — "
+                "markers left as literal text; restructure the document",
+                file=sys.stderr,
+            )
+            continue
+        if len(containing) > 1:
+            print(
+                f"WARNING: loop [{name}] sits inside a nested [[conditional]] — only "
+                "top-level blocks support loops; markers left as literal text",
+                file=sys.stderr,
+            )
+            continue
+        if inside:
+            print(
+                f"WARNING: [[conditional]] block(s) inside loop [{name}] are document-scoped — "
+                "the same text renders for every item",
+                file=sys.stderr,
+            )
+        if containing:
+            b_start, b_end, cond_id = containing[0]
+            if cond_id is None or cond_id not in blocks_by_id:
+                print(
+                    f"WARNING: loop [{name}] is inside an unannotated [[conditional]] — "
+                    "markers left as literal text",
+                    file=sys.stderr,
+                )
+                continue
+            template_spans[cond_id] = (b_start, b_end)
+            blocks_by_id[cond_id]["render"] = "template"
+        kept_pairs.append(pair)
+    pairs = kept_pairs
+    if not pairs:
+        return html, fields, []
+
+    loop_field_lists: dict[str, list[dict]] = {p[4]: [] for p in pairs}
+    top_fields: list[dict] = []
+    for f in fields:
+        token_re = re.compile(re.escape(f["token"]) + r"(?![\w.])")
+        positions = [t.start() for t in token_re.finditer(html)]
+        target = None
+        for o_start, o_end, c_start, _c_end, name in pairs:
+            if positions and all(o_end <= p < c_start for p in positions):
+                target = name
+                break
+        if target is None:
+            top_fields.append(f)
+        else:
+            loop_field_lists[target].append(f)
+
+    # Replace marker spans in reverse offset order so earlier offsets stay valid.
+    # Template-rendered blocks unwrap in the same pass: their [[ opener and
+    # ]]$doc.condN tail become #if($doc.condN) / #end guard lines (disjoint
+    # from the marker spans, which sit strictly inside the block content).
+    spans: list[tuple[int, int, str]] = []
+    for o_start, o_end, c_start, c_end, name in pairs:
+        spans.append((o_start, o_end, f"#foreach (${name.lower()} in $TBD_{name})"))
+        spans.append((c_start, c_end, "#end"))
+    for cond_id, (b_start, b_end) in template_spans.items():
+        tail_len = 2 + len(f"$doc.cond{cond_id}")  # ]]$doc.condN
+        spans.append((b_start, b_start + 2, f"#if($doc.cond{cond_id})\n"))
+        spans.append((b_end - tail_len, b_end, "\n#end"))
+    for start, end, text in sorted(spans, reverse=True):
+        html = html[:start] + text + html[end:]
+    for pattern, repl in _DIRECTIVE_LINE_CLEANUP:
+        html = pattern.sub(repl, html)
+
+    loops = [
+        {
+            "name": name,
+            "token": f"$TBD_{name}",
+            "iterator": f"${name.lower()}",
+            "fields": loop_field_lists[name],
+        }
+        for _os, _oe, _cs, _ce, name in pairs
+    ]
+    return html, top_fields, loops
+
+
+def _normalise_for_leg2(fields: list[dict], source_name: str, loops: list[dict] | None = None) -> dict:
     """Convert fields list to a leg2-compatible .mapping.yaml dict (uses placeholder)."""
     import datetime as dt
 
-    variables = [
-        {
+    def _variable(f: dict, loop_name: str | None = None) -> dict:
+        context: dict = {
+            "parent_tag": "p",
+            "line": None,
+            "nearest_label": "",
+        }
+        if loop_name:
+            context["loop"] = loop_name
+        var = {
             "name": f["name"],
             "placeholder": f["token"],
-            "type": "variable",
-            "context": {
-                "parent_tag": "p",
-                "line": None,
-                "nearest_label": "",
-            },
+            "type": "loop_field" if loop_name else "variable",
+            "context": context,
             "data_source": f.get("data_source", ""),
+            "occurrence": f.get("occurrence", "required"),
         }
-        for f in fields
+        if f.get("candidate"):
+            var["candidate"] = f["candidate"]
+        return var
+
+    loop_entries = [
+        {
+            "name": loop["name"],
+            "placeholder": loop["token"],
+            "type": "loop",
+            "iterator": loop["iterator"],
+            "detection": "marker",
+            "context": {},
+            "data_source": "",
+            "fields": [_variable(f, loop_name=loop["name"]) for f in loop["fields"]],
+        }
+        for loop in (loops or [])
     ]
     return {
         "schema_version": "1.0",
         "source": source_name,
         "generated_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00"),
-        "variables": variables,
-        "loops": [],
+        "variables": [_variable(f) for f in fields],
+        "loops": loop_entries,
     }
 
 
-def write_leg2_mapping(fields: list[dict], source_name: str, output_path: Path) -> None:
+def write_leg2_mapping(
+    fields: list[dict], source_name: str, output_path: Path, loops: list[dict] | None = None
+) -> None:
     """Write {stem}.mapping.yaml — leg2-compatible format with placeholder field."""
-    data = _normalise_for_leg2(fields, source_name)
+    data = _normalise_for_leg2(fields, source_name, loops=loops)
     validate_contract(data, MappingDoc, artifact="mapping.yaml", path=output_path)
     output_path.write_text(
         yaml.dump(data, default_flow_style=False, allow_unicode=True),
@@ -451,9 +705,10 @@ def _braces_to_tbd(text: str) -> str:
     """Inverse of _tbd_to_braces: {name} → $TBD_name (canonical machine form).
 
     No-op on text already in $TBD_ form, so forms written before the {field}
-    display change still parse.
+    display change still parse. Occurrence symbols ({$x}, {+x}, {*x}) are
+    accepted and dropped — the canonical token never carries them.
     """
-    return _FIELD_RE.sub(lambda m: "$TBD_" + m.group(1), text)
+    return _FIELD_RE.sub(lambda m: "$TBD_" + m.group(2), text)
 
 
 def write_conditional_form(blocks: list[dict], stem: str, output_path: Path) -> None:
@@ -467,11 +722,12 @@ def write_conditional_form(blocks: list[dict], stem: str, output_path: Path) -> 
         "| Root | Example accessor | Meaning |",
         "|------|-----------------|---------|",
         "| `quote` | `quote.quoteNumber` | Quote-level system fields |",
+        "| `quote` | `quote.data.coolingOffPeriod` | Quote custom fields |",
         "| `account` | `account.data.firstName` | Policyholder fields |",
         "| `policy` | `policy.data.riderType` | Custom policy fields |",
         "| `item` | `item.data.vin` | Per-exposure fields (within a loop) |",
         "",
-        "Comparison examples: `quote.quoteNumber != null` · `account.data.state == \"CA\"` · `policy.data.riderType == \"AirBag\"`",
+        "Comparison examples: `quote.quoteNumber != null` · `quote.data.coolingOffPeriod != null` · `account.data.state == \"CA\"`",
         "",
         "Run `python3 -m velocity_converter.list_paths` to see all available accessors.",
         "Return this file to your implementation contact when complete.",
@@ -485,6 +741,14 @@ def write_conditional_form(blocks: list[dict], stem: str, output_path: Path) -> 
             "",
             f"> {_tbd_to_braces(b['source_text'])}",
             "",
+        ]
+        if b.get("render") == "template":
+            lines += [
+                "Rendering: template (contains a repeating section — the text stays in "
+                "the template and the condition switches it on/off as a whole)",
+                "",
+            ]
+        lines += [
             "Condition: ",
             "",
         ]
@@ -501,22 +765,25 @@ def parse_conditional_form(md_path: Path) -> list[dict]:
     blocks = []
 
     block_re = re.compile(
-        r"##\s+Block\s+(\d+)\s*\n+>\s+(.+?)\s*\n+Condition:\s*([^\n]*)",
+        r"##\s+Block\s+(\d+)\s*\n+>\s+(.+?)\s*\n+(Rendering:\s*template[^\n]*\n+)?Condition:\s*([^\n]*)",
         re.DOTALL,
     )
     for m in block_re.finditer(text):
         block_id = int(m.group(1))
         source_text = _braces_to_tbd(m.group(2).strip())
-        raw_condition = m.group(3).strip()
+        raw_condition = m.group(4).strip()
         # Take only the first line of the condition (customer may add notes below)
         condition_line = raw_condition.splitlines()[0].strip() if raw_condition else ""
         conditions = [condition_line] if condition_line else []
-        blocks.append({
+        block = {
             "id": block_id,
             "source_text": source_text,
             "conditions": conditions,
             "operator": "AND",
-        })
+        }
+        if m.group(3):
+            block["render"] = "template"
+        blocks.append(block)
 
     return blocks
 
@@ -647,6 +914,11 @@ def main() -> int:
     blocks = extract_conditionals(annotated)
     annotated = annotate_conditionals(annotated, blocks)
 
+    # Extract [Name]...[/Name] loop sections (after field annotation so loop
+    # membership is decided on $TBD_* token positions). Blocks containing a
+    # loop flip to render: template (#if guard stays in the template).
+    annotated, fields, loops = extract_loops(annotated, fields, cond_blocks=blocks)
+
     # Write annotated HTML (pipeline input for Leg 1 / Leg 3)
     annotated_path = output_dir / f"{stem}.annotated.html"
     annotated_path.write_text(annotated, encoding="utf-8")
@@ -654,7 +926,7 @@ def main() -> int:
 
     # Write leg2-compatible mapping
     mapping_path = output_dir / f"{stem}.mapping.yaml"
-    write_leg2_mapping(fields, f"{stem}.annotated.html", mapping_path)
+    write_leg2_mapping(fields, f"{stem}.annotated.html", mapping_path, loops=loops)
     print(f"Wrote {mapping_path}")
 
     # Write conditional form (only if there are conditionals)

@@ -66,6 +66,15 @@ class Candidate(_ContractModel):
     path: str = ""
     match_step: str = ""
     registry_field: str | None = None
+    # DataFetcher wiring (source: datafetcher) — Leg 0 stamps these when a
+    # dotted placeholder resolves to a DataFetcher-sourced registry entry
+    # (e.g. account.data.firstName → getAccount); Leg 4 reads them to emit the
+    # fetch. datafetcher_arg may be a single accessor or a per-root map.
+    source: str | None = None
+    datafetcher_method: str | None = None
+    datafetcher_arg: str | dict[str, str] | None = None
+    datafetcher_key: str | None = None
+    valid_roots: list[str] | None = None
 
 
 class Verdict(_ContractModel):
@@ -79,6 +88,19 @@ class Verdict(_ContractModel):
     reasoning: str = ""
 
 
+Occurrence = Literal["required", "optional", "one_or_more", "zero_or_more"]
+
+# Symbol prefix inside a {field} placeholder → normalized occurrence value.
+# Mirrors the registry Quantifier vocabulary: bare = required, $ = optional,
+# + = one or more, * = zero or more.
+OCCURRENCE_SYMBOLS: dict[str, str] = {
+    "": "required",
+    "$": "optional",
+    "+": "one_or_more",
+    "*": "zero_or_more",
+}
+
+
 class MappingVariable(_ContractModel):
     """SCHEMA.md "Variable entry" (1.0) + optional 2.0 enrichment keys."""
 
@@ -87,6 +109,7 @@ class MappingVariable(_ContractModel):
     type: str = "variable"
     context: VariableContext | None = None
     data_source: str = ""
+    occurrence: Occurrence = "required"
     # Suggested 2.0 enrichment (absent in 1.0 docs):
     candidate: Candidate | None = None
     verdicts: dict[str, Verdict] = Field(default_factory=dict)
@@ -274,7 +297,14 @@ class PathRegistry(_ContractModel):
 
 
 class ConditionalBlock(_ContractModel):
-    """One customer-confirmed conditional block."""
+    """One customer-confirmed conditional block.
+
+    render: how the block's text reaches the document. ``plugin`` (default) —
+    Leg 4 bakes the text into the plugin's conditional string and the template
+    prints ``${data.condN}``. ``template`` — the content stays in the template
+    inside ``#if($data.condN)``…``#end`` and the plugin puts a Boolean; used
+    when the block contains a [Name]…[/Name] loop section.
+    """
 
     id: int
     source_text: str
@@ -282,6 +312,7 @@ class ConditionalBlock(_ContractModel):
     conditions: list[str] = Field(default_factory=list)
     parent_id: int | None = None
     depth: int = 0
+    render: Literal["plugin", "template"] = "plugin"
 
     @field_validator("operator")
     @classmethod

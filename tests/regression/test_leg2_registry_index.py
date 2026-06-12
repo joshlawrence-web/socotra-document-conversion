@@ -6,10 +6,13 @@ import sys
 import unittest
 from pathlib import Path
 
+import yaml
+
 REPO = Path(__file__).resolve().parent.parent.parent
 from velocity_converter.leg2_fill_mapping import (  # noqa: E402
     build_registry_index,
     check_scope,
+    derive_variable_candidate,
     normalize_mapping_field_name,
 )
 
@@ -40,6 +43,35 @@ class TestBuildIndex(unittest.TestCase):
     def test_by_display_name_populated(self) -> None:
         idx = build_registry_index(self._simple_reg())
         self.assertIn("policy number", idx["by_display_name"])
+
+
+class TestQuoteAccessorResolution(unittest.TestCase):
+    def setUp(self) -> None:
+        reg_path = REPO / "registry" / "path-registry.yaml"
+        self.reg = yaml.safe_load(reg_path.read_text(encoding="utf-8"))
+        self.idx = build_registry_index(self.reg)
+
+    def test_quote_system_accessor_maps_under_quote_root(self) -> None:
+        cand = derive_variable_candidate(
+            {"name": "quote.quoteNumber", "context": {}},
+            self.idx,
+            terminology=None,
+            schema_index={},
+        )
+        self.assertEqual(cand["path"], "$data.quote.quoteNumber")
+        self.assertEqual(cand["match_step"], "exact")
+        self.assertTrue(cand["no_reprefix"])
+
+    def test_quote_custom_data_accessor_maps_under_quote_root(self) -> None:
+        cand = derive_variable_candidate(
+            {"name": "quote.data.coolingOffPeriod", "context": {}},
+            self.idx,
+            terminology=None,
+            schema_index={},
+        )
+        self.assertEqual(cand["path"], "$data.quote.data.coolingOffPeriod")
+        self.assertEqual(cand["registry_field"], "coolingOffPeriod")
+        self.assertEqual(cand["root_id"], "quote")
 
 
 class TestCheckScope(unittest.TestCase):

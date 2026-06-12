@@ -20,3 +20,10 @@
   1: "policy.data.discountAmount != null"
   2: "policy.data.coolingOffPeriod != null"
   3: "policy.data.gracePeriod != null"
+
+"TestItemsSchedule(segment)":
+  1: "item.data.purchasePrice != null"
+
+"TestGiftSchedule(segment)":
+  1: "policy.data.discountAmount != null"
+  2: "policy.data.gracePeriod != null"

@@ -192,4 +192,5 @@ def test_leg4_load_conditional_registry_valid(tmp_path):
     assert blocks == [{
         "id": 1, "source_text": "Some text", "parent_id": None,
         "depth": 0, "conditions": ["a != null"], "operator": "AND",
+        "render": "plugin",
     }]

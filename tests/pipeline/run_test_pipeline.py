@@ -38,6 +38,8 @@ ALL_FIXTURES = [
     "TestQuoteSummary(quote).docx",
     "TestItemCert(segment).docx",
     "TestRenewalNotice(segment).docx",
+    "TestItemsSchedule(segment).docx",
+    "TestGiftSchedule(segment).docx",
 ]
 
 

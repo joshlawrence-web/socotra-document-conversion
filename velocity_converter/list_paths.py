@@ -17,6 +17,8 @@ def _derive_accessor(velocity: str, category: str) -> str:
     """Derive clean accessor from velocity path + category."""
     v = (velocity or "").strip()
     cat = (category or "").strip()
+    if cat == "quote_data":
+        return "quote." + v[len("$data.quote."):] if v.startswith("$data.quote.") else v
     if cat == "system":
         return "policy." + v[len("$data."):] if v.startswith("$data.") else v
     if cat == "quote_system":
@@ -29,6 +31,30 @@ def _derive_accessor(velocity: str, category: str) -> str:
     if v.startswith("$"):
         return v[1:]
     return v
+
+
+def _catalog_velocity(velocity: str, category: str) -> str:
+    """Velocity path shown to users for the accessor in the catalog."""
+    v = (velocity or "").strip()
+    cat = (category or "").strip()
+    if cat == "quote_system" and v.startswith("$data."):
+        return "$data.quote." + v[len("$data."):]
+    return v
+
+
+def _quote_data_rows(policy_data: list) -> list[dict]:
+    """Mirror product custom data as quote.data.* accessors."""
+    rows: list[dict] = []
+    for e in policy_data:
+        if not isinstance(e, dict):
+            continue
+        field = e.get("field", "")
+        rows.append({
+            **e,
+            "category": "quote_data",
+            "velocity": f"$data.quote.data.{field}" if field else e.get("velocity", ""),
+        })
+    return rows
 
 
 def _required_cell(entry: dict) -> str:
@@ -56,7 +82,7 @@ def _field_rows(entries: list, include_values: bool = True) -> list[str]:
         for e in entries:
             name = e.get("display_name") or e.get("field", "")
             acc = f'`{_derive_accessor(e.get("velocity", ""), e.get("category", ""))}`'
-            path = f'`{e.get("velocity", "")}`'
+            path = f'`{_catalog_velocity(e.get("velocity", ""), e.get("category", ""))}`'
             typ = e.get("type", "")
             req = _required_cell(e)
             vals = _options_cell(e)
@@ -67,7 +93,7 @@ def _field_rows(entries: list, include_values: bool = True) -> list[str]:
         for e in entries:
             name = e.get("display_name") or e.get("field", "")
             acc = f'`{_derive_accessor(e.get("velocity", ""), e.get("category", ""))}`'
-            path = f'`{e.get("velocity", "")}`'
+            path = f'`{_catalog_velocity(e.get("velocity", ""), e.get("category", ""))}`'
             typ = e.get("type", "")
             req = _required_cell(e)
             lines.append(f"| {name} | {acc} | {path} | {typ} | {req} |")
@@ -138,6 +164,13 @@ def render_catalog(registry_path: str) -> str:
     # Policy Custom Fields
     policy_data = data.get("policy_data", [])
     if policy_data:
+        out.append("## Quote Custom Fields")
+        out.append("")
+        out.append("> Available when the document operation is `quote`.")
+        out.append("")
+        out.extend(_field_rows(_quote_data_rows(policy_data), include_values=True))
+        out.append("")
+
         out.append("## Policy Custom Fields")
         out.append("")
         out.extend(_field_rows(policy_data, include_values=True))

@@ -144,6 +144,26 @@ class TestFieldLookup(unittest.TestCase):
             'Objects.toString(segment.data().discountAmount(), "")',
         )
 
+    def test_quote_rooted_velocity_paths(self):
+        suggested = {"variables": [
+            {"name": "quote.quoteNumber", "data_source": "$data.quote.quoteNumber"},
+            {"name": "quote.data.coolingOffPeriod", "data_source": "$data.quote.data.coolingOffPeriod"},
+        ]}
+        lk = _build_cond_field_lookup(suggested, {
+            "$data.quote.quoteNumber": "quote_system",
+            "$data.quote.data.coolingOffPeriod": "quote_data",
+        })
+        self.assertEqual(lk["quote.quoteNumber"]["scope"], "quote")
+        self.assertEqual(
+            lk["quote.quoteNumber"]["java_expr"],
+            'Objects.toString(quote.quoteNumber(), "")',
+        )
+        self.assertEqual(lk["quote.data.coolingOffPeriod"]["scope"], "quote")
+        self.assertEqual(
+            lk["quote.data.coolingOffPeriod"]["java_expr"],
+            'Objects.toString(quote.data().coolingOffPeriod(), "")',
+        )
+
     def test_account_unsupported(self):
         lk = _lookup()
         self.assertIn("account", lk["account.data.firstName"]["unsupported_reason"])

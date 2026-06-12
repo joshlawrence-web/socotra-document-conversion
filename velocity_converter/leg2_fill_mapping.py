@@ -216,7 +216,7 @@ def _collect_entries(reg: dict) -> list[dict]:
                 if isinstance(v, list):
                     _walk(v)
 
-    for section in ("system_paths", "account_paths", "policy_data", "datafetcher_paths"):
+    for section in ("system_paths", "quote_paths", "account_paths", "policy_data", "quote_data", "datafetcher_paths"):
         _walk(reg.get(section))
 
     for exp in reg.get("exposures") or []:
@@ -358,6 +358,62 @@ def _make_schema_entries(field_name: str, idx: dict) -> list[dict]:
     if exact:
         return exact
     return list(idx["by_field"].get(field_name.lower(), []))
+
+
+def _quote_accessor_candidate(name: str, idx: dict) -> dict | None:
+    """Resolve catalog-style quote accessors directly to renderingData paths.
+
+    A user-facing token such as ``quote.data.coolingOffPeriod`` should map
+    deterministically to ``$data.quote.data.coolingOffPeriod``. The registry may
+    store product data as root-relative ``policy_data`` rows, so bridge that
+    shape here instead of requiring a later manual path repair.
+    """
+    if not name.startswith("quote."):
+        return None
+
+    field_path = name[len("quote."):]
+    if not field_path:
+        return None
+
+    if field_path.startswith("data."):
+        field_name = field_path[len("data."):]
+        entries = [
+            e for e in _make_schema_entries(field_name, idx)
+            if e.get("category") in ("policy_data", "quote_data")
+        ]
+        if not entries:
+            return None
+        field = entries[0].get("field") or field_name
+        path = f"$data.quote.data.{field}"
+        return {
+            "path": path,
+            "match_step": "exact",
+            "registry_field": field,
+            "base_reason": f"exact quote accessor match: {name} → {path}",
+            "terminal": False,
+            "fallback_confidence": "low",
+            "root_id": "quote",
+            "no_reprefix": True,
+        }
+
+    entries = [
+        e for e in _make_schema_entries(field_path, idx)
+        if e.get("category") == "quote_system"
+    ]
+    if not entries:
+        return None
+    field = entries[0].get("field") or field_path
+    path = f"$data.quote.{field}"
+    return {
+        "path": path,
+        "match_step": "exact",
+        "registry_field": field,
+        "base_reason": f"exact quote accessor match: {name} → {path}",
+        "terminal": False,
+        "fallback_confidence": "low",
+        "root_id": "quote",
+        "no_reprefix": True,
+    }
 
 
 def _step3_terminology_strict(
@@ -555,6 +611,10 @@ def derive_variable_candidate(
             "fallback_confidence": fallback,
         }
 
+    root_candidate = _quote_accessor_candidate(name, idx)
+    if root_candidate:
+        return root_candidate
+
     entries, step, alias = match_token(name, schema_index, idx, terminology)
 
     if step == "old-format":
@@ -750,6 +810,17 @@ def variable_verdict_for_root(candidate: dict, root: dict, classpath: str) -> di
     if candidate.get("source") == "datafetcher":
         return _datafetcher_verdict(candidate, rid, classpath)
 
+    if candidate.get("root_id") and candidate.get("root_id") != rid:
+        return {
+            "data_source": "",
+            "confidence": "low",
+            "sdk_status": "skipped",
+            "reasoning": (
+                f"candidate path is scoped to `{candidate['root_id']}` but current root is `{rid}` "
+                "— next-action: supply-from-plugin"
+            ),
+        }
+
     # No single path to check — try JAR fallback first, then replicate.
     if candidate["terminal"]:
         if candidate.get("jar_fallback_ok") and java_type:
@@ -779,7 +850,7 @@ def variable_verdict_for_root(candidate: dict, root: dict, classpath: str) -> di
             "reasoning": base,
         }
 
-    path = _reprefix(candidate["path"], rp)
+    path = candidate["path"] if candidate.get("no_reprefix") else _reprefix(candidate["path"], rp)
     req = request_fqcn(root["request"])
     status, detail, hint = classify_path(classpath, java_type, path, req, root_prefix=rp)
     grade = confidence_grade(candidate["match_step"], status)
@@ -1162,9 +1233,12 @@ def annotate_mapping(
     root_ids = [r["id"] for r in roots]
 
     for v in out.get("variables") or []:
-        if v.get("data_source"):
+        existing_data_source = (v.get("data_source") or "").strip()
+        if existing_data_source and not existing_data_source.startswith("UNRESOLVED:"):
             # Explicit path already set — skip matching, preserve as-is
             continue
+        if existing_data_source.startswith("UNRESOLVED:"):
+            v["data_source"] = ""
         cand = derive_variable_candidate(v, idx, terminology, schema_index)
         v.pop("confidence", None)
         v.pop("reasoning", None)
@@ -1178,6 +1252,8 @@ def annotate_mapping(
             cand_block["datafetcher_method"] = cand.get("datafetcher_method", "")
             cand_block["datafetcher_arg"] = cand.get("datafetcher_arg", "")
             cand_block["datafetcher_key"] = cand.get("datafetcher_key", "")
+            if cand.get("valid_roots"):
+                cand_block["valid_roots"] = list(cand["valid_roots"])
         v["candidate"] = cand_block
         v["verdicts"] = {
             r["id"]: variable_verdict_for_root(cand, r, classpath) for r in roots

@@ -64,6 +64,34 @@ python3 -m velocity_converter.leg0_ingest --parse-conditional-form samples/outpu
 - `<stem>.conditional-form.md` — customer-facing conditional form (send to customer)
 - `<stem>.conditional-registry.yaml` — written after customer returns the form
 
+**Occurrence symbols** — a `{field}` placeholder may declare its occurrence with a
+prefix: `{field}` required (default), `{$field}` optional, `{+field}` one or more,
+`{*field}` zero or more (mirrors registry quantifiers). The symbol is recorded as
+`occurrence:` in the `.mapping.yaml` and stripped from the `$TBD_*` token. Leg 4
+enforces it in the generated plugin: required/one_or_more fields get null/empty guards
+that throw `IllegalStateException` when data is missing — see the "Occurrence guards"
+section of the plugin report. The template carries no null-safety logic.
+
+**Loop sections** — wrap a repeating region in `[Name]` … `[/Name]` markers, where
+`Name` exactly matches a registry iterable name (e.g. `[Item]` … `[/Item]` for the
+items array). Markers may be standalone paragraphs or table rows (other cells empty) —
+a marker row around a table's data row repeats just that row, keeping the header once.
+Leg 0 replaces the markers with a `#foreach ($item in $TBD_Item)` / `#end` scaffold,
+moves the enclosed `{field}` placeholders into the loop's `fields` list in the
+`.mapping.yaml`, and Leg 2+3 resolve the scaffold to the registry's real directive
+(e.g. `#foreach ($item in $data.items)`). Unmatched markers stay as literal text with
+a stderr warning.
+
+**Loop inside a conditional** — a loop section fully inside a top-level `[[...]]`
+block flips that block to `render: template`: the block's content (loop included)
+stays in the `.vm` wrapped in `#if($data.condN)`…`#end`, and the plugin puts `condN`
+as a **Boolean** instead of a baked string (an exception to the "plugin owns
+conditional text" rule). The flag flows conditional-form → conditional-registry
+(`render: template`) → Leg 4. Refused with a warning (markers left literal): a loop
+*crossing* a block boundary, or inside a *nested* block. A conditional fully inside
+a loop is allowed but warned — conditions are document-scoped, so it renders
+identically for every item.
+
 ---
 
 ## MANDATORY pre-flight before Leg 2, 3, or 4 (after a Leg 0 run)
@@ -241,7 +269,9 @@ python3 tools/generate_test_fixtures.py
 Output lands in `tests/pipeline/output/<stem>/`. Exit code is non-zero on failure.
 
 **What is tested:** Leg 0 → conditional-form fill → parse → Leg 2+3 → Leg 4 (single combined plugin)
-across three fixtures: `TestQuoteSummary(quote)`, `TestItemCert(segment)`, `TestRenewalNotice(segment)`.
+across five fixtures: `TestQuoteSummary(quote)`, `TestItemCert(segment)`, `TestRenewalNotice(segment)`,
+`TestItemsSchedule(segment)` (loops over the items array via `[Item]`/`[/Item]` markers),
+`TestGiftSchedule(segment)` (an `[Item]` loop inside a `[[conditional]]` → `render: template` block).
 
 **Adding a new fixture** (four-step checklist):
 1. Add a builder function to `tools/generate_test_fixtures.py` and append it to `FIXTURES`.

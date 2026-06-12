@@ -641,12 +641,28 @@ def _velocity_to_accessor(velocity: str, category: str) -> str:
     return v
 
 
+def _catalog_velocity(velocity: str, category: str) -> str:
+    """Velocity path for a catalog/user accessor.
+
+    Registry entries are historically root-relative. Quote-root documents render
+    with a named ``quote`` object in renderingData, so quote accessors must land
+    under ``$data.quote``.
+    """
+    v = (velocity or "").strip()
+    cat = (category or "").strip()
+    if cat == "quote_system" and v.startswith("$data."):
+        return "$data.quote." + v[len("$data."):]
+    return v
+
+
 def build_velocity_lookup(registry_path: "str | Path") -> "dict[str, str]":
     """Build a flat lookup map: accessor shorthand (and full suffix) → velocity path.
 
     Two keys per registry entry:
       Pass 1 — full suffix: velocity.lstrip("$")  e.g. "data.account.data.firstName"
       Pass 2 — accessor shorthand: what list_paths shows  e.g. "account.data.firstName"
+      Extra quote-data aliases — product data fields are valid on quote roots as
+        quote.data.<field> and resolve deterministically to $data.quote.data.<field>.
     Pass 1 wins on collision (more specific key).
     Returns {} on any read/parse failure.
     """
@@ -672,8 +688,14 @@ def build_velocity_lookup(registry_path: "str | Path") -> "dict[str, str]":
             if v and isinstance(v, str):
                 pass1[v.lstrip("$")] = v
                 acc = _velocity_to_accessor(v, cat)
+                resolved = _catalog_velocity(v, cat)
                 if acc not in pass2:
-                    pass2[acc] = v
+                    pass2[acc] = resolved
+                if cat == "policy_data" and v.startswith("$data.data."):
+                    quote_acc = "quote." + v[len("$data."):]
+                    quote_vel = "$data.quote." + v[len("$data."):]
+                    if quote_acc not in pass2:
+                        pass2[quote_acc] = quote_vel
             for child in node.values():
                 _collect(child, cat)
         elif isinstance(node, list):
@@ -682,6 +704,99 @@ def build_velocity_lookup(registry_path: "str | Path") -> "dict[str, str]":
 
     _collect(data)
     return {**pass2, **pass1}  # pass1 wins on collision
+
+
+def build_velocity_meta_lookup(registry_path: "str | Path") -> "dict[str, dict]":
+    """Build accessor/suffix → entry metadata, carrying DataFetcher wiring.
+
+    Mirrors :func:`build_velocity_lookup`'s keys (full suffix, accessor
+    shorthand, and quote-data aliases) but maps each to a metadata dict so
+    Leg 0 can tag DataFetcher-sourced placeholders with a ``candidate`` block.
+    Each value is ``{velocity, source, datafetcher_method, datafetcher_arg,
+    datafetcher_key, valid_roots}``.
+
+    DataFetcher binding is **object-level**, not per-field: one ``getAccount``
+    returns the whole Account, whose ``data()`` Map serves *every*
+    ``$data.account.*`` path. So the spec is keyed by ``datafetcher_key``, and
+    any path under ``$data.<key>`` inherits it — there is no need for a
+    per-field ``datafetcher_paths`` row. ``_validate_datafetcher_entry``
+    guarantees each row's velocity starts with ``$data.<key>``, so the key is
+    the first path segment. Returns ``{}`` on read failure.
+    """
+    from velocity_converter.models import ContractError, PathRegistry, validate_contract
+
+    try:
+        import yaml as _yaml  # noqa: PLC0415
+        data = _yaml.safe_load(Path(registry_path).read_text(encoding="utf-8")) or {}
+        validate_contract(data, PathRegistry, artifact="path-registry.yaml", path=Path(registry_path))
+    except ContractError as exc:
+        print(f"WARNING: ignoring invalid registry (velocity meta lookup disabled)\n{exc}", file=sys.stderr)
+        return {}
+    except Exception:
+        return {}
+
+    # Pass 0 — collect the per-key DataFetcher spec (method/arg/valid_roots are
+    # consistent across all rows sharing a datafetcher_key).
+    key_specs: "dict[str, dict]" = {}
+
+    def _scan_specs(node: object) -> None:
+        if isinstance(node, dict):
+            if node.get("source") == "datafetcher":
+                k = node.get("datafetcher_key") or ""
+                if k and k not in key_specs:
+                    key_specs[k] = {
+                        "datafetcher_method": node.get("datafetcher_method") or "",
+                        "datafetcher_arg": node.get("datafetcher_arg"),
+                        "valid_roots": list(node.get("valid_roots") or []),
+                    }
+            for child in node.values():
+                _scan_specs(child)
+        elif isinstance(node, list):
+            for item in node:
+                _scan_specs(item)
+
+    _scan_specs(data)
+
+    def _meta(velocity: str) -> dict:
+        seg = velocity[len("$data."):].split(".", 1)[0] if velocity.startswith("$data.") else ""
+        spec = key_specs.get(seg)
+        if spec:
+            return {
+                "velocity": velocity,
+                "source": "datafetcher",
+                "datafetcher_method": spec["datafetcher_method"],
+                "datafetcher_arg": spec["datafetcher_arg"],
+                "datafetcher_key": seg,
+                "valid_roots": list(spec["valid_roots"]),
+            }
+        return {
+            "velocity": velocity, "source": "", "datafetcher_method": "",
+            "datafetcher_arg": None, "datafetcher_key": "", "valid_roots": [],
+        }
+
+    pass1: "dict[str, dict]" = {}
+    pass2: "dict[str, dict]" = {}
+
+    def _collect(node: object, category: str = "") -> None:
+        if isinstance(node, dict):
+            v = node.get("velocity")
+            cat = node.get("category") or category
+            if v and isinstance(v, str):
+                pass1.setdefault(v.lstrip("$"), _meta(v))
+                acc = _velocity_to_accessor(v, cat)
+                pass2.setdefault(acc, _meta(_catalog_velocity(v, cat)))
+                if cat == "policy_data" and v.startswith("$data.data."):
+                    quote_acc = "quote." + v[len("$data."):]
+                    quote_vel = "$data.quote." + v[len("$data."):]
+                    pass2.setdefault(quote_acc, _meta(quote_vel))
+            for child in node.values():
+                _collect(child, cat)
+        elif isinstance(node, list):
+            for item in node:
+                _collect(item, category)
+
+    _collect(data)
+    return {**pass2, **pass1}  # pass1 (full suffix) wins on collision
 
 
 def resolve_dotted_path(name: str, lookup: "dict[str, str]") -> "str | None":

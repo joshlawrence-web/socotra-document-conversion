@@ -230,6 +230,7 @@ Current version: **1.0**.
 | `type` | enum | `variable` or `loop_field`. |
 | `context` | map | See context keys below. |
 | `data_source` | string | Empty at Leg 1. Filled by Leg 2 / human review. |
+| `occurrence` | enum? | `required` (default) / `optional` / `one_or_more` / `zero_or_more`. Declared in the source document by an occurrence symbol prefixing the placeholder name — `{x}` required, `{$x}` optional, `{+x}` one or more, `{*x}` zero or more (mirrors the registry quantifier vocabulary). The symbol never reaches the `$TBD_*` token; it is normalised here at Leg 0. Leg 4 turns `required`/`one_or_more` into plugin-side null/empty guards that throw `IllegalStateException` when the data is missing — the template carries no null-safety logic. |
 
 ### `context` keys (v1.0 contract)
 
@@ -255,7 +256,7 @@ mapping-suggester reports them under "Unrecognised inputs" in
 | `name` | string | Loop name. |
 | `placeholder` | string | `$TBD_<name>`. |
 | `iterator` | string | `$<iterator>` (e.g. `$vehicle`). |
-| `detection` | enum | `mustache` / `auto`. |
+| `detection` | enum | `mustache` / `auto` (Leg 1) / `marker` (Leg 0 `[Name]`…`[/Name]` sections). |
 | `context` | map | See context keys above (`container`, `nearest_heading`, `line`). |
 | `data_source` | string | Empty at Leg 1. |
 | `fields` | list of map | Loop-scoped variables (each has the variable-entry shape with `type: loop_field`). |
@@ -740,6 +741,7 @@ key. The contract is enforced by `velocity_converter/models.py`
 | `operator` | string | no (default `AND`) | Combinator for multiple conditions; normalised to upper case |
 | `parent_id` | int or null | no | Enclosing block id for nested blocks |
 | `depth` | int | no (default 0) | Nesting depth |
+| `render` | enum | no (default `plugin`) | `plugin` — Leg 4 bakes the text into the plugin's conditional string; the template prints `${data.condN}`. `template` — the content stays in the `.vm` inside `#if($data.condN)`…`#end` and the plugin puts a Boolean. Set by Leg 0 when the block contains a `[Name]`…`[/Name]` loop section. |
 
 ```yaml
 - id: 1

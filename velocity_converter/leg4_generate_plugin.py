@@ -111,6 +111,7 @@ def _accessor_to_java(expr: str) -> str:
 # live on the segment type in Java, not on core Policy.
 _CATEGORY_WIRING = {
     "quote_system": ("quote", "quote"),
+    "quote_data": ("quote", "quote"),
     "system": ("policy", "policy"),
     "policy_data": ("policy", "segment"),
 }
@@ -148,6 +149,10 @@ def _load_velocity_categories(registry_path: Path | None) -> dict[str, str]:
             vel, cat = node.get("velocity"), node.get("category")
             if vel and cat:
                 out[str(vel)] = str(cat)
+                if cat == "quote_system" and str(vel).startswith("$data."):
+                    out["$data.quote." + str(vel)[len("$data."):]] = str(cat)
+                if cat == "policy_data" and str(vel).startswith("$data.data."):
+                    out["$data.quote." + str(vel)[len("$data."):]] = "quote_data"
             for v in node.values():
                 _walk(v)
         elif isinstance(node, list):
@@ -230,7 +235,11 @@ def _build_cond_field_lookup(
             if not ds.startswith("$data."):
                 info["unsupported_reason"] = f"unexpected velocity shape: {ds}"
             else:
-                parts = ds[len("$data."):].split(".")
+                prefix = f"$data.{root_var}."
+                if ds.startswith(prefix):
+                    parts = ds[len(prefix):].split(".")
+                else:
+                    parts = ds[len("$data."):].split(".")
                 expr = root_var + "".join(f".{p}()" for p in parts)
                 fqcn = root_fqcns.get(root_var)
                 final_ret = ""
@@ -240,6 +249,11 @@ def _build_cond_field_lookup(
                         info["unsupported_reason"] = f"path does not resolve in Java ({fail})"
                 if not info["unsupported_reason"]:
                     info["scope"] = scope
+                    info["guard"] = {
+                        "root_var": root_var,
+                        "parts": parts,
+                        "final_ret": final_ret or "",
+                    }
                     if final_ret and final_ret.startswith("java.util.Optional"):
                         info["java_expr"] = f'{expr}.map(Object::toString).orElse("")'
                     else:
@@ -309,6 +323,10 @@ def _analyse_cond_fields(
     mixed: list[int] = []
     known = set(field_lookup)
     for b in cond_blocks:
+        if b.get("render") == "template":
+            # Content (loop included) stays in the template — fields resolve
+            # there via Leg 3, not in the plugin's conditional string.
+            continue
         scopes: set[str] = set()
         for _s, _e, name in _find_field_tokens(b.get("source_text") or "", known):
             info = field_lookup.get(name)
@@ -325,6 +343,114 @@ def _analyse_cond_fields(
         if {"quote", "policy"} <= scopes:
             mixed.append(b["id"])
     return unresolved, unsupported, mixed
+
+
+# ---------------------------------------------------------------------------
+# Occurrence guards — {field} occurrence symbols ($ optional, bare required,
+# + one-or-more, * zero-or-more) enforced in the plugin, never the template.
+# ---------------------------------------------------------------------------
+
+_GUARD_MARKER = "// occurrence-guard:"
+_COLLECTION_RETURNS = ("java.util.List", "java.util.Collection", "java.util.Set")
+
+
+def _occurrence_check_exprs(guard: dict, occurrence: str) -> str:
+    """Build the ||-joined null/empty checks for one guarded field.
+
+    Each step of the accessor chain is null-checked so the guard itself can
+    never NPE (segment may legitimately be null in the policy overload).
+    one_or_more on a collection return adds an isEmpty() check; on a
+    single-valued return a present value satisfies "1 or more" (registry
+    alignment — single-valued still matches one_or_more).
+    """
+    root_var = guard["root_var"]
+    final_ret = guard.get("final_ret") or ""
+    conds = [f"{root_var} == null"]
+    expr = root_var
+    for p in guard["parts"]:
+        expr += f".{p}()"
+        conds.append(f"{expr} == null")
+    if final_ret.startswith("java.util.Optional"):
+        conds.append(f"{expr}.isEmpty()")
+    elif occurrence == "one_or_more" and final_ret.startswith(_COLLECTION_RETURNS):
+        conds.append(f"{expr}.isEmpty()")
+    return " || ".join(conds)
+
+
+def render_occurrence_guards(
+    variables: list[dict],
+    field_lookup: dict[str, dict],
+    scope: str,
+    list_var: str = "missingRequired",
+    skip_names: set[str] | None = None,
+) -> str:
+    """Generate the Java occurrence-guard block for one overload.
+
+    required and one_or_more fields wired to this scope get a null/empty
+    check; any failure is collected and thrown as one IllegalStateException
+    before renderingData is returned — document generation fails fast instead
+    of rendering with missing required data. optional and zero_or_more fields
+    need no guard (existing null-safe rendering covers them).
+    """
+    skip_names = skip_names or set()
+    checks: list[str] = []
+    for v in variables or []:
+        occ = (v.get("occurrence") or "required").strip() or "required"
+        if occ not in ("required", "one_or_more"):
+            continue
+        name = (v.get("name") or "").strip()
+        if not name or name in skip_names:
+            continue
+        info = (field_lookup or {}).get(name) or {}
+        guard = info.get("guard")
+        if not guard or info.get("scope") != scope:
+            continue
+        checks.append(
+            f"        {_GUARD_MARKER} {name} ({occ})\n"
+            f"        if ({_occurrence_check_exprs(guard, occ)}) {{\n"
+            f'            {list_var}.add("{name} ({occ})");\n'
+            f"        }}"
+        )
+    if not checks:
+        return ""
+    header = (
+        "        // Occurrence guards — declared {field} occurrence in the source document.\n"
+        f"        java.util.List<String> {list_var} = new java.util.ArrayList<>();"
+    )
+    footer = (
+        f"        if (!{list_var}.isEmpty()) {{\n"
+        "            throw new IllegalStateException(\n"
+        f'                    "Document data missing for required fields: "\n'
+        f"                            + String.join(\", \", {list_var}));\n"
+        "        }"
+    )
+    return "\n".join([header, *checks, footer])
+
+
+def occurrence_report_rows(
+    variables: list[dict], field_lookup: dict[str, dict]
+) -> list[dict]:
+    """Per-variable occurrence-guard status rows for the plugin report."""
+    rows: list[dict] = []
+    for v in variables or []:
+        name = (v.get("name") or "").strip()
+        if not name:
+            continue
+        occ = (v.get("occurrence") or "required").strip() or "required"
+        info = (field_lookup or {}).get(name) or {}
+        ds = (v.get("data_source") or "").strip()
+        if occ in ("optional", "zero_or_more"):
+            status = f"no guard needed ({occ})"
+        elif not ds or ds.startswith("UNRESOLVED:"):
+            status = "WARN: no guard — unresolved data_source"
+        elif info.get("unsupported_reason"):
+            status = f"WARN: no guard — {info['unsupported_reason']}"
+        elif info.get("guard"):
+            status = f"guarded ({info.get('scope')})"
+        else:
+            status = "WARN: no guard — not wireable"
+        rows.append({"name": name, "occurrence": occ, "data_source": ds, "status": status})
+    return rows
 
 
 def _repo_root() -> Path:
@@ -458,7 +584,7 @@ public class %(class_name)s implements DocumentDataSnapshotPlugin {
         renderingData.put("quote", quote);
         renderingData.put("pricing", enhancedPricing);
         renderingData.put("productType", "%(product)s");
-%(quote_datafetcher_extras)s%(quote_conditional_puts)s
+%(quote_datafetcher_extras)s%(quote_conditional_puts)s%(quote_occurrence_guards)s
         return DocumentDataSnapshot.builder()
                 .renderingData(renderingData)
                 .build();
@@ -485,7 +611,7 @@ public class %(class_name)s implements DocumentDataSnapshotPlugin {
         renderingData.put("transaction", transaction);
         renderingData.put("segment", segment);
         renderingData.put("productType", "%(product)s");
-%(policy_datafetcher_extras)s%(policy_conditional_puts)s
+%(policy_datafetcher_extras)s%(policy_conditional_puts)s%(policy_occurrence_guards)s
         return DocumentDataSnapshot.builder()
                 .renderingData(renderingData)
                 .build();
@@ -678,12 +804,16 @@ def _append_to_plugin(
     missing_policy_df: list[dict],
     offset_cond_blocks: list[dict],
     field_lookup: dict[str, dict] | None = None,
+    quote_guard_code: str = "",
+    policy_guard_code: str = "",
 ) -> None:
     """Write a backup then insert missing puts before each overload's builder return.
 
     Quote DataFetcher calls → quote overload.
     Policy DataFetcher calls → policy overload.
     Conditional puts → both overloads (document-scoped, decision A4).
+    Occurrence guards (pre-rendered with deduped names/list var) go last so the
+    throw stays adjacent to the builder return.
     Also inserts any new dynamic imports needed for new DataFetcher return types,
     and java.util.Objects when conditional field concatenation is generated.
     """
@@ -692,7 +822,8 @@ def _append_to_plugin(
     quote_cond_code = render_conditional_puts(offset_cond_blocks, scope="quote", field_lookup=field_lookup)
     policy_cond_code = render_conditional_puts(offset_cond_blocks, scope="policy", field_lookup=field_lookup)
 
-    if not quote_df_code and not policy_df_code and not quote_cond_code:
+    if not any((quote_df_code, policy_df_code, quote_cond_code,
+                quote_guard_code, policy_guard_code)):
         return
 
     bak = java_path.with_suffix(".java.bak")
@@ -732,8 +863,8 @@ def _append_to_plugin(
         joined = "\n".join(p for p in parts if p)
         return ("\n" + joined + "\n") if joined else ""
 
-    quote_insert = _join_inserts(quote_df_code, quote_cond_code)
-    policy_insert = _join_inserts(policy_df_code, policy_cond_code)
+    quote_insert = _join_inserts(quote_df_code, quote_cond_code, quote_guard_code)
+    policy_insert = _join_inserts(policy_df_code, policy_cond_code, policy_guard_code)
 
     # Insert policy first (later in file) so positions[0] stays valid.
     if policy_insert:
@@ -757,6 +888,12 @@ def _collect_datafetcher_calls(
     for v in (suggested.get("variables") or []):
         cand = v.get("candidate") or {}
         if cand.get("source") != "datafetcher":
+            continue
+        # Object-level fetch is only valid on the roots the registry declares
+        # (e.g. getQuotePricing is quote-only) — never wire it into an overload
+        # whose locals can't supply the arg.
+        valid_roots = cand.get("valid_roots")
+        if valid_roots and root_id not in valid_roots:
             continue
         verdict = (v.get("verdicts") or {}).get(root_id) or {}
         if not (v.get("data_source") or "").strip():
@@ -832,6 +969,7 @@ def load_conditional_registry(yaml_path: Path) -> list[dict]:
             "depth": b.depth,
             "conditions": b.conditions,
             "operator": b.operator,
+            "render": b.render,
         }
         for b in registry.root
     ]
@@ -921,6 +1059,39 @@ def render_conditional_puts(
         quote_scoped = any(c.strip().startswith("quote.") for c in raw_conds)
         policy_scoped = any(c.strip().startswith("policy.") for c in raw_conds)
 
+        # Template-rendered block (contains a loop): content stays in the
+        # template under #if($data.condN) — the plugin only supplies the
+        # Boolean. No text baking, no field wiring. A scope-blocked or
+        # unfilled condition puts false (an empty string would be truthy
+        # in Velocity's #if).
+        if b.get("render") == "template":
+            if raw_conds and scope == "policy" and quote_scoped:
+                lines.append(
+                    f'        // Conditional block {bid} (template-rendered): quote-scoped, n/a in policy context\n'
+                    f'        renderingData.put("cond{bid}", false);'
+                )
+            elif raw_conds and scope == "quote" and policy_scoped:
+                lines.append(
+                    f'        // Conditional block {bid} (template-rendered): policy-scoped condition(s), n/a in quote context\n'
+                    f'        renderingData.put("cond{bid}", false);'
+                )
+            elif raw_conds:
+                joiner = " || " if b["operator"] == "OR" else " && "
+                java_cond = joiner.join(
+                    _accessor_to_java(_rewrite_condition_root(c, scope)) for c in raw_conds
+                )
+                lines.append(
+                    f'        // Conditional block {bid} (template-rendered): {truncated}\n'
+                    f'        renderingData.put("cond{bid}", {java_cond});'
+                )
+            else:
+                lines.append(
+                    f'        // TODO: fill conditions for cond{bid} in conditional-registry.yaml\n'
+                    f'        // (template-rendered) {truncated}\n'
+                    f'        renderingData.put("cond{bid}", false);'
+                )
+            continue
+
         # Classify this block's field tokens for the current scope.
         field_exprs: dict[str, str] = {}
         todo_fields: list[tuple[str, str]] = []
@@ -992,6 +1163,7 @@ def render_java(
     policy_df_calls: list[dict] | None = None,
     cond_blocks: list[dict] | None = None,
     field_lookup: dict[str, dict] | None = None,
+    variables: list[dict] | None = None,
 ) -> str:
     quote_extras = _generate_datafetcher_extras(quote_df_calls or [])
     policy_extras = _generate_datafetcher_extras(policy_df_calls or [])
@@ -999,6 +1171,8 @@ def render_java(
     dyn_imports = _generate_dynamic_imports(all_calls)
     quote_cond_puts = render_conditional_puts(cond_blocks or [], scope="quote", field_lookup=field_lookup)
     policy_cond_puts = render_conditional_puts(cond_blocks or [], scope="policy", field_lookup=field_lookup)
+    quote_guards = render_occurrence_guards(variables or [], field_lookup or {}, scope="quote")
+    policy_guards = render_occurrence_guards(variables or [], field_lookup or {}, scope="policy")
     if "Objects.toString(" in quote_cond_puts + policy_cond_puts:
         dyn_imports = (dyn_imports + "\n" if dyn_imports else "") + "import java.util.Objects;"
     if dyn_imports:
@@ -1016,6 +1190,8 @@ def render_java(
         "policy_datafetcher_extras": ("\n" + policy_extras) if policy_extras else "",
         "quote_conditional_puts": ("\n" + quote_cond_puts) if quote_cond_puts else "",
         "policy_conditional_puts": ("\n" + policy_cond_puts) if policy_cond_puts else "",
+        "quote_occurrence_guards": ("\n" + quote_guards) if quote_guards else "",
+        "policy_occurrence_guards": ("\n" + policy_guards) if policy_guards else "",
         "dynamic_imports": dyn_imports,
     }
 
@@ -1040,6 +1216,7 @@ def write_report(
     cond_blocks: list[dict] | None = None,
     additive_summary: dict | None = None,
     cond_field_rows: list[dict] | None = None,
+    occurrence_rows: list[dict] | None = None,
 ) -> None:
     seg = f"{product}Segment"
     quote = f"{product}Quote"
@@ -1225,6 +1402,33 @@ def write_report(
                 "remains in the plugin string and will appear verbatim in rendered documents "
                 "until addressed.",
             ]
+        lines += [""]
+
+    occurrence_rows = occurrence_rows or []
+    if occurrence_rows:
+        guarded = sum(1 for r in occurrence_rows if r["status"].startswith("guarded"))
+        warn_count = sum(1 for r in occurrence_rows if r["status"].startswith("WARN"))
+        lines += [
+            "---",
+            "",
+            f"## Occurrence guards ({guarded} guarded, {warn_count} warnings)",
+            "",
+            "Occurrence declared per field in the source document — `{x}` required,",
+            "`{$x}` optional, `{+x}` one or more, `{*x}` zero or more. required and",
+            "one_or_more fields get a null/empty guard in the plugin; a missing value",
+            "throws `IllegalStateException` before the snapshot is built, so documents",
+            "never render with absent required data (and the template never NPEs).",
+            "",
+            "| Field | Occurrence | data_source | Guard |",
+            "|---|---|---|---|",
+        ]
+        for r in occurrence_rows:
+            status = r["status"]
+            if status.startswith("WARN"):
+                status = f"⚠ **{status}**"
+            lines.append(
+                f"| {r['name']} | {r['occurrence']} | `{r['data_source'] or '(empty)'}` | {status} |"
+            )
         lines += [""]
 
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -1509,6 +1713,7 @@ def _process_form(
 
     additive_mode = java_path.exists()
     additive_summary: dict | None = None
+    occurrence_rows = occurrence_report_rows(suggested.get("variables") or [], field_lookup)
 
     if additive_mode:
         preflight = parse_plugin_keys(java_path)
@@ -1531,8 +1736,28 @@ def _process_form(
             if b["id"] in local_to_global
         ]
 
+        # Occurrence guards: skip fields a previous run already guarded; give
+        # this run's guard list a fresh local name so methods stay compilable.
+        existing_text = java_path.read_text(encoding="utf-8")
+        guarded_names = set(re.findall(r"// occurrence-guard: (\S+)", existing_text))
+        suffixes = [
+            int(s or "0")
+            for s in re.findall(r"java\.util\.List<String> missingRequired(\d*) =", existing_text)
+        ]
+        list_var = "missingRequired" if not suffixes else f"missingRequired{max(suffixes) + 2}"
+        quote_guard_code = render_occurrence_guards(
+            suggested.get("variables") or [], field_lookup, scope="quote",
+            list_var=list_var, skip_names=guarded_names,
+        )
+        policy_guard_code = render_occurrence_guards(
+            suggested.get("variables") or [], field_lookup, scope="policy",
+            list_var=list_var, skip_names=guarded_names,
+        )
+
         _append_to_plugin(java_path, missing_quote_df, missing_policy_df, offset_cond_blocks,
-                          field_lookup=field_lookup)
+                          field_lookup=field_lookup,
+                          quote_guard_code=quote_guard_code,
+                          policy_guard_code=policy_guard_code)
 
         added_keys = {c["key"] for c in missing_quote_df + missing_policy_df}
         additive_summary = {
@@ -1550,7 +1775,8 @@ def _process_form(
         java_path.write_text(
             render_java(product, suggested_path.name,
                         quote_df_calls=quote_df_calls, policy_df_calls=policy_df_calls,
-                        cond_blocks=cond_blocks, field_lookup=field_lookup),
+                        cond_blocks=cond_blocks, field_lookup=field_lookup,
+                        variables=suggested.get("variables") or []),
             encoding="utf-8",
         )
 
@@ -1559,6 +1785,7 @@ def _process_form(
     resolved_vars = [
         v for v in variables
         if (v.get("data_source") or "").strip()
+        and not (v.get("data_source") or "").strip().startswith("UNRESOLVED:")
     ]
     unresolved_vars = [v for v in variables if v not in resolved_vars]
 
@@ -1601,6 +1828,7 @@ def _process_form(
         cond_blocks=cond_blocks,
         additive_summary=additive_summary,
         cond_field_rows=cond_field_rows,
+        occurrence_rows=occurrence_rows,
     )
 
     print(f"Wrote {_rel(java_path, repo_root)}")
