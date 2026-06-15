@@ -52,6 +52,8 @@ This agent requires an explicit invocation token. Examples:
   RUN_PIPELINE list_paths registry=registry/path-registry.yaml out=samples/output/field-catalog.md
 
 Required per operation:
+  legminus1          : input=<file.docx|file.pdf|file.html>
+  legminus1_apply    : review=<file.path-review.md>
   leg0               : input=<file.docx|file.pdf>
   leg0+leg2+leg3     : input=<file.docx|file.pdf>
   leg1               : input=<file.html>
@@ -68,7 +70,7 @@ Optional for all:           output=<dir>  registry=<path>  terminology=<path>
 Optional for leg4 variants: compile_check=false  (skip javac after generating plugin)
 """
 
-VALID_OPS = {"leg0", "leg0+leg2+leg3", "leg1", "leg2", "leg2+leg3", "leg1+leg2", "leg3", "leg1+leg2+leg3", "leg4", "leg1+leg2+leg3+leg4", "list_paths"}
+VALID_OPS = {"legminus1", "legminus1_apply", "leg0", "leg0+leg2+leg3", "leg1", "leg2", "leg2+leg3", "leg1+leg2", "leg3", "leg1+leg2+leg3", "leg4", "leg1+leg2+leg3+leg4", "list_paths"}
 
 
 def parse_invocation(text: str) -> dict | None:
@@ -82,7 +84,7 @@ def parse_invocation(text: str) -> dict | None:
     # Strip the token and leading operation from the string
     # Match: RUN_PIPELINE <operation> [key=value ...]
     m = re.search(
-        r"run_pipeline\s+(list_paths|leg0\+leg2\+leg3|leg1\+leg2\+leg3\+leg4|leg1\+leg2\+leg3|leg1\+leg2|leg0|leg1|leg2\+leg3|leg3|leg2|leg4)(.*)",
+        r"run_pipeline\s+(list_paths|legminus1_apply|legminus1|leg0\+leg2\+leg3|leg1\+leg2\+leg3\+leg4|leg1\+leg2\+leg3|leg1\+leg2|leg0|leg1|leg2\+leg3|leg3|leg2|leg4)(.*)",
         text,
         re.IGNORECASE,
     )
@@ -172,6 +174,38 @@ def run(invocation: str, auto_yes: bool) -> int:
     compile_check = compile_check_raw.lower() not in ("false", "0", "no")
     keep_intermediates = parsed.get("keep", "").lower() == "intermediates"
 
+    # --- Leg -1 fast-path (registry-only path resolution, no preflight needed) ---
+    if operation == "legminus1":
+        from velocity_converter.agent_tools import run_legminus1
+        if not input_html:
+            print("Missing required field: input=<doc.docx|.pdf|.html>", file=sys.stderr)
+            return 1
+        r = run_legminus1(input_path=input_html, registry=registry, output_dir=output)
+        if not r["ok"]:
+            print(f"Leg -1 failed (rc={r['returncode']}):\n{r['stderr']}", file=sys.stderr)
+            return 1
+        print(r.get("stdout", ""))
+        print("Leg -1 artifacts:")
+        for a in r.get("artifacts", []):
+            print(f"  {a}")
+        return 0
+
+    if operation == "legminus1_apply":
+        from velocity_converter.agent_tools import run_legminus1_apply
+        review = parsed.get("review")
+        if not review:
+            print("Missing required field: review=<path.path-review.md>", file=sys.stderr)
+            return 1
+        r = run_legminus1_apply(review=review, output_dir=parsed.get("output"))
+        if not r["ok"]:
+            print(f"Leg -1 apply failed (rc={r['returncode']}):\n{r['stderr']}", file=sys.stderr)
+            return 1
+        print(r.get("stdout", ""))
+        print("Leg -1 apply artifacts:")
+        for a in r.get("artifacts", []):
+            print(f"  {a}")
+        return 0
+
     # --- list_paths fast-path (no preflight / PROCEED needed) ---
     if operation == "list_paths":
         out_path = parsed.get("out") or "samples/output/field-catalog.md"
@@ -256,7 +290,13 @@ def run(invocation: str, auto_yes: bool) -> int:
             _vm_seed = f"{leg0_out_dir}/{stem}.vm"
             _shutil.copy2(_annotated, _vm_seed)
 
-    # leg2+leg3: seed .vm from sibling .annotated.html if the .vm doesn't already exist
+    # leg2+leg3: seed the .vm base Leg 3 substitutes against from the sibling
+    # .annotated.html. A docx-origin mapping always has an .annotated.html (Leg 0)
+    # and that is the authoritative, freshly-regenerated base — so always refresh
+    # the .vm from it, mirroring the leg0+leg2+leg3 copy above. (Refreshing only
+    # "if the .vm is missing" lets a stale .vm from an earlier run shadow an
+    # updated doc, leaving old $TBD_ tokens in the final template.) HTML/Leg 1
+    # flows have no .annotated.html, so their real Leg 1 .vm is left untouched.
     if operation == "leg2+leg3" and mapping:
         import shutil as _shutil
         _m_stem = Path(mapping).stem
@@ -264,10 +304,9 @@ def run(invocation: str, auto_yes: bool) -> int:
             _m_stem = _m_stem[: -len(".mapping")]
         _m_base = Path(mapping).parent
         _vm_seed = _m_base / f"{_m_stem}.vm"
-        if not _vm_seed.exists():
-            _annotated = _m_base / f"{_m_stem}.annotated.html"
-            if _annotated.exists():
-                _shutil.copy2(str(_annotated), str(_vm_seed))
+        _annotated = _m_base / f"{_m_stem}.annotated.html"
+        if _annotated.exists():
+            _shutil.copy2(str(_annotated), str(_vm_seed))
 
     if operation in ("leg1", "leg1+leg2", "leg1+leg2+leg3"):
         print("\nRunning Leg 1…")

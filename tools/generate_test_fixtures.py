@@ -69,10 +69,10 @@ def _build_quote_summary(doc):
     tbl = doc.add_table(rows=1, cols=2)
     tbl.rows[0].cells[0].text = "Field"
     tbl.rows[0].cells[1].text = "Value"
-    _table_row(tbl, "Quote Reference", "{quoteNumber}")
-    _table_row(tbl, "Cover Start Date", "{startTime}")
-    _table_row(tbl, "Cover End Date", "{endTime}")
-    _table_row(tbl, "Jurisdiction", "{jurisdiction}")
+    _table_row(tbl, "Quote Reference", "{quote.quoteNumber}")
+    _table_row(tbl, "Cover Start Date", "{quote.startTime}")
+    _table_row(tbl, "Cover End Date", "{quote.endTime}")
+    _table_row(tbl, "Jurisdiction", "{quote.jurisdiction}")
     _para(doc, "")
 
     _heading(doc, "Coverage", level=2)
@@ -91,8 +91,8 @@ def _build_quote_summary(doc):
     tbl2 = doc.add_table(rows=1, cols=2)
     tbl2.rows[0].cells[0].text = "Charge"
     tbl2.rows[0].cells[1].text = "Amount"
-    _table_row(tbl2, "Total Monthly Premium", "{quotePremiumTotal}")
-    _table_row(tbl2, "Other Charges", "{quoteOtherTotal}")
+    _table_row(tbl2, "Total Monthly Premium", "{pricing.premiumTotal}")
+    _table_row(tbl2, "Other Charges", "{pricing.otherTotal}")
     _para(doc, "")
 
     _para(doc, "This quote is valid for 30 days from the date of issue.")
@@ -114,7 +114,7 @@ def _build_item_cert(doc):
     tbl = doc.add_table(rows=1, cols=2)
     tbl.rows[0].cells[0].text = "Field"
     tbl.rows[0].cells[1].text = "Value"
-    _table_row(tbl, "Policy Number", "{policyNumber}")
+    _table_row(tbl, "Policy Number", "{policy.policyNumber}")
     _table_row(tbl, "Certificate Holder", "{account.data.firstName} {account.data.lastName}")
     _table_row(tbl, "Email", "{account.data.email}")
     _table_row(tbl, "Phone", "{account.data.primaryPhone}")
@@ -168,7 +168,7 @@ def _build_renewal_notice(doc):
     tbl = doc.add_table(rows=1, cols=2)
     tbl.rows[0].cells[0].text = "Field"
     tbl.rows[0].cells[1].text = "Value"
-    _table_row(tbl, "Policy Number", "{policyNumber}")
+    _table_row(tbl, "Policy Number", "{policy.policyNumber}")
     _table_row(tbl, "Current Policy End Date", "{policy.data.contractTermEndDate}")
     _table_row(tbl, "Renewal Date", "{policy.data.expectedRenewalDate}")
     _para(doc, "")
@@ -177,7 +177,7 @@ def _build_renewal_notice(doc):
     tbl2 = doc.add_table(rows=1, cols=2)
     tbl2.rows[0].cells[0].text = "Charge"
     tbl2.rows[0].cells[1].text = "Amount"
-    _table_row(tbl2, "Total Renewal Amount", "{termChargesTotal}")
+    _table_row(tbl2, "Total Renewal Amount", "{data.termCharges}")
     _table_row(tbl2, "Settlement Period", "{policy.data.settlementPeriod}")
     _para(doc, "")
 
