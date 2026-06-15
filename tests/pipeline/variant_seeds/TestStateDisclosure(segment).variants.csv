@@ -1,0 +1,7 @@
+# Variant seed for TestStateDisclosure(segment) — copied over the Leg 0 stub by
+# run_test_pipeline.py --auto. Covers a system field ({policy.policyNumber}), a
+# custom field ({policy.data.discountAmount}), and a field in the default row.
+placeholder,when,text
+disclosureClause,"discountType == ""FLAT""","Policy {policy.policyNumber}: a flat discount of {policy.data.discountAmount} has been applied."
+disclosureClause,"discountType == ""PERCENT""","Policy {policy.policyNumber}: a percentage discount applies to your premium."
+disclosureClause,,"Policy {policy.policyNumber}: no discount applies. Amount on file is {policy.data.discountAmount}."

@@ -15,6 +15,9 @@ Usage:
     # Regenerate DOCX fixtures first, then run
     python3 tests/pipeline/run_test_pipeline.py --regen --auto
 
+    # Also render each .final.vm against a live tenant (ad-hoc rendering)
+    python3 tests/pipeline/run_test_pipeline.py --auto --render-preview
+
 Output lands in:  tests/pipeline/output/<stem>/
 Plugin output in: tests/pipeline/output/<first_stem>/ZenCoverDocumentDataSnapshotPluginImpl.java
 """
@@ -22,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -40,7 +44,13 @@ ALL_FIXTURES = [
     "TestRenewalNotice(segment).docx",
     "TestItemsSchedule(segment).docx",
     "TestGiftSchedule(segment).docx",
+    "TestStateDisclosure(segment).docx",
 ]
+
+# Variant-block fixtures: their [[$token]] blocks are filled from a ready-made
+# CSV here (copied over the Leg 0 stub before parsing), the variant analogue of
+# condition_seeds.yaml for binary blocks.
+VARIANT_SEEDS_DIR = REPO / "tests" / "pipeline" / "variant_seeds"
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +158,13 @@ def run_fixture(fixture_file: str, auto: bool, seeds_data: dict) -> dict:
     else:
         _wait_for_form(form_path, stem)
 
+    # Variant blocks: drop the ready seed CSV over Leg 0's stub so the sibling
+    # CSV the parse step auto-detects is the filled one (auto mode only).
+    seed_csv = VARIANT_SEEDS_DIR / f"{stem}.variants.csv"
+    if auto and seed_csv.exists():
+        shutil.copyfile(seed_csv, output_dir / f"{stem}.variants.csv")
+        print(f"    seeded {seed_csv.name}")
+
     # --- Parse conditional form ---
     print(f"\n[3/4] Parse conditional form → conditional-registry.yaml")
     r_parse = _run(
@@ -187,6 +204,24 @@ def run_fixture(fixture_file: str, auto: bool, seeds_data: dict) -> dict:
         errors.append(f".final.vm not written at {vm_path}")
         return {"stem": stem, "mapping_path": str(mapping_path), "success": False, "errors": errors}
 
+    # A written .final.vm is not enough — unresolved $TBD_* tokens mean Leg 2
+    # never mapped those fields, and the template will fail under Velocity's
+    # strict rendering (errorCode 216041: "Variable $TBD_x has not been set").
+    # The Leg 4 plugin already gets this check (literal $TBD_ guard); the
+    # template deserves the same bar.
+    tbd_lines = [
+        f"line {n}: {line.strip()}"
+        for n, line in enumerate(vm_path.read_text(encoding="utf-8").splitlines(), 1)
+        if "$TBD_" in line
+    ]
+    if tbd_lines:
+        errors.append(
+            f"{len(tbd_lines)} unresolved $TBD_ token(s) in {vm_path.name} "
+            f"(Leg 2 left fields unmapped):"
+        )
+        errors.extend(f"  {tl}" for tl in tbd_lines)
+        return {"stem": stem, "mapping_path": str(mapping_path), "success": False, "errors": errors}
+
     print(f"\n  OK — template: {vm_path.relative_to(REPO)}")
     return {"stem": stem, "mapping_path": str(mapping_path), "success": True, "errors": []}
 
@@ -194,6 +229,69 @@ def run_fixture(fixture_file: str, auto: bool, seeds_data: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Leg 4 — single plugin from all mappings
 # ---------------------------------------------------------------------------
+
+def _find_build_jars() -> tuple[str, str] | None:
+    """Return (customer_jar, datamodel_jar) if both are present in build/, else None."""
+    build = REPO / "build"
+    customer = build / "customer-config.jar"
+    datamodels = sorted(build.glob("core-datamodel-*.jar"))
+    datamodels = [j for j in datamodels if "-sources" not in j.name and "-javadoc" not in j.name]
+    if customer.is_file() and datamodels:
+        return str(customer), str(datamodels[0])
+    return None
+
+
+def _compile_check_variant_fixtures(mapping_paths: list[str]) -> bool:
+    """Regenerate each variant-block fixture's plugin standalone with
+    --compile-check and assert it compiles against the real jars.
+
+    Done per-fixture (not on the combined plugin) so it verifies the new N-way
+    codegen without being gated on the legacy binary fixtures' conditions. A
+    no-op when the build jars are missing (CI without jars).
+    """
+    jars = _find_build_jars()
+    if jars is None:
+        print("  (compile-check skipped — build/ jars not found)")
+        return True
+    customer_jar, datamodel_jar = jars
+
+    variant_mappings = []
+    for mp in mapping_paths:
+        cond_reg = Path(mp).parent / f"{Path(mp).parent.name}.conditional-registry.yaml"
+        if not cond_reg.exists():
+            continue
+        blocks = yaml.safe_load(cond_reg.read_text(encoding="utf-8")) or []
+        if any(b.get("variant") or b.get("variants") for b in blocks):
+            variant_mappings.append(mp)
+
+    if not variant_mappings:
+        return True
+
+    ok = True
+    for mp in variant_mappings:
+        stem = Path(mp).parent.name
+        tmp_out = OUTPUT_DIR / stem / "_compile_check"
+        if tmp_out.exists():
+            shutil.rmtree(tmp_out)
+        tmp_out.mkdir(parents=True, exist_ok=True)
+        cmd = [
+            sys.executable, "-m", "velocity_converter.leg4_generate_plugin",
+            "--suggested", mp,
+            "--customer-jar", customer_jar,
+            "--datamodel-jar", datamodel_jar,
+            "--output-dir", str(tmp_out),
+            "--compile-check",
+        ]
+        r = _run(cmd, f"compile-check {stem}")
+        passed = r.returncode == 0 and "compile=PASS" in (r.stdout or "")
+        if passed:
+            print(f"  OK — variant plugin compiles: {stem}")
+        else:
+            print(f"  FAIL — variant plugin did not compile: {stem}")
+            ok = False
+        shutil.rmtree(tmp_out, ignore_errors=True)
+    return ok
+
 
 def run_leg4(mapping_paths: list[str]) -> bool:
     _banner("Leg 4 — generate DocumentDataSnapshotPlugin")
@@ -237,22 +335,28 @@ def run_leg4(mapping_paths: list[str]) -> bool:
         print(f"\n  OK — plugin: {jf.relative_to(REPO)}")
 
     # Every form must contribute its conditional keys to the combined plugin —
-    # a single-form plugin passing silently was the multi-form regression.
+    # a single-form plugin passing silently was the multi-form regression. Keys
+    # are named (§1a): cond<id> for binary blocks, the $token for variant blocks.
     plugin_text = java_files[0].read_text(encoding="utf-8")
-    n_expected_conds = 0
+    expected_keys: set[str] = set()
     for mp in mapping_paths:
         cond_reg = Path(mp).parent / f"{Path(mp).parent.name}.conditional-registry.yaml"
         if cond_reg.exists():
-            n_expected_conds += cond_reg.read_text(encoding="utf-8").count("- id:")
-    n_plugin_conds = len(set(
-        re.findall(r'renderingData\.put\("(cond\d+)"', plugin_text)
-    ))
-    if n_plugin_conds < n_expected_conds:
-        print(f"  FAIL — combined plugin has {n_plugin_conds} distinct conditional key(s), "
-              f"expected {n_expected_conds} across {len(mapping_paths)} form(s)")
+            for blk in yaml.safe_load(cond_reg.read_text(encoding="utf-8")) or []:
+                expected_keys.add(str(blk.get("key") or f"cond{blk.get('id')}"))
+    missing_keys = {k for k in expected_keys if f'renderingData.put("{k}"' not in plugin_text}
+    if missing_keys:
+        print(f"  FAIL — combined plugin missing conditional key(s) {sorted(missing_keys)} "
+              f"(expected {len(expected_keys)} across {len(mapping_paths)} form(s))")
         return False
-    print(f"  OK — combined plugin carries {n_plugin_conds} conditional key(s) "
+    print(f"  OK — combined plugin carries {len(expected_keys)} conditional key(s) "
           f"from {len(mapping_paths)} form(s)")
+
+    # Compile-check the N-way variant fixtures against the real jars (the DSL is
+    # the reason this can be turned on — the if/else-if chain with field
+    # concatenation must compile). Skipped when the build jars are absent.
+    if not _compile_check_variant_fixtures(mapping_paths):
+        return False
 
     # Fields inside conditional blocks must be concatenated, never left as
     # literal $TBD_* in the plugin strings (plan 10-conditional-field-tokens).
@@ -267,6 +371,92 @@ def run_leg4(mapping_paths: list[str]) -> bool:
         return False
 
     return r.returncode == 0
+
+
+# ---------------------------------------------------------------------------
+# Ad-hoc rendering preview — render each .final.vm against a live tenant
+# ---------------------------------------------------------------------------
+
+def run_render_preview(results: list[dict]) -> dict[str, str]:
+    """POST each successful fixture's .final.vm to the ad-hoc render endpoint.
+
+    Opt-in (--render-preview): settings come from AI_DOCUMENTS_* env vars or the
+    gitignored .env.ai-documents at the repo root (copy .env.ai-documents.example).
+    The reference type is parsed from the fixture stem — TestQuoteSummary(quote)
+    renders against AI_DOCUMENTS_REFERENCE_QUOTE. The tenant must already carry
+    the deployed DocumentDataSnapshotPlugin (it supplies $data at render time).
+
+    Returns {stem: "PASS" | "SKIP" | "FAIL"}.
+    """
+    from velocity_converter.render_preview import (
+        ENV_PREFIX, RenderPreviewError, load_env, render_template, require_settings,
+    )
+
+    _banner("Render preview — ad-hoc rendering against live tenant")
+    print("  NOTE: deploy the generated SnapshotPlugin to the tenant first —")
+    print("  the renderer calls it to build $data (conditionals included).")
+
+    env = load_env(REPO)
+    try:
+        api_url, tenant_locator, token = require_settings(env)
+    except RenderPreviewError as exc:
+        print(f"  FAIL — {exc}")
+        return {r["stem"]: "FAIL" for r in results if r["success"]}
+
+    statuses: dict[str, str] = {}
+    for r in results:
+        if not r["success"]:
+            continue
+        stem = r["stem"]
+        ref_match = re.search(r"\((\w+)\)$", stem)
+        ref_type = ref_match.group(1) if ref_match else None
+        ref_locator = env.get(f"{ENV_PREFIX}REFERENCE_{(ref_type or '').upper()}")
+        if not ref_locator:
+            print(f"  SKIP — {stem}: {ENV_PREFIX}REFERENCE_{(ref_type or '?').upper()} not set")
+            statuses[stem] = "SKIP"
+            continue
+
+        vm_path = OUTPUT_DIR / stem / f"{stem}.final.vm"
+        print(f"\n  Rendering {stem} against {ref_type} {ref_locator} ...")
+        try:
+            rendered, content_type = render_template(
+                api_url=api_url,
+                tenant_locator=tenant_locator,
+                token=token,
+                template_text=vm_path.read_text(encoding="utf-8"),
+                reference_type=ref_type,
+                reference_locator=ref_locator,
+                product_name=env.get(f"{ENV_PREFIX}PRODUCT_NAME"),
+            )
+        except RenderPreviewError as exc:
+            print(f"  FAIL — {stem}: {exc}")
+            if exc.body:
+                for line in exc.body[:500].splitlines():
+                    print(f"         {line}")
+            statuses[stem] = "FAIL"
+            continue
+
+        is_pdf = rendered.startswith(b"%PDF")
+        preview_path = OUTPUT_DIR / stem / f"{stem}.preview.{'pdf' if is_pdf else 'html'}"
+        preview_path.write_bytes(rendered)
+
+        if not rendered.strip():
+            print(f"  FAIL — {stem}: render returned empty output")
+            statuses[stem] = "FAIL"
+            continue
+        # Text output must not leak unresolved pipeline tokens; PDF bytes
+        # can't be grepped, so a 200 + non-empty body is the bar there.
+        if not is_pdf:
+            text = rendered.decode("utf-8", errors="replace")
+            leaks = [tok for tok in ("$TBD_", "$doc.cond") if tok in text]
+            if leaks:
+                print(f"  FAIL — {stem}: rendered output contains {', '.join(leaks)}")
+                statuses[stem] = "FAIL"
+                continue
+        print(f"  OK — preview ({content_type or 'unknown type'}): "
+              f"{preview_path.relative_to(REPO)}")
+        statuses[stem] = "PASS"
+    return statuses
 
 
 # ---------------------------------------------------------------------------
@@ -296,6 +486,13 @@ def main():
         "--no-leg4",
         action="store_true",
         help="Skip Leg 4 plugin generation",
+    )
+    parser.add_argument(
+        "--render-preview",
+        action="store_true",
+        help="Render each .final.vm against a live tenant via the ad-hoc "
+             "rendering endpoint (settings from AI_DOCUMENTS_* env vars or "
+             ".env.ai-documents; deploy the SnapshotPlugin first)",
     )
     args = parser.parse_args()
 
@@ -352,6 +549,11 @@ def main():
     else:
         leg4_ok = None
 
+    # --- Render preview (opt-in, live tenant) ---
+    preview_statuses: dict[str, str] = {}
+    if args.render_preview and successful_mappings:
+        preview_statuses = run_render_preview(results)
+
     # --- Summary ---
     _banner("Test Pipeline Summary")
     all_ok = True
@@ -367,6 +569,11 @@ def main():
         icon = "PASS" if leg4_ok else "FAIL"
         print(f"  [{icon}] Leg 4 — plugin generation")
         if not leg4_ok:
+            all_ok = False
+
+    for stem, status in preview_statuses.items():
+        print(f"  [{status}] render preview — {stem}")
+        if status == "FAIL":
             all_ok = False
 
     print()

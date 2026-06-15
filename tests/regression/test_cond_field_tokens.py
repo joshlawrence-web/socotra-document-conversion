@@ -391,7 +391,8 @@ class TestLeg3SplitDelegated(unittest.TestCase):
         kept, delegated = split_delegated(self.VM, self._entries())
         self.assertEqual([v["placeholder"] for v in kept], ["$TBD_account.data.firstName"])
         self.assertEqual([v["placeholder"] for v in delegated], ["$TBD_policy.data.discountAmount"])
-        self.assertEqual(delegated[0]["_cond_ids"], ["1"])
+        # §1a: _cond_ids now carry the block's named key (cond<id> for binary).
+        self.assertEqual(delegated[0]["_cond_ids"], ["cond1"])
 
     def test_token_inside_and_outside_is_kept(self):
         vm = self.VM + "Also outside: $TBD_policy.data.discountAmount\n"
@@ -411,7 +412,7 @@ class TestLeg3SplitDelegated(unittest.TestCase):
         vm = "[[outer [[inner $TBD_quoteNumber]]$doc.cond2 rest]]$doc.cond1\n"
         entries = [{"placeholder": "$TBD_quoteNumber", "data_source": "$data.quoteNumber"}]
         _, delegated = split_delegated(vm, entries)
-        self.assertEqual(delegated[0]["_cond_ids"], ["2"])
+        self.assertEqual(delegated[0]["_cond_ids"], ["cond2"])
 
 
 if __name__ == "__main__":

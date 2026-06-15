@@ -33,7 +33,14 @@ from pathlib import Path
 
 import yaml
 
-from velocity_converter.models import ConditionalRegistry, ContractError, PathRegistry, validate_contract
+from velocity_converter.condition_dsl import ast_from_dict, condition_to_java
+from velocity_converter.models import (
+    ConditionalRegistry,
+    ContractError,
+    PathRegistry,
+    block_key,
+    validate_contract,
+)
 
 # Shared SDK-introspection helpers (Leg 2 plan P1.1 — single source of JAR truth).
 from velocity_converter.sdk_introspect import (
@@ -280,6 +287,88 @@ def _build_cond_field_lookup(
     return lookup
 
 
+def _registry_accessor_to_velocity(registry_path: Path | None) -> dict[str, str]:
+    """Build {condition-accessor: velocity} from the registry (inverse of
+    _derive_accessor) so variant-text field tokens (written as full accessors,
+    e.g. {quote.quoteNumber}) can be resolved to a velocity + wired."""
+    if not registry_path or not Path(registry_path).is_file():
+        return {}
+    try:
+        data = yaml.safe_load(Path(registry_path).read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+    out: dict[str, str] = {}
+
+    def _walk(node) -> None:
+        if isinstance(node, dict):
+            vel, cat = node.get("velocity"), node.get("category")
+            if vel and cat:
+                acc = _derive_accessor(str(vel), str(cat))
+                if acc:
+                    out.setdefault(acc, str(vel))
+            for v in node.values():
+                _walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                _walk(v)
+
+    _walk(data)
+    return out
+
+
+def _augment_field_lookup_for_variants(
+    field_lookup: dict[str, dict],
+    cond_blocks: list[dict],
+    vel_to_cat: dict[str, str],
+    registry_path: Path | None,
+    classpath: str | None,
+    product: str | None,
+) -> dict[str, dict]:
+    """Add wiring for field tokens that appear only inside variant text/default.
+
+    These aren't mapping variables (they came from the CSV, not the annotated
+    HTML), so synthesize a pseudo-variable per distinct accessor and run it
+    through _build_cond_field_lookup — reusing the exact category/javap wiring the
+    binary path uses. Existing entries are never overwritten.
+    """
+    names: set[str] = set()
+    for b in cond_blocks:
+        if not b.get("variants"):
+            continue
+        texts = [v.get("text") or "" for v in (b.get("variants") or [])]
+        texts.append(b.get("default") or "")
+        for t in texts:
+            for m in _FIELD_BRACE_RE.finditer(t):
+                names.add(m.group(1))
+    names -= set(field_lookup)
+    if not names:
+        return field_lookup
+    acc_to_vel = _registry_accessor_to_velocity(registry_path)
+    synth_vars = [{"name": n, "data_source": acc_to_vel[n]} for n in names if n in acc_to_vel]
+    # Names not in the registry: mark unsupported (TODO + WARN row, never a hard
+    # fail — variant text is not path-validated at parse time the way `when` is).
+    extra = {
+        n: {
+            "data_source": "",
+            "scope": None,
+            "java_expr": "",
+            "unsupported_reason": "not found in registry (cannot derive Java accessor for variant text)",
+        }
+        for n in names if n not in acc_to_vel
+    }
+    if synth_vars:
+        synth = _build_cond_field_lookup(
+            {"variables": synth_vars, "loops": []}, vel_to_cat,
+            classpath=classpath, product=product,
+        )
+    else:
+        synth = {}
+    merged = dict(field_lookup)
+    for n, info in {**synth, **extra}.items():
+        merged.setdefault(n, info)
+    return merged
+
+
 def _find_field_tokens(text: str, known_names: set[str]) -> list[tuple[int, int, str]]:
     """Find $TBD_<name> tokens in text. Returns [(start, end, name)] in order.
 
@@ -326,6 +415,18 @@ def _analyse_cond_fields(
         if b.get("render") == "template":
             # Content (loop included) stays in the template — fields resolve
             # there via Leg 3, not in the plugin's conditional string.
+            continue
+        # N-way variant block: classify the field tokens in its variant texts +
+        # default (brace form) for the report. Unsupported → WARN row; never a
+        # hard fail (variant text is not path-validated at parse time).
+        if b.get("variants"):
+            for t in [v.get("text") or "" for v in (b.get("variants") or [])] + [b.get("default") or ""]:
+                for m in _FIELD_BRACE_RE.finditer(t):
+                    info = field_lookup.get(m.group(1))
+                    if info and info.get("unsupported_reason"):
+                        unsupported.append(
+                            {"block_id": b.get("id"), "name": m.group(1), "reason": info["unsupported_reason"]}
+                        )
             continue
         scopes: set[str] = set()
         for _s, _e, name in _find_field_tokens(b.get("source_text") or "", known):
@@ -644,14 +745,6 @@ def _parse_existing_plugin_keys(java_path: Path) -> set[str]:
     return set(re.findall(r'renderingData\.put\("([^"]+)"', java_path.read_text(encoding="utf-8")))
 
 
-def _parse_existing_cond_high_water(java_path: Path) -> int:
-    """Return the highest condN key in an existing plugin (e.g. cond50 → 50), or 0 if none."""
-    if not java_path.exists():
-        return 0
-    matches = re.findall(r'renderingData\.put\("cond(\d+)"', java_path.read_text(encoding="utf-8"))
-    return max((int(m) for m in matches), default=0)
-
-
 def parse_plugin_keys(java_path: Path) -> dict:
     """Parse and validate an existing SnapshotPlugin .java file.
 
@@ -767,8 +860,11 @@ def _required_keys(suggested: dict, cond_blocks: list[dict]) -> dict[str, str]:
                 break
         result[key] = root_id
 
+    # Positional binary blocks only — named variant blocks merge by name at the
+    # additive site (§1a: named keys don't collide by position, no renumber).
     for b in cond_blocks:
-        result[f"cond{b['id']}"] = "cond"
+        if not b.get("variants"):
+            result[f"cond{b['id']}"] = "cond"
 
     return result
 
@@ -961,8 +1057,9 @@ def load_conditional_registry(yaml_path: Path) -> list[dict]:
     registry = validate_contract(
         rows, ConditionalRegistry, artifact="conditional-registry.yaml", path=yaml_path
     )
-    return [
-        {
+    out: list[dict] = []
+    for b in registry.root:
+        block = {
             "id": b.id,
             "source_text": b.source_text,
             "parent_id": b.parent_id,
@@ -971,8 +1068,20 @@ def load_conditional_registry(yaml_path: Path) -> list[dict]:
             "operator": b.operator,
             "render": b.render,
         }
-        for b in registry.root
-    ]
+        # §1a / N-way: carry the named key + variant payload when present. A
+        # binary block keeps no explicit key so block_key() falls back to
+        # cond<id> (and additive offsetting can rewrite its id freely).
+        if b.variants or b.placeholder:
+            block["key"] = b.key
+            block["placeholder"] = b.placeholder
+            block["variant"] = True
+            block["scope"] = b.scope
+            block["default"] = b.default
+            block["variants"] = [
+                {"when": dict(v.when), "text": v.text} for v in (b.variants or [])
+            ]
+        out.append(block)
+    return out
 
 
 def _count_annotated_conditionals(out_dir: Path, stem: str) -> int:
@@ -980,30 +1089,34 @@ def _count_annotated_conditionals(out_dir: Path, stem: str) -> int:
     annotated = out_dir / f"{stem}.annotated.html"
     if not annotated.exists():
         return 0
-    return len(set(re.findall(r'\$doc\.cond\d+', annotated.read_text(encoding="utf-8"))))
+    return len(set(re.findall(r'\$doc\.[A-Za-z_]\w*', annotated.read_text(encoding="utf-8"))))
 
 
 def _topo_sort_cond_blocks(blocks: list[dict]) -> list[dict]:
-    """Return blocks sorted so dependencies (referenced via $doc.condN) come first."""
-    id_map = {b["id"]: b for b in blocks}
-    visited: set[int] = set()
+    """Return blocks sorted so dependencies (referenced via $doc.<key>) come first.
+
+    Keyed by the block's named key (§1a) so it is robust to variant blocks that
+    carry a token key instead of a numeric id.
+    """
+    key_map = {block_key(b): b for b in blocks}
+    visited: set[str] = set()
     result: list[dict] = []
 
-    def _deps(block: dict) -> list[int]:
-        return [int(m) for m in re.findall(r'\$doc\.cond(\d+)', block.get("source_text") or "")]
+    def _deps(block: dict) -> list[str]:
+        return re.findall(r'\$doc\.([A-Za-z_]\w*)', block.get("source_text") or "")
 
-    def visit(bid: int) -> None:
-        if bid in visited:
+    def visit(key: str) -> None:
+        if key in visited:
             return
-        visited.add(bid)
-        b = id_map.get(bid)
+        visited.add(key)
+        b = key_map.get(key)
         if b:
-            for dep_id in _deps(b):
-                visit(dep_id)
+            for dep_key in _deps(b):
+                visit(dep_key)
             result.append(b)
 
     for b in blocks:
-        visit(b["id"])
+        visit(block_key(b))
     return result
 
 
@@ -1022,13 +1135,109 @@ def _source_text_to_java(source_text: str, field_exprs: dict[str, str] | None = 
             expr = field_exprs.get(name)
             if expr:
                 escaped = escaped[:start] + f'" + {expr} + "' + escaped[end:]
-    # Replace $doc.condN with Java variable concatenation
-    result = re.sub(r'\$doc\.cond(\d+)', lambda m: f'" + cond{m.group(1)} + "', escaped)
+    # Replace $doc.<key> with Java variable concatenation (the local is named
+    # after the key; binary keys are cond<id> → byte-identical to before).
+    result = re.sub(r'\$doc\.([A-Za-z_]\w*)', lambda m: f'" + {m.group(1)} + "', escaped)
     result = '"' + result + '"'
     # Drop empty string segments produced by refs at string boundaries
     result = re.sub(r'"" \+ ', '', result)
     result = re.sub(r' \+ ""', '', result)
     return result
+
+
+# Variant text from the CSV carries {field} braces (the customer never sees the
+# $TBD_ machine form). Normalise to the $TBD_ tokens the field wiring expects;
+# occurrence symbols ({$x}/{+x}/{*x}) are stripped like Leg 0 does.
+_FIELD_BRACE_RE = re.compile(r"\{[$+*]?([A-Za-z_][\w.]*)\}")
+
+
+def _braces_to_tbd_text(text: str) -> str:
+    return _FIELD_BRACE_RE.sub(lambda m: "$TBD_" + m.group(1), text or "")
+
+
+def _classify_text_fields(
+    text: str, field_lookup: dict[str, dict], scope: str
+) -> tuple[dict[str, str], list[tuple[str, str]]]:
+    """Split a baked text's $TBD_ tokens into wired field_exprs vs TODO literals.
+
+    Mirrors render_conditional_puts' binary-block classification so variant text
+    wires the same way: in-scope supported field → Java accessor concat; anything
+    else (unsupported, unresolved, other-scope) stays a literal {token} with a
+    TODO reason (D4 parity).
+    """
+    field_exprs: dict[str, str] = {}
+    todo: list[tuple[str, str]] = []
+    for _s, _e, name in _find_field_tokens(text or "", set(field_lookup)):
+        info = field_lookup.get(name)
+        if info is None or not (info.get("data_source") or info.get("unsupported_reason")):
+            todo.append((name, "unresolved data_source"))
+        elif info.get("unsupported_reason"):
+            todo.append((name, info["unsupported_reason"]))
+        elif info.get("scope") != scope:
+            todo.append((name, f"{info.get('scope')}-scoped field, n/a in {scope} context"))
+        else:
+            field_exprs[name] = info["java_expr"]
+    return field_exprs, todo
+
+
+def _render_variant_puts(block: dict, scope: str, field_lookup: dict[str, dict] | None) -> str:
+    """Render an N-way variant block to an if/else-if chain (the 50-state feature).
+
+    First-match-wins: each variant's ``when`` AST becomes a null-safe boolean via
+    condition_to_java; the matching body bakes that variant's text (field tokens
+    wired per variant, exactly like the binary path); a trailing ``else`` bakes
+    the default. A block whose scope is the *other* overload emits an empty put
+    so the generated Java never references locals absent from this scope (D6).
+    """
+    field_lookup = field_lookup or {}
+    key = block_key(block)
+    bid = block.get("id", key)
+    placeholder = block.get("placeholder") or key
+    variants = block.get("variants") or []
+    block_scope = (block.get("scope") or "").strip()
+
+    if block_scope and block_scope != scope:
+        return (
+            f'        // Conditional block {bid} (variant ${placeholder}): '
+            f'{block_scope}-scoped, n/a in {scope} context\n'
+            f'        renderingData.put("{key}", "");'
+        )
+
+    todo_all: list[tuple[str, str]] = []
+    branches: list[str] = []
+    for i, v in enumerate(variants):
+        ast = ast_from_dict(v.get("when") or {})
+        java_cond = condition_to_java(ast, scope)
+        text_tbd = _braces_to_tbd_text(v.get("text") or "")
+        field_exprs, todo = _classify_text_fields(text_tbd, field_lookup, scope)
+        todo_all.extend(todo)
+        java_val = _source_text_to_java(text_tbd, field_exprs)
+        keyword = "if" if i == 0 else "} else if"
+        branches.append(f"        {keyword} ({java_cond}) {{\n            {key} = {java_val};")
+
+    default_text = block.get("default")
+    if default_text:
+        default_tbd = _braces_to_tbd_text(default_text)
+        d_exprs, d_todo = _classify_text_fields(default_tbd, field_lookup, scope)
+        todo_all.extend(d_todo)
+        java_default = _source_text_to_java(default_tbd, d_exprs)
+        branches.append(f"        }} else {{\n            {key} = {java_default};")
+
+    todo_comment = "".join(
+        f'        // TODO: field {name} not wired — {reason}\n'
+        for name, reason in dict(todo_all).items()
+    )
+    chain = "\n".join(branches)
+    close = "        }" if branches else ""
+    return (
+        f'        // Conditional block {bid} (variant ${placeholder}): '
+        f'{len(variants)} variant(s) + default\n'
+        f'{todo_comment}'
+        f'        String {key} = "";\n'
+        f'{chain}\n'
+        f'{close}\n'
+        f'        renderingData.put("{key}", {key});'
+    )
 
 
 def render_conditional_puts(
@@ -1053,9 +1262,23 @@ def render_conditional_puts(
     lines = []
     for b in sorted_blocks:
         bid = b["id"]
+        key = block_key(b)
         preview = _tbd_preview(b["source_text"])
         truncated = preview[:60] + ("..." if len(preview) > 60 else "")
-        raw_conds = b["conditions"]
+        raw_conds = b.get("conditions") or []
+
+        # N-way variant block (the 50-state feature): an if/else-if chain
+        # selecting one text by data, with a trailing default else. A loop/
+        # Boolean (render: template) block cannot also be a text selector.
+        if b.get("variants"):
+            if b.get("render") == "template":
+                raise ValueError(
+                    f"conditional block '{key}' has both a loop (render: template) and "
+                    "text variants — a loop block cannot be an N-way text selector"
+                )
+            lines.append(_render_variant_puts(b, scope, field_lookup))
+            continue
+
         quote_scoped = any(c.strip().startswith("quote.") for c in raw_conds)
         policy_scoped = any(c.strip().startswith("policy.") for c in raw_conds)
 
@@ -1068,12 +1291,12 @@ def render_conditional_puts(
             if raw_conds and scope == "policy" and quote_scoped:
                 lines.append(
                     f'        // Conditional block {bid} (template-rendered): quote-scoped, n/a in policy context\n'
-                    f'        renderingData.put("cond{bid}", false);'
+                    f'        renderingData.put("{key}", false);'
                 )
             elif raw_conds and scope == "quote" and policy_scoped:
                 lines.append(
                     f'        // Conditional block {bid} (template-rendered): policy-scoped condition(s), n/a in quote context\n'
-                    f'        renderingData.put("cond{bid}", false);'
+                    f'        renderingData.put("{key}", false);'
                 )
             elif raw_conds:
                 joiner = " || " if b["operator"] == "OR" else " && "
@@ -1082,13 +1305,13 @@ def render_conditional_puts(
                 )
                 lines.append(
                     f'        // Conditional block {bid} (template-rendered): {truncated}\n'
-                    f'        renderingData.put("cond{bid}", {java_cond});'
+                    f'        renderingData.put("{key}", {java_cond});'
                 )
             else:
                 lines.append(
-                    f'        // TODO: fill conditions for cond{bid} in conditional-registry.yaml\n'
+                    f'        // TODO: fill conditions for {key} in conditional-registry.yaml\n'
                     f'        // (template-rendered) {truncated}\n'
-                    f'        renderingData.put("cond{bid}", false);'
+                    f'        renderingData.put("{key}", false);'
                 )
             continue
 
@@ -1135,23 +1358,23 @@ def render_conditional_puts(
             lines.append(
                 f'        // Conditional block {bid}: {truncated}\n'
                 f'{todo_comment}'
-                f'        String cond{bid} = "";\n'
+                f'        String {key} = "";\n'
                 f'        if ({java_cond}) {{\n'
-                f'            cond{bid} = {java_val};\n'
+                f'            {key} = {java_val};\n'
                 f'        }}\n'
-                f'        renderingData.put("cond{bid}", cond{bid});'
+                f'        renderingData.put("{key}", {key});'
             )
         elif raw_conds:
             lines.append(
                 f'        // Conditional block {bid}: {blocked_reason}\n'
-                f'        renderingData.put("cond{bid}", "");'
+                f'        renderingData.put("{key}", "");'
             )
         else:
             parent_note = f" — child of cond{b['parent_id']}, guard inside parent if-block" if b.get("parent_id") else ""
             lines.append(
-                f'        // TODO: fill conditions for cond{bid} in conditional-registry.yaml{parent_note}\n'
+                f'        // TODO: fill conditions for {key} in conditional-registry.yaml{parent_note}\n'
                 f'        // {truncated}\n'
-                f'        renderingData.put("cond{bid}", "");'
+                f'        renderingData.put("{key}", "");'
             )
     return "\n".join(lines)
 
@@ -1656,9 +1879,12 @@ def _process_form(
         if cand.is_file():
             registry_path = cand
 
+    vel_to_cat = _load_velocity_categories(registry_path)
     field_lookup = _build_cond_field_lookup(
-        suggested, _load_velocity_categories(registry_path),
-        classpath=classpath, product=product,
+        suggested, vel_to_cat, classpath=classpath, product=product,
+    )
+    field_lookup = _augment_field_lookup_for_variants(
+        field_lookup, cond_blocks, vel_to_cat, registry_path, classpath, product
     )
     unresolved_fields, unsupported_fields, mixed_scope_ids = _analyse_cond_fields(
         cond_blocks, field_lookup
@@ -1733,8 +1959,24 @@ def _process_form(
         offset_cond_blocks = [
             {**b, "id": local_to_global[b["id"]]}
             for b in cond_blocks
-            if b["id"] in local_to_global
+            if not b.get("variants") and b["id"] in local_to_global
         ]
+        # Named variant blocks merge by name (set-union, no positional offset).
+        # A name already in the plugin is a conflict to report, not a renumber.
+        named_cond_keys: list[str] = []
+        for b in cond_blocks:
+            if not b.get("variants"):
+                continue
+            bkey = block_key(b)
+            if bkey in existing_keys:
+                print(
+                    f"Additive: conditional key '{bkey}' already in the plugin — "
+                    "skipped (named keys are not renumbered)",
+                    file=sys.stderr,
+                )
+                continue
+            offset_cond_blocks.append(b)
+            named_cond_keys.append(bkey)
 
         # Occurrence guards: skip fields a previous run already guarded; give
         # this run's guard list a fresh local name so methods stay compilable.
@@ -1764,12 +2006,13 @@ def _process_form(
             "keys_already_present": len(existing_keys),
             "keys_added": added_keys,
             "cond_high_water_before": cond_high_water,
-            "new_cond_ids": [global_id for _, global_id in missing_conds],
+            "new_cond_ids": [global_id for _, global_id in missing_conds] + named_cond_keys,
             "preflight": preflight,
         }
         print(
             f"Additive mode: {len(added_keys)} key(s) added, "
-            f"{len(missing_conds)} conditional(s) added (high-water was {cond_high_water})"
+            f"{len(missing_conds) + len(named_cond_keys)} conditional(s) added "
+            f"(high-water was {cond_high_water})"
         )
     else:
         java_path.write_text(

@@ -23,6 +23,7 @@ flowchart LR
   ANN[".annotated.html\n(fields + conditionals tagged)"]
   L0MAP[".mapping.yaml\n(TBD placeholders)"]
   FORM[/".conditional-form.md\nsend to customer"/]
+  VARCSV[/".variants.csv\nN-way variant blocks\nfill in Excel"/]
   CONDREG[".conditional-registry.yaml\n(parsed from filled form)"]
 
   %% ── Leg 1 artifact ───────────────────────────────────
@@ -50,7 +51,9 @@ flowchart LR
   Leg0 --> ANN
   Leg0 --> L0MAP
   Leg0 --> FORM
+  Leg0 -->|"only if a [[$token]]\nvariant block exists"| VARCSV
   FORM -->|"parse-conditional-form\nafter customer fills"| CONDREG
+  VARCSV -->|"sibling CSV merged\nat parse time"| CONDREG
 
   HTML -->|"leg1"| Leg1
   Leg1 --> L1MAP
@@ -105,6 +108,22 @@ overload, custom fields via the segment type). Leg 3 reports such tokens as
 "Delegated to plugin" rather than template-resolved. Leg 4 hard-fails if a field inside
 a block has no `data_source` (run Leg 2 first); per-exposure, account, and
 DataFetcher-sourced fields are TODO-flagged in the plugin report instead of wired.
+
+**N-way variant blocks (the 50-state feature).** Instead of a binary present/absent
+block, an author can write a single token — `[[$disclosureClause]]` — to mean "pick one of
+N text variants by data at render time" (e.g. a different disclosure per state). The token
+name becomes the block's stable join key end-to-end (`$doc.<token>` → `${data.<token>}` →
+`put("<token>", …)`), replacing the positional `condN` for that block. For each such token
+Leg 0 also writes a pre-filled `.variants.csv` stub (`placeholder, when, text` — row order
+is priority, a blank/`*`/`else` `when` is the default row). The customer fills it in Excel
+("Save As → CSV UTF-8"). At `--parse-conditional-form` time the sibling CSV is auto-detected
+and normalised: each `when` is parsed by the condition DSL (`condition_dsl.py`), bare leaf
+names resolve to full accessors against the registry, and the variants/default/scope merge
+into the block in `.conditional-registry.yaml`. A validation error (bad condition, missing
+default, mixed scope, type mismatch) is reported and the registry is **not** written. Leg 4
+then emits an `if`/`else if`/`else` chain (first match wins, `Objects.equals`/`compareTo`,
+null-safe) selecting the variant text — field placeholders inside each variant are wired the
+same way as binary blocks.
 
 When the conditional form is returned, run `leg0_ingest.py --parse-conditional-form` to
 produce `.conditional-registry.yaml`. Leg 2 reads this registry automatically if it exists

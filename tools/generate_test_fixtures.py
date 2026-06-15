@@ -268,6 +268,46 @@ def _build_gift_schedule(doc):
 
 
 # ---------------------------------------------------------------------------
+# Document 6: TestStateDisclosure(segment) — N-way variant block ([[$token]])
+# ---------------------------------------------------------------------------
+
+def _build_state_disclosure(doc):
+    """Exercises the multi-variant conditional feature (the 50-state pattern).
+
+    A single [[$disclosureClause]] variant block selects one of several texts by
+    the policy's discountType. Its companion seed CSV lives at
+    tests/pipeline/variant_seeds/TestStateDisclosure(segment).variants.csv; the
+    variant texts embed a policy *system* field ({policy.policyNumber}) and a
+    policy *custom* field ({policy.data.discountAmount}) — both supported wiring
+    categories — so the generated if/else-if chain concatenates real accessors
+    and compiles against customer-config.jar.
+    """
+    _heading(doc, "Policy Disclosure Notice")
+
+    _para(doc, "Dear {account.data.firstName} {account.data.lastName},")
+    _para(doc, "")
+    _para(doc, "Please review the disclosure that applies to your policy below.")
+    _para(doc, "")
+
+    _heading(doc, "Policy Details", level=2)
+    tbl = doc.add_table(rows=1, cols=2)
+    tbl.rows[0].cells[0].text = "Field"
+    tbl.rows[0].cells[1].text = "Value"
+    _table_row(tbl, "Policy Number", "{policy.policyNumber}")
+    _table_row(tbl, "Discount Type", "{policy.data.discountType}")
+    _para(doc, "")
+
+    _heading(doc, "Applicable Disclosure", level=2)
+    # The variant block: one bare $token, filled from the companion variants.csv.
+    _para(doc, "[[$disclosureClause]]")
+    _para(doc, "")
+
+    _para(doc, "Thank you for choosing ZenCover.")
+    _para(doc, "")
+    _para(doc, "ZenCover Customer Services")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -277,6 +317,7 @@ FIXTURES = [
     ("TestRenewalNotice(segment).docx", _build_renewal_notice),
     ("TestItemsSchedule(segment).docx", _build_items_schedule),
     ("TestGiftSchedule(segment).docx", _build_gift_schedule),
+    ("TestStateDisclosure(segment).docx", _build_state_disclosure),
 ]
 
 
