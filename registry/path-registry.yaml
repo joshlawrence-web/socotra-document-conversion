@@ -277,6 +277,7 @@ quote_paths:
   category: quote_system
   velocity: $data.jurisdiction
   requires_scope: []
+  requires_feature: jurisdictional_scopes
 - field: region
   display_name: Region
   type: string?

@@ -94,6 +94,10 @@ class Verdict(_ContractModel):
     sdk_status: str = ""
     sibling_hint: str | None = None
     reasoning: str = ""
+    # Set when a verified path was demoted because it depends on a disabled
+    # feature_support flag (the SDK method exists but is never populated at
+    # render time). Names the disabled flag. See leg2_fill_mapping.
+    feature_gate: str | None = None
 
 
 Occurrence = Literal["required", "optional", "one_or_more", "zero_or_more"]
@@ -205,6 +209,10 @@ class RegistryEntry(_ContractModel):
     requires_scope: list[ScopeRequirement] = Field(default_factory=list)
     options: list | None = None
     custom_type_ref: str | None = None
+    # Names a feature_support flag that must be enabled for this field to be
+    # populated at render time. When that flag is false the field exists in the
+    # SDK JAR but evaluates to null, so Leg 2 demotes any path resolving here.
+    requires_feature: str | None = None
     # DataFetcher entries (source: datafetcher) — structural only; semantic
     # checks stay in leg2_fill_mapping._validate_datafetcher_entry.
     source: str | None = None

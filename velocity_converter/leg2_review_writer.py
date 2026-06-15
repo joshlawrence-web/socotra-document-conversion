@@ -188,8 +188,11 @@ def _write_review_md(
     ]
     lifecycle_pairs = [(e, r) for e, r in all_low_pairs
                        if _verdict(e, r).get("sdk_status") == "lifecycle_violation"]
+    feature_gated_pairs = [(e, r) for e, r in all_low_pairs
+                           if _verdict(e, r).get("sdk_status") == "feature_gated"]
     blocker_pairs = [(e, r) for e, r in all_low_pairs
-                     if _verdict(e, r).get("sdk_status") != "lifecycle_violation"]
+                     if _verdict(e, r).get("sdk_status")
+                     not in ("lifecycle_violation", "feature_gated")]
 
     lines += ["---", "", "## Lifecycle violations (DataFetcher method unavailable on root)", ""]
     if not lifecycle_pairs:
@@ -228,6 +231,31 @@ def _write_review_md(
             na = _extract_na(vd.get("reasoning") or "") or "supply-from-plugin"
             lines.append(
                 f"| `{ph}` | {ln} | `{root_id}` | {vd.get('sdk_status', '')} | {na} |"
+            )
+    lines.append("")
+
+    # §3c Feature-gated paths — SDK method exists but its feature_support flag is off.
+    lines += ["---", "", "## Feature-gated paths (disabled feature_support)", ""]
+    if not feature_gated_pairs:
+        lines.append("No feature-gated paths.")
+    else:
+        lines += [
+            "These placeholders matched an SDK method that exists on the rendering root, "
+            "but the field is only populated when a `feature_support` flag is enabled — "
+            "and that flag is currently **disabled** in the registry. They were demoted "
+            "(not auto-filled): the path would evaluate to null at render time. Supply the "
+            "value from the plugin, or remove it from the template.",
+            "",
+            "| Placeholder | Line | Root | feature_support flag | next-action |",
+            "|---|---|---|---|---|",
+        ]
+        for e, root_id in feature_gated_pairs:
+            ph = e.get("placeholder") or e.get("name") or ""
+            ln = _fmt_line(e)
+            vd = _verdict(e, root_id)
+            flag = vd.get("feature_gate") or "—"
+            lines.append(
+                f"| `{ph}` | {ln} | `{root_id}` | `{flag}` | confirm-assumption |"
             )
     lines.append("")
 
