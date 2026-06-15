@@ -72,7 +72,6 @@ def _build_quote_summary(doc):
     _table_row(tbl, "Quote Reference", "{quote.quoteNumber}")
     _table_row(tbl, "Cover Start Date", "{quote.startTime}")
     _table_row(tbl, "Cover End Date", "{quote.endTime}")
-    _table_row(tbl, "Jurisdiction", "{quote.jurisdiction}")
     _para(doc, "")
 
     _heading(doc, "Coverage", level=2)

@@ -233,6 +233,46 @@ def write_final_template(
 
 
 @mcp.tool()
+def scan_document(
+    input_path: str,
+    output_dir: str = "workspace/output",
+) -> str:
+    """Scan a Word (.docx) or PDF for its conditional blocks and emit ONLY the
+    customer-facing hand-fill files — no machine artifacts.
+
+    Runs Leg 0 in --scan mode: it parses the document and writes the
+    conditional-form.md (and a variants.csv when a `[[$token]]` block exists),
+    deferring the raw/annotated HTML and mapping to a later full ingest. Use this
+    to front-load the customer handoff — hand them the forms to fill while the
+    rest of the pipeline waits. The forms are byte-identical to a full ingest's.
+
+    Use when the user says: "send the customer the conditional form", "what does
+    the customer need to fill in", "prep the intake package", "just give me the
+    forms", "run leg 0 scan".
+
+    Args:
+        input_path: Path to the .docx or .pdf file (absolute, or relative to CWD).
+        output_dir: Directory for output files. Default: workspace/output/
+    """
+    inp = _resolve(input_path)
+    out = _resolve(output_dir)
+    stem = inp.stem
+
+    ok, msg = _run([sys.executable, "-m", _LEG0, "--input", str(inp), "--output-dir", str(out), "--scan"])
+    if not ok:
+        return f"ERROR: Leg 0 scan failed:\n{msg}"
+
+    from velocity_converter.workspace import action_needed_dir
+    action = action_needed_dir(out)
+    lines = [f"Leg 0 scan complete. Hand these to the customer to fill:"]
+    for name in (f"{stem}.conditional-form.md", f"{stem}.variants.csv"):
+        if (action / name).exists():
+            lines.append(f"  {action}/{name}")
+    lines.append(f"\nAfter they return the form(s), run ingest_document on {inp} for the full conversion.")
+    return "\n".join(lines)
+
+
+@mcp.tool()
 def ingest_document(
     input_path: str,
     output_dir: str = "workspace/output",

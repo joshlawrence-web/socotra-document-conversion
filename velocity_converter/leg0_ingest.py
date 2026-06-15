@@ -11,6 +11,7 @@ loop's fields in the mapping and the markers become a #foreach scaffold.
 
 Usage:
     python3 -m velocity_converter.leg0_ingest --input <path.docx|path.pdf> [--output-dir <dir>]
+    python3 -m velocity_converter.leg0_ingest --input <path.docx|path.pdf> --scan [--output-dir <dir>]
     python3 -m velocity_converter.leg0_ingest --parse-conditional-form <filled-form.md> --output-dir <dir>
 
 Outputs (normal mode):
@@ -18,6 +19,11 @@ Outputs (normal mode):
     {stem}.annotated.html     — HTML with {field} → $TBD_field, [[cond]] → $doc.condN
     {stem}.mapping.yaml       — leg2-compatible mapping (pipeline input; enriched in-place by Leg 2)
     {stem}.conditional-form.md — customer-facing conditional form
+
+Outputs (--scan mode — front-loads the customer handoff):
+    {stem}.conditional-form.md — customer-facing conditional form (only)
+    {stem}.variants.csv        — companion N-way variant stub (only when present)
+    (no machine artifacts — the full ingest writes those later)
 
 Output (--parse-conditional-form mode):
     {stem}.conditional-registry.yaml — parsed conditional registry for Leg 4
@@ -31,6 +37,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -1045,6 +1052,98 @@ def write_output(html: str, input_path: Path, output_dir: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# Document parse (shared by full ingest and --scan)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ParseResult:
+    """Everything a document parse yields, before any artifact is written.
+
+    Both the full ingest and the lightweight ``--scan`` mode call
+    :func:`_parse_document` and then choose which of these to persist: full
+    ingest writes the machine artifacts (raw/annotated HTML + mapping) plus the
+    human-fill files; ``--scan`` writes *only* the human-fill files
+    (conditional-form + variants.csv) so the customer can start filling them
+    while the rest of the pipeline is deferred.
+    """
+
+    stem: str
+    raw_html: str
+    annotated: str
+    fields: list[dict] = field(default_factory=list)
+    loops: list[dict] = field(default_factory=list)
+    blocks: list[dict] = field(default_factory=list)
+
+
+def _parse_document(
+    input_path: Path,
+    *,
+    path_map: Path | None = None,
+    registry_path: Path | None = None,
+) -> ParseResult:
+    """Convert + extract a .docx/.pdf into a :class:`ParseResult`, writing nothing.
+
+    This is the full Leg 0 markup parse — convert → fields → conditionals →
+    loops — factored out so the full ingest and ``--scan`` share one code path
+    (a re-parse across two separate invocations is deterministic and cheap, so
+    nothing is cached). The source document is never modified; an optional
+    Leg -1 ``path_map`` is applied to the working HTML before extraction.
+    """
+    suffix = input_path.suffix.lower()
+    raw_html = convert_docx(input_path) if suffix == ".docx" else convert_pdf(input_path)
+
+    # Apply a Leg -1 path-map (bare {leaf} → full accessor) if supplied, so the
+    # author's friendly leaves resolve before extraction.
+    if path_map is not None:
+        raw_html = apply_path_map(raw_html, path_map)
+
+    # Extract + annotate fields, then conditionals.
+    fields = extract_fields(raw_html, registry_path=registry_path)
+    annotated = annotate_fields(raw_html, fields)
+    blocks = extract_conditionals(annotated)
+    annotated = annotate_conditionals(annotated, blocks)
+
+    # Extract [Name]...[/Name] loop sections (after field annotation so loop
+    # membership is decided on $TBD_* token positions). Blocks containing a
+    # loop flip to render: template — this is the only place the conditional
+    # form's `render:` note is set, so --scan must run it too.
+    annotated, fields, loops = extract_loops(annotated, fields, cond_blocks=blocks)
+
+    return ParseResult(
+        stem=input_path.stem,
+        raw_html=raw_html,
+        annotated=annotated,
+        fields=fields,
+        loops=loops,
+        blocks=blocks,
+    )
+
+
+def _write_human_fill_files(blocks: list[dict], stem: str, output_dir: Path) -> list[Path]:
+    """Write the customer-facing hand-fill files for a parse's conditional blocks.
+
+    The conditional form (and its companion variants.csv, when a `[[$token]]`
+    variant block exists) are human-fill files, so they live in the flat
+    ``action-needed/`` space rather than alongside the machine artifacts.
+    Returns the paths written (empty when there are no conditional blocks).
+    """
+    if not blocks:
+        print("No [[conditional]] blocks found — skipping conditional form.")
+        return []
+    written: list[Path] = []
+    form_path = action_needed_file(output_dir, f"{stem}.conditional-form.md")
+    write_conditional_form(blocks, stem, form_path)
+    print(f"Wrote {form_path}")
+    written.append(form_path)
+    if any(b.get("variant") for b in blocks):
+        csv_path = action_needed_file(output_dir, f"{stem}.variants.csv")
+        write_variants_csv_stub(blocks, stem, csv_path)
+        print(f"Wrote {csv_path}")
+        written.append(csv_path)
+    return written
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -1069,6 +1168,13 @@ def main() -> int:
     )
     parser.add_argument("--input", default=None, help="Path to .docx or .pdf file")
     parser.add_argument("--output-dir", default=None, help="Output directory (default: input's parent)")
+    parser.add_argument(
+        "--scan",
+        action="store_true",
+        help="Scan mode: parse the document and emit ONLY the human-fill files "
+        "(conditional-form.md + variants.csv), no machine artifacts — front-loads "
+        "the customer handoff before the full ingest runs.",
+    )
     parser.add_argument(
         "--path-map",
         default=None,
@@ -1155,62 +1261,39 @@ def main() -> int:
     # Find registry for explicit path resolution (walk up from input dir)
     registry_path = _discover_registry(input_path.parent)
 
-    # Convert to raw HTML
-    if suffix == ".docx":
-        raw_html = convert_docx(input_path)
-    else:
-        raw_html = convert_pdf(input_path)
-
-    # Apply a Leg -1 path-map (bare {leaf} → full accessor) if supplied, so the
-    # author's friendly leaves resolve before extraction. Source doc is untouched.
+    # Validate the optional Leg -1 path-map before parsing. Source doc is untouched.
+    path_map: Path | None = None
     if args.path_map:
-        pm = Path(args.path_map)
-        if not pm.exists():
-            print(f"Error: path-map not found: {pm}", file=sys.stderr)
+        path_map = Path(args.path_map)
+        if not path_map.exists():
+            print(f"Error: path-map not found: {path_map}", file=sys.stderr)
             return 1
-        raw_html = apply_path_map(raw_html, pm)
+
+    # Single document parse — shared by --scan and full ingest.
+    pr = _parse_document(input_path, path_map=path_map, registry_path=registry_path)
+
+    # --- Sub-mode: scan — emit ONLY the human-fill files, defer machine artifacts.
+    if args.scan:
+        _write_human_fill_files(pr.blocks, stem, output_dir)
+        return 0
 
     # Write raw HTML
     raw_path = output_dir / f"{stem}.raw.html"
-    raw_path.write_text(raw_html, encoding="utf-8")
+    raw_path.write_text(pr.raw_html, encoding="utf-8")
     print(f"Wrote {raw_path}")
-
-    # Extract + annotate fields
-    fields = extract_fields(raw_html, registry_path=registry_path)
-    annotated = annotate_fields(raw_html, fields)
-
-    # Extract + annotate conditionals
-    blocks = extract_conditionals(annotated)
-    annotated = annotate_conditionals(annotated, blocks)
-
-    # Extract [Name]...[/Name] loop sections (after field annotation so loop
-    # membership is decided on $TBD_* token positions). Blocks containing a
-    # loop flip to render: template (#if guard stays in the template).
-    annotated, fields, loops = extract_loops(annotated, fields, cond_blocks=blocks)
 
     # Write annotated HTML (pipeline input for Leg 1 / Leg 3)
     annotated_path = output_dir / f"{stem}.annotated.html"
-    annotated_path.write_text(annotated, encoding="utf-8")
+    annotated_path.write_text(pr.annotated, encoding="utf-8")
     print(f"Wrote {annotated_path}")
 
     # Write leg2-compatible mapping
     mapping_path = output_dir / f"{stem}.mapping.yaml"
-    write_leg2_mapping(fields, f"{stem}.annotated.html", mapping_path, loops=loops)
+    write_leg2_mapping(pr.fields, f"{stem}.annotated.html", mapping_path, loops=pr.loops)
     print(f"Wrote {mapping_path}")
 
-    # Write conditional form (only if there are conditionals). The form — and its
-    # companion variants.csv — are human-fill files, so they live in the flat
-    # action-needed/ space rather than alongside the machine artifacts.
-    if blocks:
-        form_path = action_needed_file(output_dir, f"{stem}.conditional-form.md")
-        write_conditional_form(blocks, stem, form_path)
-        print(f"Wrote {form_path}")
-        if any(b.get("variant") for b in blocks):
-            csv_path = action_needed_file(output_dir, f"{stem}.variants.csv")
-            write_variants_csv_stub(blocks, stem, csv_path)
-            print(f"Wrote {csv_path}")
-    else:
-        print("No [[conditional]] blocks found — skipping conditional form.")
+    # Write the human-fill files (conditional form + variants.csv when present).
+    _write_human_fill_files(pr.blocks, stem, output_dir)
 
     return 0
 

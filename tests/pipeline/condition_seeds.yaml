@@ -9,7 +9,7 @@
 
 "TestQuoteSummary(quote)":
   1: "quoteNumber != null"
-  2: "jurisdiction != null"
+  2: "endTime != null"
 
 "TestItemCert(segment)":
   1: "item.data.itemInWarrantyAtTakeup != null"

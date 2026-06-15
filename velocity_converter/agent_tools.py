@@ -81,13 +81,13 @@ def validate_inputs(
     errors: list[str] = []
     missing: list[str] = []
 
-    valid_ops = {"leg0", "leg0+leg2+leg3", "leg1", "leg2", "leg2+leg3", "leg1+leg2", "leg3", "leg1+leg2+leg3", "leg4", "leg1+leg2+leg3+leg4", "list_paths"}
+    valid_ops = {"leg0", "leg0_scan", "leg0+leg2+leg3", "leg1", "leg2", "leg2+leg3", "leg1+leg2", "leg3", "leg1+leg2+leg3", "leg4", "leg1+leg2+leg3+leg4", "list_paths"}
     if operation not in valid_ops:
         errors.append(
             f"Invalid operation {operation!r}. Must be one of: {', '.join(sorted(valid_ops))}"
         )
 
-    if operation in ("leg0", "leg0+leg2+leg3"):
+    if operation in ("leg0", "leg0_scan", "leg0+leg2+leg3"):
         if not input_html:
             missing.append("input")
         else:
@@ -194,6 +194,15 @@ def _predict_writes(
     suggested: str | None = None,
 ) -> list[str]:
     writes = []
+    if operation == "leg0_scan" and input_html:
+        stem = Path(input_html).stem
+        base = f"{out_dir}/{stem}"
+        action = action_needed_dir(Path(base))
+        # Scan mode emits ONLY the human-fill files (variants.csv only when present,
+        # so it is not predicted here).
+        writes += [
+            f"{action}/{stem}.conditional-form.md",
+        ]
     if operation in ("leg0", "leg0+leg2+leg3") and input_html:
         stem = Path(input_html).stem
         base = f"{out_dir}/{stem}"
@@ -319,7 +328,7 @@ def build_preflight(
     if operation in ("leg4", "leg1+leg2+leg3+leg4"):
         lines.append(row(f"  Compile   : {'yes' if compile_check else 'no (--compile-check disabled)'}"))
     if input_html:
-        input_label = "Input     " if operation in ("leg0", "leg0+leg2+leg3") else "Input HTML"
+        input_label = "Input     " if operation in ("leg0", "leg0_scan", "leg0+leg2+leg3") else "Input HTML"
         lines.append(row(f"  {input_label}: {input_html}"))
     if mapping:
         mappings = mapping if isinstance(mapping, list) else [mapping]
@@ -389,6 +398,45 @@ def run_leg0(input_path: str, output_dir: str) -> dict:
         (out_p, f"{stem}.annotated.html"),
         (out_p, f"{stem}.mapping.yaml"),
         (action_needed_dir(out_p), f"{stem}.conditional-form.md"),
+    ]
+    artifacts = [
+        str((d / name).relative_to(repo_root))
+        for d, name in artifact_locs
+        if (d / name).exists()
+    ]
+    return {"ok": True, "artifacts": artifacts, "stdout": result.stdout, "stderr": result.stderr}
+
+
+def run_leg0_scan(input_path: str, output_dir: str) -> dict:
+    """Run Leg 0 in --scan mode: emit ONLY the human-fill files.
+
+    Front-loads the customer handoff — the conditional form (and variants.csv
+    when a variant block exists) are produced without the machine artifacts, so
+    the customer can start filling them while the full ingest is deferred.
+    Returns ok/artifacts/stdout/stderr.
+    """
+    repo_root = _find_repo_root()
+    cmd = [
+        sys.executable,
+        "-m",
+        "velocity_converter.leg0_ingest",
+        "--input",
+        str(_resolve_safe(input_path, repo_root)),
+        "--output-dir",
+        str(_resolve_safe(output_dir, repo_root)),
+        "--scan",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(repo_root))
+    if result.returncode != 0:
+        return {"ok": False, "returncode": result.returncode, "stderr": result.stderr}
+
+    stem = _resolve_safe(input_path, repo_root).stem
+    out_p = _resolve_safe(output_dir, repo_root)
+
+    # Scan emits only the human-fill files (projected into action-needed/).
+    artifact_locs = [
+        (action_needed_dir(out_p), f"{stem}.conditional-form.md"),
+        (action_needed_dir(out_p), f"{stem}.variants.csv"),
     ]
     artifacts = [
         str((d / name).relative_to(repo_root))

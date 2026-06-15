@@ -20,6 +20,16 @@ without redeploying the entire product config JAR.
 
 > Full data-flow diagram: [docs/pipeline-dataflow.md](docs/pipeline-dataflow.md)
 
+> **📖 Read these first — orient before acting.** Before changing, debugging, or explaining
+> anything in this repo, skim these three (they're short and save scanning the source):
+> 1. [docs/pipeline-dataflow.md](docs/pipeline-dataflow.md) — end-to-end artifact flow + the
+>    **human-in-the-loop view** (which moments need a person vs. are automated)
+> 2. [docs/leg-internals.md](docs/leg-internals.md) — each leg's internal control flow + invariants
+> 3. [docs/CODEMAP.md](docs/CODEMAP.md) — symbol → line index; jump straight to a function instead
+>    of scanning a 1,000–2,000-line module
+>
+> Always consult the code map / leg internals **before reading a leg's source**.
+
 ### Workspace layout (the user-interaction space)
 
 All authoring lives under `workspace/`, split into three demo-readable buckets:
@@ -39,6 +49,38 @@ The legs always pass the per-stem **machine** dir (`workspace/output/<stem>`) as
 automatically (see `velocity_converter/workspace.py`). `inbox/` is tracked;
 `output/` and `action-needed/` are generated (gitignored). Tests use the same
 split under `tests/pipeline/`.
+
+---
+
+## Front door: one-shot intake (Leg -1 suggest + Leg 0 scan)
+
+When the customer hands over a `.docx`/`.pdf` and you want to give them **everything to
+fill in one package**, run `intake`. It runs Leg -1 *suggest* and Leg 0 *scan* back to
+back on the same document and produces all three human-fill files at once:
+
+```
+python3 -m velocity_converter.agent --yes "RUN_PIPELINE intake input=<path.docx|path.pdf> registry=registry/path-registry.yaml output=workspace/output"
+```
+
+Hand-fill files (all land in `workspace/action-needed/`):
+- `<stem>.path-review.md` — confirm/fix each `Final:` accessor (Leg -1)
+- `<stem>.conditional-form.md` — answer each conditional block (Leg 0)
+- `<stem>.variants.csv` — N-way variant rows, when a `[[$token]]` block exists (Leg 0)
+
+…plus the machine map/audit (`<stem>.path-map.yaml`, `<stem>.path-changes.md`) in
+`workspace/output/<stem>/`. This collapses the two previously-separate human touchpoints
+(path-review after Leg -1, then the conditional form after Leg 0) into a single up-front
+handoff. The scan runs **without** the path-map (path-review isn't filled yet, and the
+forms show the author's bare `{field}` syntax regardless — harmless).
+
+`intake` requires `.docx`/`.pdf` (the scan needs the document); `.html` is rejected. After
+the customer returns the files, continue with `legminus1_apply`, then the full `leg0`
+ingest with `--path-map`, then `--parse-conditional-form`, then Leg 2+3+4.
+
+**Trigger phrases — intake** (not exhaustive — use judgment):
+- "prep the intake package" / "get everything the customer needs to fill"
+- "front-load the customer questions" / "one package for the customer"
+- "run intake" / "start the customer intake"
 
 ---
 
@@ -111,6 +153,25 @@ When the user provides a `.docx` or `.pdf` file, run Leg 0 (then optionally full
 ```
 python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg0 input=<path.docx|path.pdf> output=workspace/output"
 ```
+
+**Leg 0 scan** (front-load the customer handoff — emit ONLY the human-fill files,
+`<stem>.conditional-form.md` + `<stem>.variants.csv` when a `[[$token]]` block exists,
+with **no** machine artifacts). Use this to hand the customer their forms to fill while
+the full ingest is deferred; pair it with Leg -1 *suggest* to deliver `path-review.md` +
+`conditional-form.md` + `variants.csv` as one up-front package:
+```
+python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg0_scan input=<path.docx|path.pdf> output=workspace/output"
+```
+The scan runs the same parse as the full ingest, so the forms it writes are byte-identical
+to the full ingest's. Run the full `leg0` (or `leg0+leg2+leg3`) afterwards to produce the
+machine artifacts — it re-parses (deterministic, cheap) and re-writes the same forms.
+
+**Trigger phrases — Leg 0 scan** (not exhaustive — use judgment):
+- "send the customer the conditional form"
+- "what does the customer need to fill in"
+- "prep the intake package" / "front-load the customer questions"
+- "just give me the forms, not the full conversion"
+- "run leg 0 scan"
 
 **Full customer flow** (doc → HTML → suggested paths → final template):
 ```

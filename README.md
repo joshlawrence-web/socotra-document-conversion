@@ -10,6 +10,9 @@ Update a Socotra document template without redeploying your product config — a
 flowchart LR
   DOC["Word / PDF\n(.docx / .pdf)"]
   HTML[".html mockup"]
+  LegM1["Leg -1\nlegminus1_resolve_paths.py"]
+  PREVIEW[/".path-review.md\nedit Final: lines"/]
+  PATHMAP[".path-map.yaml\nleaf → accessor"]
   Leg0["Leg 0\nleg0_ingest.py"]
   Leg1["Leg 1\nconvert.py"]
   Leg2["Leg 2\nleg2_fill_mapping.py"]
@@ -29,6 +32,11 @@ flowchart LR
   JAVA["SnapshotPlugin.java"]
   L4RPT[/".plugin-report.md\nvalidate paths"/]
   DEPLOY[("socotra-config/\nhot-swap deploy")]
+
+  DOC -.->|"legminus1 (optional,\nbare {leaf})"| LegM1
+  LegM1 --> PREVIEW
+  PREVIEW -->|"legminus1_apply"| PATHMAP
+  PATHMAP -.->|"--path-map"| Leg0
 
   DOC -->|"leg0"| Leg0
   Leg0 --> RAW & ANN & L0MAP & FORM
@@ -238,6 +246,9 @@ If you say *"only fill the high confidence fields"*, the server substitutes only
 - [PIPELINE_EVOLUTION_PLAN.md](.cursor/plans/pipeline-improvements/CompletedPlans/alpha-beta-plan/PIPELINE_EVOLUTION_PLAN.md) — session-by-session runbook and hard constraints
 - [PIPELINE_IMPROVEMENTS_PLAN.md](.cursor/plans/pipeline-improvements/CompletedPlans/alpha-beta-plan/PIPELINE_IMPROVEMENTS_PLAN.md) — phased improvement roadmap
 - [GENERALISATION_AUDIT.md](.cursor/plans/pipeline-improvements/CompletedPlans/alpha-beta-plan/GENERALISATION_AUDIT.md) — CommercialAuto coupling risk report
+- [CODEMAP.md](docs/CODEMAP.md) — per-module symbol index (function → line); read this to jump straight to code instead of scanning whole modules
+- [leg-internals.md](docs/leg-internals.md) — control-flow diagram + invariants for each leg's internals
+- [pipeline-dataflow.md](docs/pipeline-dataflow.md) — end-to-end artifact flow between legs
 - [SCHEMA.md](docs/SCHEMA.md) — artifact schema reference
 - [CONFIG_COVERAGE.md](docs/CONFIG_COVERAGE.md) — Socotra config feature coverage matrix
 
