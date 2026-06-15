@@ -11,6 +11,7 @@ without redeploying the entire product config JAR.
 
 | Leg | Script | Input → Output |
 |-----|--------|----------------|
+| -1 | `legminus1_resolve_paths.py` | doc with bare `{leaf}` → `.path-review.md`, `.path-map.yaml`, `.path-changes.md`, `.resolved.<ext>` |
 | 0 | `leg0_ingest.py` | `.docx`/`.pdf` → `.raw.html`, `.conditional-form.md` |
 | 1 | `convert.py` | `.html` → `.mapping.yaml` |
 | 2 | `leg2_fill_mapping.py` | `.mapping.yaml` → `.mapping.yaml` (enriched), `.review.md` |
@@ -18,6 +19,66 @@ without redeploying the entire product config JAR.
 | 4 | `leg4_generate_plugin.py` | `.mapping.yaml` → `SnapshotPlugin.java` |
 
 > Full data-flow diagram: [docs/pipeline-dataflow.md](docs/pipeline-dataflow.md)
+
+---
+
+## Resolving bare field names to accessor paths (Leg -1)
+
+Authors should not have to know the exact accessor path. Leg -1 lets them write a
+**bare leaf** (`{firstName}`) and resolves it to the full accessor
+(`account.data.firstName`) against the registry, producing a **human-validated
+artifact before Leg 0**. It is **registry-only** — no compiled SDK is consulted,
+so a "resolved" leaf is registry-matched, not JAR-verified (Leg 2 still verifies
+paths against the rendering root downstream).
+
+**Trigger phrases — Leg -1** (not exhaustive — use judgment):
+- "resolve the field names" / "map my fields to accessors"
+- "I wrote plain field names, what are the real paths"
+- "run leg -1" / "leg minus 1"
+- "the author doesn't know the accessor paths"
+
+**Step 1 — suggest** (doc → editable review + machine map + before/after audit):
+```
+python3 -m velocity_converter.agent --yes "RUN_PIPELINE legminus1 input=<path.docx|.pdf|.html> registry=registry/path-registry.yaml output=samples/output"
+```
+
+**Step 2 — the human edits** `samples/output/<stem>/<stem>.path-review.md`: each
+`{leaf}` is a block with a suggested accessor, ranked alternatives, and an editable
+`Final:` line. Ambiguous leaves (multiple registry candidates in the same scope,
+e.g. `{premium}` across coverages) and unmatched leaves have an empty `Final:` for
+the human to fill.
+
+**Step 3 — apply** (parse the corrected review → final map + before/after audit +
+resolved doc copy):
+```
+python3 -m velocity_converter.agent --yes "RUN_PIPELINE legminus1_apply review=samples/output/<stem>/<stem>.path-review.md"
+```
+
+**Then feed Leg 0** — pass the validated map; the source doc is never modified:
+```
+python3 -m velocity_converter.leg0_ingest --input <path.docx|.pdf> --path-map samples/output/<stem>/<stem>.path-map.yaml --output-dir samples/output/<stem>
+```
+(Or run Leg 0 on the `<stem>.resolved.docx` directly — it carries the full
+accessors baked in.)
+
+**Loop scope is resolved automatically** — a `{leaf}` inside `[Item]…[/Item]`
+markers is matched against that exposure's fields (so `{purchasePrice}` → 
+`item.data.purchasePrice`), while the same leaf at document level matches
+policy/quote scope. A leaf used both inside and outside a loop is treated as
+document-level (mirrors Leg 0's loop-field rule).
+
+**Artifacts** (`samples/output/<stem>/`):
+- `<stem>.path-review.md` — editable; one block per leaf, edit the `Final:` line
+- `<stem>.path-map.yaml` — machine map (`leaf → chosen accessor`) consumed by Leg 0
+- `<stem>.path-changes.md` — before/after audit, one row per field, with
+  suggested-vs-human-override provenance (the traceability anchor)
+- `<stem>.resolved.<ext>` — (apply mode) doc copy with full accessors; PDF input
+  yields a resolved `.html` instead with a warning
+
+**Known limits:** charge accessors (`charges.premium.amount`) surface as candidates
+but are not keys in Leg 0's registry lookup — Leg 2 owns charge resolution. DOCX
+placeholders split across Word runs are flattened into the first run on rewrite;
+any placeholder not found in the source is reported, not silently dropped.
 
 ---
 
@@ -266,6 +327,14 @@ python3 tests/pipeline/run_test_pipeline.py
 python3 tools/generate_test_fixtures.py
 ```
 
+**Render preview against a live tenant** (opt-in — requires `.env.ai-documents` at the repo
+root copied from `.env.ai-documents.example`, and the generated SnapshotPlugin already deployed
+to the tenant; fixtures whose reference type has no `AI_DOCUMENTS_REFERENCE_<TYPE>` locator are
+skipped):
+```
+python3 tests/pipeline/run_test_pipeline.py --auto --render-preview
+```
+
 Output lands in `tests/pipeline/output/<stem>/`. Exit code is non-zero on failure.
 
 **What is tested:** Leg 0 → conditional-form fill → parse → Leg 2+3 → Leg 4 (single combined plugin)
@@ -280,6 +349,41 @@ across five fixtures: `TestQuoteSummary(quote)`, `TestItemCert(segment)`, `TestR
 4. Run `python3 tools/generate_test_fixtures.py` to write the DOCX.
 
 > Full details: [tests/pipeline/README.md](tests/pipeline/README.md)
+
+---
+
+## Ad-hoc rendering preview (live tenant)
+
+When the user wants to see how a generated `.final.vm` actually renders against real
+tenant data — without conducting a transaction — use the ad-hoc rendering endpoint
+(`POST {API_URL}document/{tenantLocator}/documents/render`, Socotra Documents API).
+All request fields travel as multipart form-data, including the template source and
+an inline `documentConfig` JSON (self-sufficient — no deployed document config needed).
+
+**Trigger phrases** (not exhaustive — use judgment):
+- "preview the template"
+- "render the template against the tenant"
+- "do an ad-hoc render"
+- "test the template on a real quote/policy"
+- "rendering preview"
+
+**One-off preview:**
+```
+python3 -m velocity_converter.render_preview \
+  --template samples/output/<stem>/<stem>.final.vm \
+  --reference-type quote --reference-locator <locator> \
+  --out samples/output/<stem>/<stem>.preview.pdf
+```
+
+Requires:
+1. The generated `DocumentDataSnapshotPlugin` **deployed to the tenant first** — the
+   renderer executes it to build `$data` (conditionals included).
+2. `.env.ai-documents` at the repo root (copy `.env.ai-documents.example`; gitignored)
+   with `AI_DOCUMENTS_API_URL`, `AI_DOCUMENTS_TENANT_LOCATOR`, `AI_DOCUMENTS_PAT`
+   (JWT or PAT with the `documents` group's `render-external` permission). Process env
+   vars with the same names override the file.
+
+As part of the test suite, use `--render-preview` (see the test-suite section above).
 
 ---
 

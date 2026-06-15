@@ -321,6 +321,40 @@ def extract_fields(html: str, registry_path=None) -> list[dict]:
     return fields
 
 
+def apply_path_map(html: str, path_map_path: Path) -> str:
+    """Rewrite bare ``{leaf}`` → ``{accessor}`` using a Leg -1 path-map.
+
+    The map (``<stem>.path-map.yaml``) is the human-validated leaf→accessor
+    resolution from Leg -1. Occurrence symbols are preserved. Leaves with an
+    empty/absent ``chosen`` are left untouched. Returns the rewritten HTML.
+    """
+    try:
+        data = yaml.safe_load(path_map_path.read_text(encoding="utf-8")) or {}
+    except Exception as exc:  # noqa: BLE001
+        print(f"WARNING: could not read path-map {path_map_path}: {exc}", file=sys.stderr)
+        return html
+    mapping = {
+        f["leaf"]: f["chosen"]
+        for f in (data.get("fields") or [])
+        if f.get("leaf") and f.get("chosen")
+    }
+    if not mapping:
+        return html
+
+    applied: set[str] = set()
+
+    def _repl(m: re.Match) -> str:
+        symbol, name = m.group(1), m.group(2)
+        if name in mapping:
+            applied.add(name)
+            return "{" + symbol + mapping[name] + "}"
+        return m.group(0)
+
+    result = _FIELD_RE.sub(_repl, html)
+    print(f"Applied path-map: rewrote {len(applied)}/{len(mapping)} leaf placeholder(s).")
+    return result
+
+
 def annotate_fields(html: str, fields: list[dict]) -> str:
     """Replace {field_name} → $TBD_field_name in the HTML string.
 
@@ -822,6 +856,12 @@ def main() -> int:
     parser.add_argument("--input", default=None, help="Path to .docx or .pdf file")
     parser.add_argument("--output-dir", default=None, help="Output directory (default: input's parent)")
     parser.add_argument(
+        "--path-map",
+        default=None,
+        metavar="PATH_MAP.yaml",
+        help="Apply a Leg -1 path-map (bare {leaf} → full accessor) before extraction",
+    )
+    parser.add_argument(
         "--parse-conditional-form",
         default=None,
         metavar="FILLED_FORM.md",
@@ -900,6 +940,15 @@ def main() -> int:
         raw_html = convert_docx(input_path)
     else:
         raw_html = convert_pdf(input_path)
+
+    # Apply a Leg -1 path-map (bare {leaf} → full accessor) if supplied, so the
+    # author's friendly leaves resolve before extraction. Source doc is untouched.
+    if args.path_map:
+        pm = Path(args.path_map)
+        if not pm.exists():
+            print(f"Error: path-map not found: {pm}", file=sys.stderr)
+            return 1
+        raw_html = apply_path_map(raw_html, pm)
 
     # Write raw HTML
     raw_path = output_dir / f"{stem}.raw.html"

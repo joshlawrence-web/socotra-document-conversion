@@ -391,6 +391,67 @@ def run_leg0(input_path: str, output_dir: str) -> dict:
     return {"ok": True, "artifacts": artifacts, "stdout": result.stdout, "stderr": result.stderr}
 
 
+def run_legminus1(input_path: str, registry: str, output_dir: str) -> dict:
+    """Run Leg -1 (suggest): bare {leaf} → full accessor review + map + audit.
+
+    Returns ok/artifacts/stdout/stderr. Artifacts land in ``output_dir/<stem>/``.
+    """
+    repo_root = _find_repo_root()
+    cmd = [
+        sys.executable,
+        "-m",
+        "velocity_converter.legminus1_resolve_paths",
+        "--input",
+        str(_resolve_safe(input_path, repo_root)),
+        "--registry",
+        str(_resolve_safe(registry, repo_root)),
+        "--output-dir",
+        str(_resolve_safe(output_dir, repo_root)),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(repo_root))
+    if result.returncode != 0:
+        return {"ok": False, "returncode": result.returncode, "stderr": result.stderr}
+
+    stem = Path(input_path).stem
+    out_p = _resolve_safe(output_dir, repo_root) / stem
+    artifact_names = [
+        f"{stem}.path-review.md",
+        f"{stem}.path-map.yaml",
+        f"{stem}.path-changes.md",
+    ]
+    artifacts = [
+        str((out_p / name).relative_to(repo_root))
+        for name in artifact_names
+        if (out_p / name).exists()
+    ]
+    return {"ok": True, "artifacts": artifacts, "stdout": result.stdout, "stderr": result.stderr}
+
+
+def run_legminus1_apply(review: str, output_dir: str | None = None) -> dict:
+    """Run Leg -1 (apply): parse a human-edited path-review → final map +
+    audit + resolved doc. Returns ok/artifacts/stdout/stderr."""
+    repo_root = _find_repo_root()
+    cmd = [
+        sys.executable,
+        "-m",
+        "velocity_converter.legminus1_resolve_paths",
+        "--parse-path-review",
+        str(_resolve_safe(review, repo_root)),
+    ]
+    if output_dir:
+        cmd += ["--output-dir", str(_resolve_safe(output_dir, repo_root))]
+    result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(repo_root))
+    if result.returncode != 0:
+        return {"ok": False, "returncode": result.returncode, "stderr": result.stderr}
+    out_p = _resolve_safe(output_dir, repo_root) if output_dir else Path(review).resolve().parent
+    artifacts = (
+        [str(f.relative_to(repo_root)) for f in out_p.glob("*")
+         if f.is_file() and (".path-map" in f.name or ".path-changes" in f.name or ".resolved." in f.name)]
+        if out_p.is_dir() else []
+    )
+    return {"ok": True, "artifacts": artifacts, "stdout": result.stdout, "stderr": result.stderr}
+
+
 def run_leg1(
     input_html: str,
     output_dir: str,
