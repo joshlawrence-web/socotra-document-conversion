@@ -11,12 +11,12 @@ Modes::
     # 1. Suggest — doc → editable review + machine map + before/after audit
     python3 -m velocity_converter.legminus1_resolve_paths \
         --input <doc.docx|.pdf|.html> --registry registry/path-registry.yaml \
-        --output-dir samples/output
+        --output-dir workspace/output
 
     # 2. Apply — read the human-corrected review → final map + resolved doc
     python3 -m velocity_converter.legminus1_resolve_paths \
-        --parse-path-review samples/output/<stem>/<stem>.path-review.md \
-        --output-dir samples/output/<stem>
+        --parse-path-review workspace/output/<stem>/<stem>.path-review.md \
+        --output-dir workspace/output/<stem>
 
 Outputs (under ``<output-dir>/<stem>/``):
     <stem>.path-review.md    — editable: one block per leaf, edit the Final line
@@ -46,6 +46,7 @@ from velocity_converter.leg0_ingest import (
     convert_pdf,
 )
 from velocity_converter.models import OCCURRENCE_SYMBOLS
+from velocity_converter.workspace import action_needed_file, machine_dir_for_action_file
 from velocity_converter.registry_match import (
     build_candidate_index,
     match_leaf,
@@ -171,7 +172,8 @@ def write_path_review(results: list[dict], stem: str, source: str,
         "(leave a resolved one as-is), then re-run:",
         "",
         f"    python3 -m velocity_converter.legminus1_resolve_paths \\",
-        f"        --parse-path-review {out.name} --output-dir {out.parent}",
+        f"        --parse-path-review {out.name} "
+        f"--output-dir {machine_dir_for_action_file(out) or out.parent}",
         "",
         f"- Rendering root(s): {roots_str}",
         "- Accessors are **registry-matched only** — NOT verified against the "
@@ -292,7 +294,9 @@ def run_suggest(input_path: Path, registry_path: Path, output_dir: Path) -> int:
     stem = input_path.stem
     out_dir = output_dir / stem
     out_dir.mkdir(parents=True, exist_ok=True)
-    review = out_dir / f"{stem}.path-review.md"
+    # path-review.md is the human-fill artifact → action-needed/; the machine
+    # map + audit stay alongside the rest of the stem's output.
+    review = action_needed_file(out_dir, f"{stem}.path-review.md")
     pmap = out_dir / f"{stem}.path-map.yaml"
     changes = out_dir / f"{stem}.path-changes.md"
 
@@ -423,7 +427,9 @@ def _scope_to_loop(scope: str) -> str | None:
 
 def run_apply(review_path: Path, output_dir: Path | None) -> int:
     entries, input_path, source = parse_path_review(review_path)
-    out_dir = output_dir or review_path.parent
+    # Machine artifacts (path-map, audit, resolved doc) belong in the stem's
+    # output dir, not next to the human-fill review in action-needed/.
+    out_dir = output_dir or machine_dir_for_action_file(review_path) or review_path.parent
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = source.rsplit(".", 1)[0] if "." in source else source
 

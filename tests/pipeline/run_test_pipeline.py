@@ -33,6 +33,8 @@ from pathlib import Path
 import yaml
 
 REPO = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(REPO))
+from velocity_converter.workspace import action_needed_dir  # noqa: E402
 FIXTURES_DIR = REPO / "tests" / "pipeline" / "fixtures"
 OUTPUT_DIR = REPO / "tests" / "pipeline" / "output"
 SEEDS_FILE = REPO / "tests" / "pipeline" / "condition_seeds.yaml"
@@ -143,8 +145,8 @@ def run_fixture(fixture_file: str, auto: bool, seeds_data: dict) -> dict:
         errors.append("Leg 0 failed")
         return {"stem": stem, "mapping_path": None, "success": False, "errors": errors}
 
-    # --- Fill conditional form ---
-    form_path = output_dir / f"{stem}.conditional-form.md"
+    # --- Fill conditional form (lives in the action-needed/ space now) ---
+    form_path = action_needed_dir(output_dir) / f"{stem}.conditional-form.md"
     if not form_path.exists():
         errors.append(f"conditional-form.md not found at {form_path}")
         return {"stem": stem, "mapping_path": None, "success": False, "errors": errors}
@@ -162,7 +164,7 @@ def run_fixture(fixture_file: str, auto: bool, seeds_data: dict) -> dict:
     # CSV the parse step auto-detects is the filled one (auto mode only).
     seed_csv = VARIANT_SEEDS_DIR / f"{stem}.variants.csv"
     if auto and seed_csv.exists():
-        shutil.copyfile(seed_csv, output_dir / f"{stem}.variants.csv")
+        shutil.copyfile(seed_csv, action_needed_dir(output_dir) / f"{stem}.variants.csv")
         print(f"    seeded {seed_csv.name}")
 
     # --- Parse conditional form ---

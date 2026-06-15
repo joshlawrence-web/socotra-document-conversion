@@ -7,7 +7,7 @@ Single-file local web app (stdlib only — no Flask):
     python3 tools/demo_ui.py --port 9000
 
 Flow:
-  1. Drag/drop or pick a .docx/.pdf  -> saved to samples/input/, Leg 0 runs.
+  1. Drag/drop or pick a .docx/.pdf  -> saved to workspace/inbox/, Leg 0 runs.
   2. Output files listed per form    -> double-click any file to open it
      natively (fill the conditional form there).
   3. "Generate template" runs the conditional-form parse (if needed) +
@@ -46,9 +46,10 @@ from velocity_converter.socotra_config_fingerprint import (  # noqa: E402
     compute_source_config_sha256,
     iter_tracked_config_json_files,
 )
+from velocity_converter.workspace import action_needed_dir  # noqa: E402
 
-INPUT_DIR = REPO_ROOT / "samples" / "input"
-OUTPUT_DIR = REPO_ROOT / "samples" / "output"
+INPUT_DIR = REPO_ROOT / "workspace" / "inbox"
+OUTPUT_DIR = REPO_ROOT / "workspace" / "output"
 CONFIG_DIR = REPO_ROOT / "socotra-config"
 PATH_REGISTRY = "registry/path-registry.yaml"
 CUSTOMER_JAR = "build/customer-config.jar"
@@ -70,11 +71,20 @@ def _rel(p: Path) -> str:
 
 def form_status(form_dir: Path) -> dict:
     stem = form_dir.name
-    files = sorted(f for f in form_dir.iterdir() if f.is_file() and not f.name.startswith("."))
+    # Machine artifacts live in form_dir; the human-fill files (conditional form,
+    # variants CSV, path review) live in the flat action-needed/ space. Surface
+    # both in the card so the demo still shows what needs filling.
+    action_dir = action_needed_dir(form_dir)
+    action_files = sorted(action_dir.glob(f"{stem}.*")) if action_dir.is_dir() else []
+    files = sorted(
+        [f for f in form_dir.iterdir() if f.is_file() and not f.name.startswith(".")]
+        + [f for f in action_files if f.is_file()],
+        key=lambda f: f.name,
+    )
     plugin = sorted(form_dir.glob("*DocumentDataSnapshotPluginImpl.java"))
 
     registry_f = form_dir / f"{stem}.conditional-registry.yaml"
-    form_f = form_dir / f"{stem}.conditional-form.md"
+    form_f = action_dir / f"{stem}.conditional-form.md"
     form_stale = (
         registry_f.exists()
         and form_f.exists()
@@ -128,7 +138,7 @@ def do_upload(filename: str, body: bytes) -> dict:
     stem = dest.stem
     result = run_leg0(
         input_path=_rel(dest),
-        output_dir=f"samples/output/{stem}",
+        output_dir=f"workspace/output/{stem}",
     )
     result["stem"] = stem
     result["saved"] = _rel(dest)
@@ -150,11 +160,11 @@ def list_samples() -> list[dict]:
 
 
 def do_ingest(rel_path: str) -> dict:
-    """Run Leg 0 on a file already sitting in samples/input/."""
+    """Run Leg 0 on a file already sitting in workspace/inbox/."""
     src = (REPO_ROOT / rel_path).resolve()
     if not str(src).startswith(str(INPUT_DIR.resolve())) or not src.is_file():
-        return {"ok": False, "error": "File must live in samples/input/."}
-    result = run_leg0(input_path=_rel(src), output_dir=f"samples/output/{src.stem}")
+        return {"ok": False, "error": "File must live in workspace/inbox/."}
+    result = run_leg0(input_path=_rel(src), output_dir=f"workspace/output/{src.stem}")
     result["stem"] = src.stem
     return result
 
@@ -280,7 +290,7 @@ def save_config_file(rel_path: str, content: str) -> dict:
 
 
 def do_reset(stem: str) -> dict:
-    """Delete a form's generated output folder (samples/output/<stem>/)."""
+    """Delete a form's generated output folder (workspace/output/<stem>/)."""
     target = (OUTPUT_DIR / stem).resolve()
     if (
         not stem
@@ -295,7 +305,7 @@ def do_reset(stem: str) -> dict:
 
 def parse_conditional_form(stem: str) -> dict:
     form_dir = OUTPUT_DIR / stem
-    form = form_dir / f"{stem}.conditional-form.md"
+    form = action_needed_dir(form_dir) / f"{stem}.conditional-form.md"
     if not form.exists():
         return {"ok": False, "error": f"{form.name} not found."}
     cmd = [
@@ -332,7 +342,7 @@ def preflight_conditions(stem: str) -> dict | None:
     """Parse the conditional form if the registry is missing or stale. None = fine."""
     form_dir = OUTPUT_DIR / stem
     registry = form_dir / f"{stem}.conditional-registry.yaml"
-    form = form_dir / f"{stem}.conditional-form.md"
+    form = action_needed_dir(form_dir) / f"{stem}.conditional-form.md"
     stale = registry.exists() and form.exists() and form.stat().st_mtime > registry.stat().st_mtime
     if form.exists() and (not registry.exists() or stale):
         r = parse_conditional_form(stem)
@@ -366,7 +376,7 @@ def safe_leg4(stems: "str | list[str]") -> dict:
         for p in d.glob("*DocumentDataSnapshotPluginImpl.java")
     }
     r4 = run_leg4(
-        suggested=[f"samples/output/{s}/{s}.mapping.yaml" for s in stems],
+        suggested=[f"workspace/output/{s}/{s}.mapping.yaml" for s in stems],
         customer_jar=CUSTOMER_JAR,
         datamodel_jar=DATAMODEL_JAR,
         compile_check=True,
@@ -403,7 +413,7 @@ def do_plugin_all(stems: list[str]) -> dict:
 
 def do_generate(stem: str, with_plugin: bool) -> dict:
     form_dir = OUTPUT_DIR / stem
-    mapping = f"samples/output/{stem}/{stem}.mapping.yaml"
+    mapping = f"workspace/output/{stem}/{stem}.mapping.yaml"
     if not (REPO_ROOT / mapping).exists():
         return {"ok": False, "error": f"{stem}.mapping.yaml not found — run ingest first."}
 
@@ -419,7 +429,7 @@ def do_generate(stem: str, with_plugin: bool) -> dict:
         mapping=mapping,
         registry=PATH_REGISTRY,
         out=mapping,
-        review_out=f"samples/output/{stem}/{stem}.review.md",
+        review_out=f"workspace/output/{stem}/{stem}.review.md",
     )
     steps.append({"step": "Leg 2 — suggest paths", **r2})
     if not r2.get("ok"):
@@ -433,8 +443,8 @@ def do_generate(stem: str, with_plugin: bool) -> dict:
 
     r3 = run_leg3(
         suggested=mapping,
-        out=f"samples/output/{stem}/{stem}.final.vm",
-        report_out=f"samples/output/{stem}/{stem}.leg3-report.md",
+        out=f"workspace/output/{stem}/{stem}.final.vm",
+        report_out=f"workspace/output/{stem}/{stem}.leg3-report.md",
     )
     steps.append({"step": "Leg 3 — write final.vm", **r3})
     if not r3.get("ok"):
@@ -456,7 +466,7 @@ def do_generate(stem: str, with_plugin: bool) -> dict:
 
 def do_plugin(stem: str) -> dict:
     form_dir = OUTPUT_DIR / stem
-    mapping = f"samples/output/{stem}/{stem}.mapping.yaml"
+    mapping = f"workspace/output/{stem}/{stem}.mapping.yaml"
     if not (REPO_ROOT / mapping).exists():
         return {"ok": False, "error": f"{stem}.mapping.yaml not found."}
 
@@ -587,7 +597,7 @@ PAGE = r"""<!doctype html>
       linear-gradient(180deg, var(--navy-0), var(--navy-1) 45%, var(--navy-0));
     color: var(--text);
     font: 15px/1.5 -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
-    padding: 32px 28px 120px;
+    padding: 32px 28px calc(34vh + 80px);
   }
   .mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; }
 
@@ -749,7 +759,16 @@ PAGE = r"""<!doctype html>
   #console-title {
     position: sticky; top: 0; padding: 2px 0 6px; background: inherit;
     color: var(--text-dim); letter-spacing: .22em; font-size: 10px; text-transform: uppercase;
+    display: flex; align-items: center; justify-content: space-between; cursor: pointer;
+    user-select: none;
   }
+  #console-toggle {
+    background: none; border: 0; cursor: pointer; padding: 2px 6px;
+    color: var(--teal); font: inherit; letter-spacing: .12em;
+  }
+  #console-toggle:hover { color: var(--chartreuse); }
+  body.console-collapsed #console { max-height: none; overflow: visible; }
+  body.console-collapsed #console .row { display: none; }
   .empty { max-width: 1180px; margin: 40px auto; text-align: center; color: var(--text-dim); }
   .toolbar {
     max-width: 1180px; margin: 26px auto -6px; display: flex; gap: 10px; align-items: center;
@@ -884,7 +903,7 @@ PAGE = r"""<!doctype html>
   <textarea id="preview-ta" spellcheck="false" hidden></textarea>
 </div>
 
-<div id="console"><div id="console-title">Pipeline log</div></div>
+<div id="console"><div id="console-title" onclick="toggleConsole()"><span>Pipeline log</span><button id="console-toggle" type="button" aria-expanded="true">Hide ▾</button></div></div>
 
 <script>
 const board = document.getElementById('board');
@@ -900,6 +919,23 @@ function log(msg, cls) {
   row.innerHTML = `<span class="t mono">${t}</span><span class="${cls || ''}">${msg}</span>`;
   consoleEl.appendChild(row);
   consoleEl.scrollTop = consoleEl.scrollHeight;
+  syncConsolePad();
+}
+
+// Reserve page space equal to the fixed console's real height so the last
+// document card always clears it and the full board is scrollable into view.
+function syncConsolePad() {
+  document.body.style.paddingBottom = (consoleEl.offsetHeight + 40) + 'px';
+}
+window.addEventListener('resize', syncConsolePad);
+
+function toggleConsole() {
+  const collapsed = document.body.classList.toggle('console-collapsed');
+  const btn = document.getElementById('console-toggle');
+  btn.textContent = collapsed ? 'Show ▴' : 'Hide ▾';
+  btn.setAttribute('aria-expanded', String(!collapsed));
+  if (!collapsed) consoleEl.scrollTop = consoleEl.scrollHeight;
+  syncConsolePad();
 }
 
 async function api(path, opts) {
@@ -1039,7 +1075,7 @@ async function ingestSample(path) {
   log(`Ingesting sample <b>${esc(name)}</b> → Leg 0…`);
   const r = await api('/api/ingest', { method: 'POST', body: JSON.stringify({ path }) });
   if (r.ok) {
-    log(`✓ Ingested <b>${esc(r.stem)}</b> → ${(r.artifacts || []).length} artifacts in <span class="mono">samples/output/${esc(r.stem)}/</span>`, 'ok');
+    log(`✓ Ingested <b>${esc(r.stem)}</b> → ${(r.artifacts || []).length} artifacts in <span class="mono">workspace/output/${esc(r.stem)}/</span>`, 'ok');
   } else {
     log(`✗ ${esc(r.error || r.stderr || 'Leg 0 failed')}`, 'err');
   }
@@ -1247,7 +1283,7 @@ board.addEventListener('click', async (e) => {
 
   if (act === 'folder') { openNative(card.dataset.dir); return; }
   if (act === 'reset') {
-    if (!confirm(`Delete all generated outputs for "${stem}"?\n(${card.dataset.dir} — the source document in samples/input/ is kept.)`)) return;
+    if (!confirm(`Delete all generated outputs for "${stem}"?\n(${card.dataset.dir} — the source document in workspace/inbox/ is kept.)`)) return;
     const r = await api('/api/reset', { method: 'POST', body: JSON.stringify({ stem }) });
     log(r.ok ? `Reset <b>${esc(stem)}</b> — output folder removed.` : (r.error || 'Reset failed'), r.ok ? 'warn' : 'err');
     await refresh();
@@ -1286,7 +1322,7 @@ async function uploadFiles(files) {
         body: file,
       });
       if (r.ok) {
-        log(`✓ Ingested <b>${esc(r.stem)}</b> → ${(r.artifacts || []).length} artifacts in <span class="mono">samples/output/${esc(r.stem)}/</span>`, 'ok');
+        log(`✓ Ingested <b>${esc(r.stem)}</b> → ${(r.artifacts || []).length} artifacts in <span class="mono">workspace/output/${esc(r.stem)}/</span>`, 'ok');
         log(`Next: open <span class="mono">${esc(r.stem)}.conditional-form.md</span>, fill the conditions, save — then hit <b>Generate template</b>.`, 'warn');
       } else {
         log(`✗ ${esc(r.error || r.stderr || 'Leg 0 failed')}`, 'err');
@@ -1311,6 +1347,7 @@ log('Pipeline console online.', 'ok');
 refresh();
 loadSamples();
 loadConfig(false);
+syncConsolePad();
 setInterval(refresh, 4000);                     // pick up files edited outside the UI
 setInterval(() => loadConfig(!systemEl.hidden), 8000);  // keep the ⚙ stale dot honest
 </script>

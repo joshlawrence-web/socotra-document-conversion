@@ -36,6 +36,7 @@ from pathlib import Path
 import yaml
 
 from velocity_converter.models import ConditionalRegistry, MappingDoc, validate_contract
+from velocity_converter.workspace import action_needed_file
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1197,13 +1198,15 @@ def main() -> int:
     write_leg2_mapping(fields, f"{stem}.annotated.html", mapping_path, loops=loops)
     print(f"Wrote {mapping_path}")
 
-    # Write conditional form (only if there are conditionals)
+    # Write conditional form (only if there are conditionals). The form — and its
+    # companion variants.csv — are human-fill files, so they live in the flat
+    # action-needed/ space rather than alongside the machine artifacts.
     if blocks:
-        form_path = output_dir / f"{stem}.conditional-form.md"
+        form_path = action_needed_file(output_dir, f"{stem}.conditional-form.md")
         write_conditional_form(blocks, stem, form_path)
         print(f"Wrote {form_path}")
         if any(b.get("variant") for b in blocks):
-            csv_path = output_dir / f"{stem}.variants.csv"
+            csv_path = action_needed_file(output_dir, f"{stem}.variants.csv")
             write_variants_csv_stub(blocks, stem, csv_path)
             print(f"Wrote {csv_path}")
     else:

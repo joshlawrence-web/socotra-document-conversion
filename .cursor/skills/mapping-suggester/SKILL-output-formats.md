@@ -171,8 +171,8 @@ Emit exactly this line, then a blank line, then the Markdown header:
 
 # Mapping review — <stem>
 
-- Source mapping: samples/output/<stem>/<stem>.mapping.yaml
-- Suggested output: samples/output/<stem>/<stem>.suggested.yaml
+- Source mapping: workspace/output/<stem>/<stem>.mapping.yaml
+- Suggested output: workspace/output/<stem>/<stem>.suggested.yaml
 - Path registry:  path-registry.yaml
 - Product:        <product name from registry meta>
 - Generated at:   <ISO-8601 timestamp>
@@ -337,7 +337,7 @@ If Step 0 recorded a MINOR mismatch, prepend one line above the table:
 
 In the same in-memory pass as the YAML / review, build the
 `<stem>.suggester-log.jsonl` records and **append** them to the existing
-log file at `samples/output/<stem>/<stem>.suggester-log.jsonl` (or create
+log file at `workspace/output/<stem>/<stem>.suggester-log.jsonl` (or create
 if absent). The authoritative contract is
 `conformance/schemas/suggester-log.schema.json`.
 
@@ -398,9 +398,9 @@ invoking the derivation helper instead of hand-building records:
 
 ```bash
 python3 -m velocity_converter.emit_telemetry \
-    --suggested samples/output/<stem>/<stem>.suggested.yaml \
+    --suggested workspace/output/<stem>/<stem>.suggested.yaml \
     --registry path-registry.yaml \
-    --log samples/output/<stem>/<stem>.suggester-log.jsonl
+    --log workspace/output/<stem>/<stem>.suggester-log.jsonl
 ```
 
 The helper generates a fresh UUID + timestamp, derives one run's worth

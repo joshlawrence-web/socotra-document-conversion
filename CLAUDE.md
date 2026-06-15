@@ -20,6 +20,26 @@ without redeploying the entire product config JAR.
 
 > Full data-flow diagram: [docs/pipeline-dataflow.md](docs/pipeline-dataflow.md)
 
+### Workspace layout (the user-interaction space)
+
+All authoring lives under `workspace/`, split into three demo-readable buckets:
+
+```
+workspace/
+  inbox/           source docs you feed the pipeline (.docx/.pdf/.html)
+  action-needed/   FLAT — the files a human must hand-edit before continuing:
+                     <stem>.conditional-form.md   (fill the conditions)
+                     <stem>.variants.csv          (fill variant rows, when present)
+                     <stem>.path-review.md        (Leg -1: edit the Final: lines)
+  output/<stem>/   per-stem machine artifacts (.mapping.yaml, .final.vm, reports, .java, …)
+```
+
+The legs always pass the per-stem **machine** dir (`workspace/output/<stem>`) as
+`--output-dir`; the three human-fill files are routed to `workspace/action-needed/`
+automatically (see `velocity_converter/workspace.py`). `inbox/` is tracked;
+`output/` and `action-needed/` are generated (gitignored). Tests use the same
+split under `tests/pipeline/`.
+
 ---
 
 ## Resolving bare field names to accessor paths (Leg -1)
@@ -39,10 +59,10 @@ paths against the rendering root downstream).
 
 **Step 1 — suggest** (doc → editable review + machine map + before/after audit):
 ```
-python3 -m velocity_converter.agent --yes "RUN_PIPELINE legminus1 input=<path.docx|.pdf|.html> registry=registry/path-registry.yaml output=samples/output"
+python3 -m velocity_converter.agent --yes "RUN_PIPELINE legminus1 input=<path.docx|.pdf|.html> registry=registry/path-registry.yaml output=workspace/output"
 ```
 
-**Step 2 — the human edits** `samples/output/<stem>/<stem>.path-review.md`: each
+**Step 2 — the human edits** `workspace/action-needed/<stem>.path-review.md`: each
 `{leaf}` is a block with a suggested accessor, ranked alternatives, and an editable
 `Final:` line. Ambiguous leaves (multiple registry candidates in the same scope,
 e.g. `{premium}` across coverages) and unmatched leaves have an empty `Final:` for
@@ -51,12 +71,12 @@ the human to fill.
 **Step 3 — apply** (parse the corrected review → final map + before/after audit +
 resolved doc copy):
 ```
-python3 -m velocity_converter.agent --yes "RUN_PIPELINE legminus1_apply review=samples/output/<stem>/<stem>.path-review.md"
+python3 -m velocity_converter.agent --yes "RUN_PIPELINE legminus1_apply review=workspace/action-needed/<stem>.path-review.md"
 ```
 
 **Then feed Leg 0** — pass the validated map; the source doc is never modified:
 ```
-python3 -m velocity_converter.leg0_ingest --input <path.docx|.pdf> --path-map samples/output/<stem>/<stem>.path-map.yaml --output-dir samples/output/<stem>
+python3 -m velocity_converter.leg0_ingest --input <path.docx|.pdf> --path-map workspace/output/<stem>/<stem>.path-map.yaml --output-dir workspace/output/<stem>
 ```
 (Or run Leg 0 on the `<stem>.resolved.docx` directly — it carries the full
 accessors baked in.)
@@ -67,12 +87,13 @@ markers is matched against that exposure's fields (so `{purchasePrice}` →
 policy/quote scope. A leaf used both inside and outside a loop is treated as
 document-level (mirrors Leg 0's loop-field rule).
 
-**Artifacts** (`samples/output/<stem>/`):
-- `<stem>.path-review.md` — editable; one block per leaf, edit the `Final:` line
-- `<stem>.path-map.yaml` — machine map (`leaf → chosen accessor`) consumed by Leg 0
-- `<stem>.path-changes.md` — before/after audit, one row per field, with
+**Artifacts:**
+- `workspace/action-needed/<stem>.path-review.md` — **editable (human-fill)**; one
+  block per leaf, edit the `Final:` line
+- `workspace/output/<stem>/<stem>.path-map.yaml` — machine map (`leaf → chosen accessor`) consumed by Leg 0
+- `workspace/output/<stem>/<stem>.path-changes.md` — before/after audit, one row per field, with
   suggested-vs-human-override provenance (the traceability anchor)
-- `<stem>.resolved.<ext>` — (apply mode) doc copy with full accessors; PDF input
+- `workspace/output/<stem>/<stem>.resolved.<ext>` — (apply mode) doc copy with full accessors; PDF input
   yields a resolved `.html` instead with a warning
 
 **Known limits:** charge accessors (`charges.premium.amount`) surface as candidates
@@ -88,17 +109,17 @@ When the user provides a `.docx` or `.pdf` file, run Leg 0 (then optionally full
 
 **Leg 0 only** (convert doc → raw HTML + extract fields + conditional form):
 ```
-python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg0 input=<path.docx|path.pdf> output=samples/output"
+python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg0 input=<path.docx|path.pdf> output=workspace/output"
 ```
 
 **Full customer flow** (doc → HTML → suggested paths → final template):
 ```
-python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg0+leg2+leg3 input=<path.docx|path.pdf> registry=registry/path-registry.yaml output=samples/output"
+python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg0+leg2+leg3 input=<path.docx|path.pdf> registry=registry/path-registry.yaml output=workspace/output"
 ```
 
 **After customer returns the filled conditional form:**
 ```
-python3 -m velocity_converter.leg0_ingest --parse-conditional-form samples/output/<stem>/<stem>.conditional-form.md --output-dir samples/output/<stem>/
+python3 -m velocity_converter.leg0_ingest --parse-conditional-form workspace/action-needed/<stem>.conditional-form.md --output-dir workspace/output/<stem>/
 ```
 
 **Trigger phrases — Leg 0** (not exhaustive — use judgment):
@@ -118,12 +139,15 @@ python3 -m velocity_converter.leg0_ingest --parse-conditional-form samples/outpu
 - "parse the conditional form"
 - "generate the conditional registry"
 
-**Output lands in** `samples/output/<stem>/`:
+**Output lands in** `workspace/output/<stem>/` (machine artifacts):
 - `<stem>.raw.html` — raw converted HTML (pre-annotation)
 - `<stem>.annotated.html` — HTML with `{field}` → `$TBD_field`, `[[cond]]` → `$doc.condN`
 - `<stem>.mapping.yaml` — leg2-compatible mapping (enriched in-place by Leg 2)
-- `<stem>.conditional-form.md` — customer-facing conditional form (send to customer)
 - `<stem>.conditional-registry.yaml` — written after customer returns the form
+
+…and the **human-fill** files land in `workspace/action-needed/` (flat):
+- `<stem>.conditional-form.md` — customer-facing conditional form (send to customer)
+- `<stem>.variants.csv` — companion CSV for `[[$token]]` variant blocks (when present)
 
 **Occurrence symbols** — a `{field}` placeholder may declare its occurrence with a
 prefix: `{field}` required (default), `{$field}` optional, `{+field}` one or more,
@@ -159,12 +183,12 @@ identically for every item.
 
 **ALWAYS run this check before executing Leg 2, Leg 3, or Leg 4 when the source was a Leg 0 run.**
 
-1. Check if `samples/output/<stem>/<stem>.conditional-registry.yaml` exists.
-2. Check if `samples/output/<stem>/<stem>.conditional-form.md` exists.
+1. Check if `workspace/output/<stem>/<stem>.conditional-registry.yaml` exists.
+2. Check if `workspace/action-needed/<stem>.conditional-form.md` exists.
 3. If the **registry does NOT exist** and the **form DOES exist** → parse the conditional form first, then proceed:
 
 ```
-python3 -m velocity_converter.leg0_ingest --parse-conditional-form samples/output/<stem>/<stem>.conditional-form.md --output-dir samples/output/<stem>/
+python3 -m velocity_converter.leg0_ingest --parse-conditional-form workspace/action-needed/<stem>.conditional-form.md --output-dir workspace/output/<stem>/
 ```
 
 4. Only after the registry is written (or confirmed to already exist) → run the requested downstream legs.
@@ -178,9 +202,9 @@ python3 -m velocity_converter.leg0_ingest --parse-conditional-form samples/outpu
 When the user asks to convert HTML files, run the full pipeline. No explanation needed — just do it.
 
 **Steps:**
-1. List `samples/input/` to find available `.html` files
+1. List `workspace/inbox/` to find available `.html` files
 2. If ambiguous which files, ask. If they said "all" or "my files", run all of them.
-3. Run from repo root: `python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg1+leg2+leg3 input=<path> registry=registry/path-registry.yaml output=samples/output"`
+3. Run from repo root: `python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg1+leg2+leg3 input=<path> registry=registry/path-registry.yaml output=workspace/output"`
 4. Report what was written. Tell the user to check `<stem>.leg3-report.md` for any unresolved tokens.
 
 **Trigger phrases** (not exhaustive — use judgment):
@@ -195,7 +219,7 @@ When the user asks to convert HTML files, run the full pipeline. No explanation 
 
 **Leg 1 only** (HTML → `.vm` + `.mapping.yaml`, no path suggestions):
 ```
-python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg1 input=<path> output=samples/output"
+python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg1 input=<path> output=workspace/output"
 ```
 
 **Leg 2 only** (suggest paths for an existing mapping):
@@ -215,10 +239,10 @@ python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg3 suggested=<path.map
 
 **Leg 1+2 only** (HTML → suggested paths, no final write — useful when many tokens are unresolved and need human review first):
 ```
-python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg1+leg2 input=<path> registry=registry/path-registry.yaml output=samples/output"
+python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg1+leg2 input=<path> registry=registry/path-registry.yaml output=workspace/output"
 ```
 
-**Output lands in** `samples/output/<stem>/`:
+**Output lands in** `workspace/output/<stem>/`:
 - Check `<stem>.leg3-report.md` first — it shows what resolved and what still needs work.
 - `<stem>.final.vm` is the production template.
 - `<stem>.review.md` (from Leg 2) is the path-confidence breakdown.
@@ -239,13 +263,13 @@ python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg1+leg2 input=<path> r
 **Leg 4** (`.mapping.yaml` → Java plugin + report):
 ```
 python3 -m velocity_converter.leg4_generate_plugin \
-  --suggested samples/output/<stem>/<stem>.mapping.yaml \
+  --suggested workspace/output/<stem>/<stem>.mapping.yaml \
   --customer-jar build/customer-config.jar \
   --datamodel-jar build/core-datamodel-v1.7.61.jar \
   --compile-check
 ```
 
-Output lands in `samples/output/<stem>/`:
+Output lands in `workspace/output/<stem>/`:
 - `{Product}DocumentDataSnapshotPluginImpl.java` — deploy to `socotra-config/plugins/java/` manually.
 - `<stem>.plugin-report.md` — path validation + compile result.
 
@@ -284,7 +308,7 @@ python3 -m velocity_converter.agent --yes "RUN_PIPELINE list_paths registry=regi
 
 **Write to file:**
 ```
-python3 -m velocity_converter.agent --yes "RUN_PIPELINE list_paths registry=registry/path-registry.yaml out=samples/output/field-catalog.md"
+python3 -m velocity_converter.agent --yes "RUN_PIPELINE list_paths registry=registry/path-registry.yaml out=workspace/output/field-catalog.md"
 ```
 
 **Direct script:**
@@ -370,9 +394,9 @@ an inline `documentConfig` JSON (self-sufficient — no deployed document config
 **One-off preview:**
 ```
 python3 -m velocity_converter.render_preview \
-  --template samples/output/<stem>/<stem>.final.vm \
+  --template workspace/output/<stem>/<stem>.final.vm \
   --reference-type quote --reference-locator <locator> \
-  --out samples/output/<stem>/<stem>.preview.pdf
+  --out workspace/output/<stem>/<stem>.preview.pdf
 ```
 
 Requires:

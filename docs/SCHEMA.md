@@ -662,7 +662,7 @@ the pipeline — the file that gets deployed to Socotra.
 ### Generation rules
 
 - Read from `<stem>.vm` (Leg 1) and `<stem>.suggested.yaml` (Leg 2).
-- Written to `samples/output/<stem>/<stem>.final.vm` (same directory as all
+- Written to `workspace/output/<stem>/<stem>.final.vm` (same directory as all
   other per-document artifacts). The Leg 1 `<stem>.vm` is **never overwritten**.
 - Every `$TBD_<NAME>` token where `data_source` is non-empty is replaced
   with the `data_source` value verbatim.

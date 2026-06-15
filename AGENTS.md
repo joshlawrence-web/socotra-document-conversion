@@ -27,17 +27,17 @@ When the user provides a `.docx` or `.pdf` file, run Leg 0 (then optionally full
 
 **Leg 0 only** (convert doc → raw HTML + extract fields + conditional form):
 ```
-python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg0 input=<path.docx|path.pdf> output=samples/output"
+python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg0 input=<path.docx|path.pdf> output=workspace/output"
 ```
 
 **Full customer flow** (doc → HTML → suggested paths → final template):
 ```
-python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg0+leg2+leg3 input=<path.docx|path.pdf> registry=registry/path-registry.yaml output=samples/output"
+python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg0+leg2+leg3 input=<path.docx|path.pdf> registry=registry/path-registry.yaml output=workspace/output"
 ```
 
 **After customer returns the filled conditional form:**
 ```
-python3 -m velocity_converter.leg0_ingest --parse-conditional-form samples/output/<stem>/<stem>.conditional-form.md --output-dir samples/output/<stem>/
+python3 -m velocity_converter.leg0_ingest --parse-conditional-form workspace/action-needed/<stem>.conditional-form.md --output-dir workspace/output/<stem>/
 ```
 
 **Trigger phrases — Leg 0** (not exhaustive — use judgment):
@@ -57,7 +57,7 @@ python3 -m velocity_converter.leg0_ingest --parse-conditional-form samples/outpu
 - "parse the conditional form"
 - "generate the conditional registry"
 
-**Output lands in** `samples/output/<stem>/`:
+**Output lands in** `workspace/output/<stem>/`:
 - `<stem>.raw.html` — raw converted HTML (pre-annotation)
 - `<stem>.annotated.html` — HTML with `{field}` → `$TBD_field`, `[[cond]]` → `$doc.condN`
 - `<stem>.mapping.yaml` — leg2-compatible mapping (enriched in-place by Leg 2)
@@ -70,12 +70,12 @@ python3 -m velocity_converter.leg0_ingest --parse-conditional-form samples/outpu
 
 **ALWAYS run this check before executing Leg 2, Leg 3, or Leg 4 when the source was a Leg 0 run.**
 
-1. Check if `samples/output/<stem>/<stem>.conditional-registry.yaml` exists.
-2. Check if `samples/output/<stem>/<stem>.conditional-form.md` exists.
+1. Check if `workspace/output/<stem>/<stem>.conditional-registry.yaml` exists.
+2. Check if `workspace/action-needed/<stem>.conditional-form.md` exists.
 3. If the **registry does NOT exist** and the **form DOES exist** → parse the conditional form first, then proceed:
 
 ```
-python3 -m velocity_converter.leg0_ingest --parse-conditional-form samples/output/<stem>/<stem>.conditional-form.md --output-dir samples/output/<stem>/
+python3 -m velocity_converter.leg0_ingest --parse-conditional-form workspace/action-needed/<stem>.conditional-form.md --output-dir workspace/output/<stem>/
 ```
 
 4. Only after the registry is written (or confirmed to already exist) → run the requested downstream legs.
@@ -89,9 +89,9 @@ python3 -m velocity_converter.leg0_ingest --parse-conditional-form samples/outpu
 When the user asks to convert HTML files, run the full pipeline. No explanation needed — just do it.
 
 **Steps:**
-1. List `samples/input/` to find available `.html` files
+1. List `workspace/inbox/` to find available `.html` files
 2. If ambiguous which files, ask. If they said "all" or "my files", run all of them.
-3. Run from repo root: `python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg1+leg2+leg3 input=<path> registry=registry/path-registry.yaml output=samples/output"`
+3. Run from repo root: `python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg1+leg2+leg3 input=<path> registry=registry/path-registry.yaml output=workspace/output"`
 4. Report what was written. Tell the user to check `<stem>.leg3-report.md` for any unresolved tokens.
 
 **Trigger phrases** (not exhaustive — use judgment):
@@ -106,7 +106,7 @@ When the user asks to convert HTML files, run the full pipeline. No explanation 
 
 **Leg 1 only** (HTML → `.vm` + `.mapping.yaml`, no path suggestions):
 ```
-python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg1 input=<path> output=samples/output"
+python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg1 input=<path> output=workspace/output"
 ```
 
 **Leg 2 only** (suggest paths for an existing mapping):
@@ -126,10 +126,10 @@ python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg3 suggested=<path.map
 
 **Leg 1+2 only** (HTML → suggested paths, no final write — useful when many tokens are unresolved and need human review first):
 ```
-python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg1+leg2 input=<path> registry=registry/path-registry.yaml output=samples/output"
+python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg1+leg2 input=<path> registry=registry/path-registry.yaml output=workspace/output"
 ```
 
-**Output lands in** `samples/output/<stem>/`:
+**Output lands in** `workspace/output/<stem>/`:
 - Check `<stem>.leg3-report.md` first — it shows what resolved and what still needs work.
 - `<stem>.final.vm` is the production template.
 - `<stem>.review.md` (from Leg 2) is the path-confidence breakdown.
@@ -150,13 +150,13 @@ python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg1+leg2 input=<path> r
 **Leg 4** (`.mapping.yaml` → Java plugin + report):
 ```
 python3 -m velocity_converter.leg4_generate_plugin \
-  --suggested samples/output/<stem>/<stem>.mapping.yaml \
+  --suggested workspace/output/<stem>/<stem>.mapping.yaml \
   --customer-jar build/customer-config.jar \
   --datamodel-jar build/core-datamodel-v1.7.61.jar \
   --compile-check
 ```
 
-Output lands in `samples/output/<stem>/`:
+Output lands in `workspace/output/<stem>/`:
 - `{Product}DocumentDataSnapshotPluginImpl.java` — deploy to `socotra-config/plugins/java/` manually.
 - `<stem>.plugin-report.md` — path validation + compile result.
 
@@ -195,7 +195,7 @@ python3 -m velocity_converter.agent --yes "RUN_PIPELINE list_paths registry=regi
 
 **Write to file:**
 ```
-python3 -m velocity_converter.agent --yes "RUN_PIPELINE list_paths registry=registry/path-registry.yaml out=samples/output/field-catalog.md"
+python3 -m velocity_converter.agent --yes "RUN_PIPELINE list_paths registry=registry/path-registry.yaml out=workspace/output/field-catalog.md"
 ```
 
 **Direct script:**

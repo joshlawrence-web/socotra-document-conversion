@@ -235,7 +235,7 @@ def write_final_template(
 @mcp.tool()
 def ingest_document(
     input_path: str,
-    output_dir: str = "samples/output",
+    output_dir: str = "workspace/output",
 ) -> str:
     """Ingest a Word (.docx) or PDF document into raw HTML and a conditional form.
 
@@ -250,7 +250,7 @@ def ingest_document(
 
     Args:
         input_path: Path to the .docx or .pdf file (absolute, or relative to CWD).
-        output_dir: Directory for all output files. Default: samples/output/
+        output_dir: Directory for all output files. Default: workspace/output/
     """
     inp = _resolve(input_path)
     out = _resolve(output_dir)
@@ -260,17 +260,19 @@ def ingest_document(
     if not ok:
         return f"ERROR: Leg 0 failed:\n{msg}"
 
-    artifact_names = [
-        f"{stem}.raw.html",
-        f"{stem}.annotated.html",
-        f"{stem}.mapping.yaml",
-        f"{stem}.conditional-form.md",
+    from velocity_converter.workspace import action_needed_dir
+    action = action_needed_dir(out)
+    artifact_locs = [
+        (out, f"{stem}.raw.html"),
+        (out, f"{stem}.annotated.html"),
+        (out, f"{stem}.mapping.yaml"),
+        (action, f"{stem}.conditional-form.md"),
     ]
     lines = [f"Leg 0 complete. Output: {out}"]
-    for name in artifact_names:
-        if (out / name).exists():
+    for d, name in artifact_locs:
+        if (d / name).exists():
             lines.append(f"  {name}")
-    lines.append(f"\nSend {stem}.conditional-form.md to the customer for conditional logic review.")
+    lines.append(f"\nFill {stem}.conditional-form.md (in {action}/) for conditional logic review.")
     lines.append(f"Then run suggest_velocity_paths on {out}/{stem}.mapping.yaml to continue.")
     return "\n".join(lines)
 

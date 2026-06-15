@@ -123,7 +123,7 @@ ingest my Word document at /path/to/policy-form.docx
 list what Velocity paths I can use in my template
 ```
 ```
-generate the snapshot plugin from samples/output/ZenCover/ZenCover.mapping.yaml
+generate the snapshot plugin from workspace/output/ZenCover/ZenCover.mapping.yaml
 ```
 
 Claude figures out which tool to call. You never need to know the tool names or command syntax.
@@ -184,21 +184,21 @@ If you say *"only fill the high confidence fields"*, the server substitutes only
 
    ```bash
    # Full pipeline — HTML → .final.vm (most common)
-   python3 -m velocity_converter.agent "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml output=samples/output"
+   python3 -m velocity_converter.agent "RUN_PIPELINE leg1+leg2+leg3 input=workspace/inbox/Simple-form.html registry=registry/path-registry.yaml output=workspace/output"
 
    # Leg 1 only (HTML → .vm + .mapping.yaml)
-   python3 -m velocity_converter.agent "RUN_PIPELINE leg1 input=samples/input/Simple-form.html output=samples/output"
+   python3 -m velocity_converter.agent "RUN_PIPELINE leg1 input=workspace/inbox/Simple-form.html output=workspace/output"
 
    # Leg 2 only (suggest paths for an existing .mapping.yaml)
-   python3 -m velocity_converter.agent "RUN_PIPELINE leg2 mapping=samples/output/Simple-form/Simple-form.mapping.yaml"
+   python3 -m velocity_converter.agent "RUN_PIPELINE leg2 mapping=workspace/output/Simple-form/Simple-form.mapping.yaml"
 
    # Leg 3 only (write final .vm from a reviewed .mapping.yaml)
-   python3 -m velocity_converter.agent "RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.mapping.yaml"
+   python3 -m velocity_converter.agent "RUN_PIPELINE leg3 suggested=workspace/output/Simple-form/Simple-form.mapping.yaml"
    ```
 
    The orchestrator shows a preflight summary and requires you to type `PROCEED` before running. Add `--yes` to skip confirmation in CI/headless use.
 
-3. **Review the report** — open `<stem>.leg3-report.md` in `samples/output/<stem>/` to see what resolved and what remains as `$TBD_*`. The `.final.vm` is the production template.
+3. **Review the report** — open `<stem>.leg3-report.md` in `workspace/output/<stem>/` to see what resolved and what remains as `$TBD_*`. The `.final.vm` is the production template.
 
 > **Note:** You can also invoke Leg 1 and Leg 2 directly (see their `SKILL.md` files under `.cursor/skills/`), but the orchestrator is the recommended entry point.
 
@@ -224,8 +224,9 @@ If you say *"only fill the high confidence fields"*, the server substitutes only
 | `velocity_converter/` | Installable pipeline package (`agent.py`, `leg2_fill_mapping.py`, `leg3_substitute.py`, …) |
 | `tools/` | Dev tooling (`generate_test_fixtures.py`) |
 | `.cursor/skills/` | Leg 1 and Leg 2 agent runbooks (docs only — code lives in the package) |
-| `samples/input/` | Sample HTML mockups (`Simple-form`, `Additional-form`, `Policy-summary`) |
-| `samples/output/` | Generated pipeline outputs (gitignored — run the pipeline to populate) |
+| `workspace/inbox/` | Source docs you feed the pipeline (`.docx`/`.pdf`/`.html`) |
+| `workspace/action-needed/` | Human-fill files awaiting a person — conditional forms, variant CSVs, path reviews (gitignored) |
+| `workspace/output/` | Per-stem generated pipeline outputs (gitignored — run the pipeline to populate) |
 | `registry/` | Pre-generated path registry plus Leg 2 config (`terminology.yaml`, `skill-lessons.yaml`) |
 | `socotra-config/` | Bundled sample Socotra config — drives the demo registry |
 | `conformance/` | Adversarial conformance fixture suite + runner |

@@ -5,13 +5,13 @@ Parses a structured RUN_PIPELINE invocation, validates inputs, shows a preflight
 summary, requires PROCEED confirmation, then dispatches to Leg 1 / Leg 2 / Leg 3 / Leg 4 scripts.
 
 Usage:
-    python3 -m velocity_converter.agent "RUN_PIPELINE leg1 input=samples/input/Simple-form.html"
-    python3 -m velocity_converter.agent "RUN_PIPELINE leg1+leg2 input=samples/input/Simple-form.html"
-    python3 -m velocity_converter.agent "RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.mapping.yaml"
-    python3 -m velocity_converter.agent "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml"
-    python3 -m velocity_converter.agent "RUN_PIPELINE leg4 suggested=samples/output/Simple-form/Simple-form.mapping.yaml"
-    python3 -m velocity_converter.agent "RUN_PIPELINE leg1+leg2+leg3+leg4 input=samples/input/Simple-form.html registry=registry/path-registry.yaml"
-    python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg1+leg2+leg3+leg4 input=samples/input/Simple-form.html"
+    python3 -m velocity_converter.agent "RUN_PIPELINE leg1 input=workspace/inbox/Simple-form.html"
+    python3 -m velocity_converter.agent "RUN_PIPELINE leg1+leg2 input=workspace/inbox/Simple-form.html"
+    python3 -m velocity_converter.agent "RUN_PIPELINE leg3 suggested=workspace/output/Simple-form/Simple-form.mapping.yaml"
+    python3 -m velocity_converter.agent "RUN_PIPELINE leg1+leg2+leg3 input=workspace/inbox/Simple-form.html registry=registry/path-registry.yaml"
+    python3 -m velocity_converter.agent "RUN_PIPELINE leg4 suggested=workspace/output/Simple-form/Simple-form.mapping.yaml"
+    python3 -m velocity_converter.agent "RUN_PIPELINE leg1+leg2+leg3+leg4 input=workspace/inbox/Simple-form.html registry=registry/path-registry.yaml"
+    python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg1+leg2+leg3+leg4 input=workspace/inbox/Simple-form.html"
     python3 -m velocity_converter.agent          # interactive stdin mode
 """
 
@@ -38,18 +38,18 @@ from velocity_converter.agent_tools import (
 REFUSAL = """\
 This agent requires an explicit invocation token. Examples:
 
-  RUN_PIPELINE leg0 input=samples/input/policy-form.docx output=samples/output
-  RUN_PIPELINE leg0+leg2+leg3 input=samples/input/policy-form.docx registry=registry/path-registry.yaml output=samples/output
-  RUN_PIPELINE leg1 input=samples/input/Simple-form.html output=samples/output
-  RUN_PIPELINE leg2 mapping=samples/output/Simple-form/Simple-form.mapping.yaml
-  RUN_PIPELINE leg2+leg3 mapping=samples/output/Simple-form/Simple-form.mapping.yaml registry=registry/path-registry.yaml
-  RUN_PIPELINE leg1+leg2 input=samples/input/Simple-form.html registry=registry/path-registry.yaml
-  RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.mapping.yaml
-  RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml
-  RUN_PIPELINE leg4 suggested=samples/output/Simple-form/Simple-form.mapping.yaml
-  RUN_PIPELINE leg1+leg2+leg3+leg4 input=samples/input/Simple-form.html registry=registry/path-registry.yaml
+  RUN_PIPELINE leg0 input=workspace/inbox/policy-form.docx output=workspace/output
+  RUN_PIPELINE leg0+leg2+leg3 input=workspace/inbox/policy-form.docx registry=registry/path-registry.yaml output=workspace/output
+  RUN_PIPELINE leg1 input=workspace/inbox/Simple-form.html output=workspace/output
+  RUN_PIPELINE leg2 mapping=workspace/output/Simple-form/Simple-form.mapping.yaml
+  RUN_PIPELINE leg2+leg3 mapping=workspace/output/Simple-form/Simple-form.mapping.yaml registry=registry/path-registry.yaml
+  RUN_PIPELINE leg1+leg2 input=workspace/inbox/Simple-form.html registry=registry/path-registry.yaml
+  RUN_PIPELINE leg3 suggested=workspace/output/Simple-form/Simple-form.mapping.yaml
+  RUN_PIPELINE leg1+leg2+leg3 input=workspace/inbox/Simple-form.html registry=registry/path-registry.yaml
+  RUN_PIPELINE leg4 suggested=workspace/output/Simple-form/Simple-form.mapping.yaml
+  RUN_PIPELINE leg1+leg2+leg3+leg4 input=workspace/inbox/Simple-form.html registry=registry/path-registry.yaml
   RUN_PIPELINE list_paths registry=registry/path-registry.yaml
-  RUN_PIPELINE list_paths registry=registry/path-registry.yaml out=samples/output/field-catalog.md
+  RUN_PIPELINE list_paths registry=registry/path-registry.yaml out=workspace/output/field-catalog.md
 
 Required per operation:
   legminus1          : input=<file.docx|file.pdf|file.html>
@@ -167,7 +167,7 @@ def run(invocation: str, auto_yes: bool) -> int:
     input_html = parsed.get("input") or parsed.get("input_html")
     mapping = parsed.get("mapping")
     registry = parsed.get("registry") or "registry/path-registry.yaml"
-    output = parsed.get("output") or "samples/output"
+    output = parsed.get("output") or "workspace/output"
     terminology = parsed.get("terminology")
     suggested = parsed.get("suggested")
     compile_check_raw = parsed.get("compile_check", "true")
@@ -208,7 +208,7 @@ def run(invocation: str, auto_yes: bool) -> int:
 
     # --- list_paths fast-path (no preflight / PROCEED needed) ---
     if operation == "list_paths":
-        out_path = parsed.get("out") or "samples/output/field-catalog.md"
+        out_path = parsed.get("out") or "workspace/output/field-catalog.md"
         try:
             run_list_paths(registry_path=registry, out_path=out_path)
         except Exception as exc:
@@ -496,7 +496,7 @@ def guided_mode() -> str:
 
     # Input HTML (leg1 / leg1+leg2 / combos)
     if operation in ("leg1", "leg1+leg2", "leg1+leg2+leg3", "leg1+leg2+leg3+leg4"):
-        candidates = sorted((repo_root / "samples" / "input").glob("*.html"))
+        candidates = sorted((repo_root / "workspace" / "inbox").glob("*.html"))
         if candidates:
             print("\nAvailable input files:")
             for i, c in enumerate(candidates, 1):
@@ -512,7 +512,7 @@ def guided_mode() -> str:
 
     # Mapping (leg2 / leg2+leg3)
     if operation in ("leg2", "leg2+leg3"):
-        candidates = sorted((repo_root / "samples" / "output").rglob("*.mapping.yaml"))
+        candidates = sorted((repo_root / "workspace" / "output").rglob("*.mapping.yaml"))
         if candidates:
             print("\nAvailable mapping files:")
             for i, c in enumerate(candidates, 1):
@@ -529,8 +529,8 @@ def guided_mode() -> str:
     # Suggested (leg3 / leg4 standalone only)
     if operation in ("leg3", "leg4"):
         candidates = sorted(
-            list((repo_root / "samples" / "output").rglob("*.mapping.yaml")) +
-            list((repo_root / "samples" / "output").rglob("*.suggested.yaml"))
+            list((repo_root / "workspace" / "output").rglob("*.mapping.yaml")) +
+            list((repo_root / "workspace" / "output").rglob("*.suggested.yaml"))
         )
         if candidates:
             print("\nAvailable mapping files:")
@@ -554,8 +554,8 @@ def guided_mode() -> str:
             parts.append("compile_check=false")
 
     # Optional overrides
-    output = _ask("\nOutput directory", default="samples/output")
-    if output != "samples/output":
+    output = _ask("\nOutput directory", default="workspace/output")
+    if output != "workspace/output":
         parts.append(f"output={output}")
 
     registry = _ask("Registry path", default="registry/path-registry.yaml")

@@ -41,6 +41,7 @@ from velocity_converter.models import (
     block_key,
     validate_contract,
 )
+from velocity_converter.workspace import action_needed_dir
 
 # Shared SDK-introspection helpers (Leg 2 plan P1.1 — single source of JAR truth).
 from velocity_converter.sdk_introspect import (
@@ -1578,7 +1579,7 @@ def write_report(
         report_out_dir = report_path.parent
         n_conds = _count_annotated_conditionals(report_out_dir, stem)
         if n_conds > 0:
-            form_path = report_out_dir / f"{stem}.conditional-form.md"
+            form_path = action_needed_dir(report_out_dir) / f"{stem}.conditional-form.md"
             if form_path.exists():
                 fix_cmd = (
                     f"python3 -m velocity_converter.leg0_ingest "
@@ -1851,7 +1852,7 @@ def _process_form(
     if not cond_yaml.exists():
         n_conds = _count_annotated_conditionals(form_dir, stem)
         if n_conds > 0:
-            form_path = form_dir / f"{stem}.conditional-form.md"
+            form_path = action_needed_dir(form_dir) / f"{stem}.conditional-form.md"
             if form_path.exists():
                 fix_cmd = (
                     f"python3 -m velocity_converter.leg0_ingest "

@@ -31,9 +31,9 @@ from velocity_converter.agent import parse_invocation  # noqa: E402
             {"input": "foo.html", "registry": "r.yaml"},
         ),
         (
-            "RUN_PIPELINE leg0 input=form.docx output=samples/output",
+            "RUN_PIPELINE leg0 input=form.docx output=workspace/output",
             "leg0",
-            {"input": "form.docx", "output": "samples/output"},
+            {"input": "form.docx", "output": "workspace/output"},
         ),
         (
             "RUN_PIPELINE list_paths registry=r.yaml",

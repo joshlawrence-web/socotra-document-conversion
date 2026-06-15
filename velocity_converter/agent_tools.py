@@ -8,6 +8,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+from velocity_converter.workspace import (
+    action_needed_dir,
+    machine_dir_for_action_file,
+)
+
 _INTERMEDIATE_SUFFIXES = frozenset({
     ".mapping.yaml",
     ".review.md",
@@ -164,7 +169,7 @@ def validate_inputs(
     return {"ok": True}
 
 
-def list_candidates(output_dir: str = "samples/output") -> list[str]:
+def list_candidates(output_dir: str = "workspace/output") -> list[str]:
     """Find all *.mapping.yaml files under output_dir, sorted by mtime descending."""
     repo_root = _find_repo_root()
     try:
@@ -192,11 +197,12 @@ def _predict_writes(
     if operation in ("leg0", "leg0+leg2+leg3") and input_html:
         stem = Path(input_html).stem
         base = f"{out_dir}/{stem}"
+        action = action_needed_dir(Path(base))
         writes += [
             f"{base}/{stem}.raw.html",
             f"{base}/{stem}.annotated.html",
             f"{base}/{stem}.mapping.yaml",
-            f"{base}/{stem}.conditional-form.md",
+            f"{action}/{stem}.conditional-form.md",
         ]
     if operation in ("leg1", "leg1+leg2", "leg1+leg2+leg3", "leg1+leg2+leg3+leg4") and input_html:
         stem = Path(input_html).stem
@@ -297,7 +303,7 @@ def build_preflight(
 ) -> str:
     """Return the formatted preflight block as a string. Does not write anything."""
     reg_path = registry or "registry/path-registry.yaml"
-    out_dir = output or "samples/output"
+    out_dir = output or "workspace/output"
 
     W = 54  # inner width (between ║ borders)
 
@@ -377,16 +383,17 @@ def run_leg0(input_path: str, output_dir: str) -> dict:
     stem = input_p.stem
     out_p = _resolve_safe(output_dir, repo_root)
 
-    artifact_names = [
-        f"{stem}.raw.html",
-        f"{stem}.annotated.html",
-        f"{stem}.mapping.yaml",
-        f"{stem}.conditional-form.md",
+    # (dir, filename) pairs — the conditional form is projected into action-needed/.
+    artifact_locs = [
+        (out_p, f"{stem}.raw.html"),
+        (out_p, f"{stem}.annotated.html"),
+        (out_p, f"{stem}.mapping.yaml"),
+        (action_needed_dir(out_p), f"{stem}.conditional-form.md"),
     ]
     artifacts = [
-        str((out_p / name).relative_to(repo_root))
-        for name in artifact_names
-        if (out_p / name).exists()
+        str((d / name).relative_to(repo_root))
+        for d, name in artifact_locs
+        if (d / name).exists()
     ]
     return {"ok": True, "artifacts": artifacts, "stdout": result.stdout, "stderr": result.stderr}
 
@@ -414,15 +421,16 @@ def run_legminus1(input_path: str, registry: str, output_dir: str) -> dict:
 
     stem = Path(input_path).stem
     out_p = _resolve_safe(output_dir, repo_root) / stem
-    artifact_names = [
-        f"{stem}.path-review.md",
-        f"{stem}.path-map.yaml",
-        f"{stem}.path-changes.md",
+    # path-review.md is projected into action-needed/; map + audit stay in out_p.
+    artifact_locs = [
+        (action_needed_dir(out_p), f"{stem}.path-review.md"),
+        (out_p, f"{stem}.path-map.yaml"),
+        (out_p, f"{stem}.path-changes.md"),
     ]
     artifacts = [
-        str((out_p / name).relative_to(repo_root))
-        for name in artifact_names
-        if (out_p / name).exists()
+        str((d / name).relative_to(repo_root))
+        for d, name in artifact_locs
+        if (d / name).exists()
     ]
     return {"ok": True, "artifacts": artifacts, "stdout": result.stdout, "stderr": result.stderr}
 
@@ -443,7 +451,11 @@ def run_legminus1_apply(review: str, output_dir: str | None = None) -> dict:
     result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(repo_root))
     if result.returncode != 0:
         return {"ok": False, "returncode": result.returncode, "stderr": result.stderr}
-    out_p = _resolve_safe(output_dir, repo_root) if output_dir else Path(review).resolve().parent
+    if output_dir:
+        out_p = _resolve_safe(output_dir, repo_root)
+    else:
+        review_abs = Path(review) if Path(review).is_absolute() else _resolve_safe(review, repo_root)
+        out_p = machine_dir_for_action_file(review_abs) or review_abs.parent
     artifacts = (
         [str(f.relative_to(repo_root)) for f in out_p.glob("*")
          if f.is_file() and (".path-map" in f.name or ".path-changes" in f.name or ".resolved." in f.name)]
@@ -582,7 +594,7 @@ def _warn_missing_cond_registry(suggested_path: Path) -> None:
     n = len(set(re.findall(r'\$doc\.cond\d+', annotated.read_text(encoding="utf-8"))))
     if n == 0:
         return
-    form = form_dir / f"{stem}.conditional-form.md"
+    form = action_needed_dir(form_dir) / f"{stem}.conditional-form.md"
     if form.exists():
         fix = (
             f"python3 -m velocity_converter.leg0_ingest "
