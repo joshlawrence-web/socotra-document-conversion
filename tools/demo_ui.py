@@ -13,7 +13,7 @@ and the pipeline gives back three fill-in-the-blank files.
 Flow (four stages, left to right):
   1. Intake    — drop a .docx/.pdf → Leg -1 (suggest) + Leg 0 (scan) produce the
                  THREE human-fill files: <stem>.path-review.md,
-                 <stem>.conditional-form.md, <stem>.variants.csv.
+                 <stem>.variants.csv.
   2. Fill      — click any fill file to edit it right in the browser:
                  confirm the Final: accessor lines, write the Condition: lines,
                  fill the variant rows. Save without leaving the page.
@@ -21,7 +21,7 @@ Flow (four stages, left to right):
                  Leg 0 ingest WITH that path-map → the machine .mapping.yaml.
                  Human fill files are snapshotted/restored across the re-ingest so
                  customer answers are never clobbered.
-  4. Generate  — parse the conditional form (+ variants) → registry, then Leg 2+3
+  4. Generate  — parse the variants.csv → registry, then Leg 2+3
                  → .final.vm; optional toggle also runs Leg 4 (snapshot plugin).
 """
 
@@ -71,7 +71,7 @@ DATAMODEL_JAR = "build/core-datamodel-v1.7.61.jar"
 ALLOWED_UPLOAD_SUFFIXES = {".docx", ".pdf"}
 
 # The three customer-facing hand-fill files (suffixes), in fill order.
-FILL_SUFFIXES = (".path-review.md", ".conditional-form.md", ".variants.csv")
+FILL_SUFFIXES = (".path-review.md", ".variants.csv")
 
 
 # --------------------------------------------------------------------------
@@ -104,7 +104,7 @@ def _count_blank(path: Path, pattern: str) -> int:
 def form_status(form_dir: Path) -> dict:
     stem = form_dir.name
     # Machine artifacts live in form_dir; the human-fill files (path review,
-    # conditional form, variants CSV) live in the flat action-needed/ space.
+    # variants CSV) live in the flat action-needed/ space.
     # Surface both in the card so the demo shows everything that needs filling.
     action_dir = action_needed_dir(form_dir)
     action_files = sorted(action_dir.glob(f"{stem}.*")) if action_dir.is_dir() else []
@@ -119,16 +119,17 @@ def form_status(form_dir: Path) -> dict:
     variants_f = action_dir / f"{stem}.variants.csv"
     pathmap_f = form_dir / f"{stem}.path-map.yaml"
     registry_f = form_dir / f"{stem}.conditional-registry.yaml"
-    form_f = action_dir / f"{stem}.conditional-form.md"
+    sidecar_f = form_dir / f"{stem}.conditional-blocks.yaml"
     mapping_f = form_dir / f"{stem}.mapping.yaml"
 
     # Leg -1: how many Final: accessor lines the human still has to fill.
     path_unfilled = _count_blank(review_f, r"^Final:\s*$")
 
+    # variants.csv edited after the registry it produced → conditionals are stale.
     form_stale = (
         registry_f.exists()
-        and form_f.exists()
-        and form_f.stat().st_mtime > registry_f.stat().st_mtime
+        and variants_f.exists()
+        and variants_f.stat().st_mtime > registry_f.stat().st_mtime
     )
     # path-review edited after the ingest that consumed it → paths are stale.
     paths_stale = (
@@ -136,12 +137,14 @@ def form_status(form_dir: Path) -> dict:
         and review_f.exists()
         and review_f.stat().st_mtime > pathmap_f.stat().st_mtime
     )
-    # Count conditions the customer still has to fill — from the form when it is
-    # the freshest source of truth, otherwise from the parsed registry.
-    if form_f.exists() and (not registry_f.exists() or form_stale):
-        unfilled = _count_blank(form_f, r"^Condition:\s*$")
-    elif registry_f.exists():
+    # Count conditional blocks the customer still has to fill. Before parse, every
+    # block in the machine sidecar counts as outstanding; after parse, only the
+    # registry blocks left without a condition.
+    if registry_f.exists() and not form_stale:
         unfilled = len(unfilled_conditions(stem))
+    elif sidecar_f.exists():
+        import yaml
+        unfilled = len(yaml.safe_load(sidecar_f.read_text(encoding="utf-8")) or [])
     else:
         unfilled = 0
 
@@ -158,7 +161,8 @@ def form_status(form_dir: Path) -> dict:
         "pathsStale": paths_stale,
         "variants": variants_f.exists(),
         "ingested": mapping_f.exists(),
-        "conditionalForm": form_f.exists(),
+        # JS-facing flag: the single conditional fill file is now variants.csv.
+        "conditionalForm": variants_f.exists(),
         "registry": registry_f.exists(),
         "template": (form_dir / f"{stem}.final.vm").exists(),
         "plugin": bool(plugin),
@@ -177,8 +181,7 @@ def list_forms() -> list[dict]:
 def do_intake(rel_path: str) -> dict:
     """Run the intake front door: Leg -1 (suggest) + Leg 0 (scan).
 
-    Produces the three human-fill files at once — path-review.md,
-    conditional-form.md and variants.csv (when a [[$token]] block exists).
+    Produces the two human-fill files at once — path-review.md and variants.csv.
     Mirrors the ``RUN_PIPELINE intake`` operation in agent.py.
     """
     src = (REPO_ROOT / rel_path).resolve()
@@ -197,7 +200,7 @@ def do_intake(rel_path: str) -> dict:
     if not r1.get("ok"):
         return {"ok": False, "error": f"Leg -1 (suggest) failed.\n{r1.get('stderr', '')}", "stem": stem}
 
-    # Step 2 — Leg 0 scan: conditional form (+ variants.csv) only, no machine
+    # Step 2 — Leg 0 scan: the single variants.csv only, no machine
     # artifacts. Runs without a path-map (path-review isn't filled yet).
     r2 = run_leg0_scan(input_path=_rel(src), output_dir=f"workspace/output/{stem}")
     if not r2.get("ok"):
@@ -246,7 +249,7 @@ def do_resolve_ingest(stem: str) -> dict:
 
     Leg -1 apply parses the human-edited path-review.md into a path-map. The full
     Leg 0 ingest is then run WITH that path-map so bare {leaf} placeholders bake
-    into full accessors in the .mapping.yaml. The conditional-form.md and
+    into full accessors in the .mapping.yaml. The variants.csv and
     variants.csv are snapshotted before the ingest and restored after, because
     Leg 0 rewrites them as blank stubs (it would otherwise wipe customer answers).
     """
@@ -275,7 +278,6 @@ def do_resolve_ingest(stem: str) -> dict:
 
     # --- snapshot the human-fill forms so the ingest can't clobber answers ---
     fill_files = [
-        action_dir / f"{stem}.conditional-form.md",
         action_dir / f"{stem}.variants.csv",
     ]
     snapshot = {p: p.read_bytes() for p in fill_files if p.exists()}
@@ -332,7 +334,7 @@ def save_fill_file(rel_path: str, content: str) -> dict:
         or not target.is_file()
         or not target.name.endswith(FILL_SUFFIXES)
     ):
-        return {"ok": False, "error": "Only the path-review / conditional-form / variants fill files can be edited here."}
+        return {"ok": False, "error": "Only the path-review / variants fill files can be edited here."}
     target.write_text(content, encoding="utf-8")
     return {"ok": True}
 
@@ -458,14 +460,15 @@ def do_reset(stem: str) -> dict:
     return {"ok": True}
 
 
-def parse_conditional_form(stem: str) -> dict:
+def parse_variants(stem: str) -> dict:
+    """Parse the filled variants.csv (+ sidecar) → conditional-registry.yaml."""
     form_dir = OUTPUT_DIR / stem
-    form = action_needed_dir(form_dir) / f"{stem}.conditional-form.md"
-    if not form.exists():
-        return {"ok": False, "error": f"{form.name} not found."}
+    csv_path = action_needed_dir(form_dir) / f"{stem}.variants.csv"
+    if not csv_path.exists():
+        return {"ok": False, "error": f"{csv_path.name} not found."}
     cmd = [
         sys.executable, "-m", "velocity_converter.leg0_ingest",
-        "--parse-conditional-form", str(form),
+        "--parse-variants-csv", str(csv_path),
         "--output-dir", str(form_dir),
     ]
     r = subprocess.run(cmd, capture_output=True, text=True, cwd=str(REPO_ROOT))
@@ -477,8 +480,15 @@ def parse_conditional_form(stem: str) -> dict:
     }
 
 
-def unfilled_conditions(stem: str) -> list[int]:
-    """Return ids of registry conditions left blank / placeholder by the customer."""
+def unfilled_conditions(stem: str) -> list:
+    """Return keys of registry blocks left without a usable condition.
+
+    Variants-only: every block carries its condition in ``variants`` (binary/
+    variant → when+text; template → the when) or legacy ``conditions[]``. The CSV
+    parser already rejects an unfilled block (the registry wouldn't be written),
+    so this only catches a hand-edited/legacy registry with a genuinely empty
+    block.
+    """
     registry = OUTPUT_DIR / stem / f"{stem}.conditional-registry.yaml"
     if not registry.exists():
         return []
@@ -487,35 +497,23 @@ def unfilled_conditions(stem: str) -> list[int]:
     entries = yaml.safe_load(registry.read_text(encoding="utf-8")) or []
     bad = []
     for e in entries:
-        # Variant blocks carry no Condition: line — their selection lives in the
-        # sibling variants.csv (variants/default), so an empty `conditions` here
-        # is expected, not unfilled. Only binary/template blocks need a condition.
-        if e.get("variant"):
+        if e.get("variants") or e.get("conditions"):
             continue
-        conds = [str(c).strip() for c in (e.get("conditions") or [])]
-        if not conds or any(c in ("", "---", "TBD", "None") for c in conds):
-            bad.append(e.get("id"))
+        bad.append(e.get("key") or e.get("id"))
     return bad
 
 
 def preflight_conditions(stem: str) -> dict | None:
-    """Parse the conditional form if the registry is missing or stale. None = fine."""
+    """Parse the variants.csv if the registry is missing or stale. None = fine."""
     form_dir = OUTPUT_DIR / stem
     registry = form_dir / f"{stem}.conditional-registry.yaml"
-    form = action_needed_dir(form_dir) / f"{stem}.conditional-form.md"
-    # The registry is parsed from BOTH the conditional form and its sibling
-    # variants.csv, so either being newer than the registry means it's stale.
-    # (Comparing only the form misses CSV-only edits — variant text/conditions.)
     variants = action_needed_dir(form_dir) / f"{stem}.variants.csv"
-    newest_input = max(
-        (f.stat().st_mtime for f in (form, variants) if f.exists()),
-        default=0.0,
-    )
-    stale = registry.exists() and form.exists() and newest_input > registry.stat().st_mtime
-    if form.exists() and (not registry.exists() or stale):
-        r = parse_conditional_form(stem)
+    newest_input = variants.stat().st_mtime if variants.exists() else 0.0
+    stale = registry.exists() and variants.exists() and newest_input > registry.stat().st_mtime
+    if variants.exists() and (not registry.exists() or stale):
+        r = parse_variants(stem)
         if not r["ok"]:
-            return {"ok": False, "error": f"{stem}: conditional form parse failed.", **r}
+            return {"ok": False, "error": f"{stem}: variants.csv parse failed.", **r}
     return None
 
 
@@ -533,7 +531,7 @@ def safe_leg4(stems: "str | list[str]") -> dict:
         return {
             "ok": False,
             "error": (
-                f"Unfilled conditions — open each conditional-form.md, fill them in, "
+                f"Unfilled conditions — open each variants.csv, fill them in, "
                 f"save, then retry. {detail}"
             ),
         }
@@ -587,7 +585,7 @@ def do_generate(stem: str, with_plugin: bool) -> dict:
 
     steps: list[dict] = []
 
-    # Mandatory pre-flight: parse the conditional form if the registry is
+    # Mandatory pre-flight: parse the variants.csv if the registry is
     # missing or the form was edited after the registry was last written.
     err = preflight_conditions(stem)
     if err:
@@ -638,7 +636,7 @@ def do_plugin(stem: str) -> dict:
     if not (REPO_ROOT / mapping).exists():
         return {"ok": False, "error": f"{stem}.mapping.yaml not found."}
 
-    # Same pre-flight as generate: pick up a freshly edited conditional form.
+    # Same pre-flight as generate: pick up a freshly edited variants.csv.
     err = preflight_conditions(stem)
     if err:
         return err
@@ -719,7 +717,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/plugin":
                 self._json(do_plugin(payload.get("stem", "")))
             elif path == "/api/parse-form":
-                self._json(parse_conditional_form(payload.get("stem", "")))
+                self._json(parse_variants(payload.get("stem", "")))
             elif path == "/api/reset":
                 self._json(do_reset(payload.get("stem", "")))
             elif path == "/api/plugin-all":
@@ -1039,8 +1037,7 @@ PAGE = r"""<!doctype html>
     <p>Click a <b style="color:var(--chartreuse)">fill file</b> in a card to edit it in-browser:</p>
     <ul class="markers">
       <li><code>path-review.md</code> — confirm the <code>Final:</code> accessor lines</li>
-      <li><code>conditional-form.md</code> — write each <code>Condition:</code></li>
-      <li><code>variants.csv</code> — fill the <code>[[$token]]</code> versions</li>
+      <li><code>variants.csv</code> — fill the <code>when</code> condition (and variant <code>text</code>) for every conditional block</li>
     </ul>
   </div>
   <div class="stage">
@@ -1191,12 +1188,12 @@ function nextStep(f) {
     return { text: 'Path review changed — re-run “Resolve & ingest”', severity: 'hot' };
   if (f.unfilled > 0)
     return {
-      text: `Fill ${f.unfilled} condition${f.unfilled > 1 ? 's' : ''} in ${f.stem}.conditional-form.md`,
+      text: `Fill ${f.unfilled} condition${f.unfilled > 1 ? 's' : ''} in ${f.stem}.variants.csv`,
       severity: 'warn',
-      highlightFile: `${f.stem}.conditional-form.md`,
+      highlightFile: `${f.stem}.variants.csv`,
     };
   if (f.formStale)
-    return { text: 'Conditional form changed — re-parse before generating', severity: 'hot' };
+    return { text: 'Variants CSV changed — re-parse before generating', severity: 'hot' };
   if (!f.registry)
     return { text: 'Generate the template (parses conditions first)', severity: 'next' };
   if (!f.template)
@@ -1221,7 +1218,7 @@ function render(forms) {
     const step = nextStep(f);
 
     const fileRows = f.files.map(file => {
-      const fill = /\.(path-review\.md|conditional-form\.md|variants\.csv)$/.test(file.name);
+      const fill = /\.(path-review\.md|variants\.csv)$/.test(file.name);
       const key = file.name.endsWith('.final.vm') || file.name.endsWith('.mapping.yaml');
       const urgent = step.highlightFile && file.name === step.highlightFile;
       return `<div class="file ${fill ? 'fill' : ''} ${key ? 'key' : ''} ${urgent ? 'urgent' : ''}" data-path="${esc(file.path)}" title="Click to view / edit · double-click to open natively">
@@ -1305,7 +1302,7 @@ async function intakeSample(path) {
   const r = await api('/api/intake', { method: 'POST', body: JSON.stringify({ path }) });
   if (r.ok) {
     log(`✓ Intake <b>${esc(r.stem)}</b> → ${(r.artifacts || []).length} fill files in <span class="mono">workspace/action-needed/</span>`, 'ok');
-    log(`Next: open the <b>path-review</b>, <b>conditional-form</b> and <b>variants</b> files in the card, fill them, save.`, 'warn');
+    log(`Next: open the <b>path-review</b> and <b>variants</b> files in the card, fill them, save.`, 'warn');
   } else {
     log(`✗ ${esc(r.error || 'Intake failed')}`, 'err');
   }
@@ -1362,7 +1359,7 @@ const previewEditBtn = document.getElementById('preview-edit');
 const previewSaveBtn = document.getElementById('preview-save');
 let previewPath = null;
 
-const isFill = (path) => /\/(.*)\.(path-review\.md|conditional-form\.md|variants\.csv)$/.test(path);
+const isFill = (path) => /\/(.*)\.(path-review\.md|variants\.csv)$/.test(path);
 const isConfig = (path) => path.startsWith('socotra-config/') && path.endsWith('.json');
 const isEditable = (path, truncated) => !truncated && (isFill(path) || isConfig(path));
 
@@ -1573,7 +1570,7 @@ async function uploadFiles(files) {
       });
       if (r.ok) {
         log(`✓ Intake <b>${esc(r.stem)}</b> → ${(r.artifacts || []).length} fill files in <span class="mono">workspace/action-needed/</span>`, 'ok');
-        log(`Next: open the <b>path-review</b> / <b>conditional-form</b> / <b>variants</b> files, fill them, save — then <b>Resolve &amp; ingest</b>.`, 'warn');
+        log(`Next: open the <b>path-review</b> / <b>variants</b> files, fill them, save — then <b>Resolve &amp; ingest</b>.`, 'warn');
       } else {
         log(`✗ ${esc(r.error || 'Intake failed')}`, 'err');
       }

@@ -274,12 +274,12 @@ def _build_state_disclosure(doc):
     """Exercises the multi-variant conditional feature (the 50-state pattern).
 
     A single [[$disclosureClause]] variant block selects one of several texts by
-    the policy's discountType. Its companion seed CSV lives at
-    tests/pipeline/variant_seeds/TestStateDisclosure(segment).variants.csv; the
-    variant texts embed a policy *system* field ({policy.policyNumber}) and a
-    policy *custom* field ({policy.data.discountAmount}) — both supported wiring
-    categories — so the generated if/else-if chain concatenates real accessors
-    and compiles against customer-config.jar.
+    the policy's discountType. Its rows are seeded from condition_seeds.yaml (the
+    harness builds the filled variants.csv); the variant texts embed a policy
+    *system* field ({policy.policyNumber}) and a policy *custom* field
+    ({policy.data.discountAmount}) — both supported wiring categories — so the
+    generated if/else-if chain concatenates real accessors and compiles against
+    customer-config.jar.
     """
     _heading(doc, "Policy Disclosure Notice")
 
@@ -353,6 +353,45 @@ def _build_variant_then_binary(doc):
 
 
 # ---------------------------------------------------------------------------
+# Document 8: TestVariantBareLeaf(segment) — Decision B (bare leaf in variant text)
+# ---------------------------------------------------------------------------
+
+def _build_variant_bare_leaf(doc):
+    """Regression fixture for Decision B (variants-only plan §2.4/§2.6).
+
+    A single [[$bareLeafClause]] variant block whose seed variant text embeds a
+    **bare leaf** ({discountAmount}) rather than the full accessor. The bare leaf
+    was never seen by Leg -1's pass-1 scan (the source doc holds only the
+    [[$token]] marker), so Leg 4's variant-text resolver must resolve it to a
+    single registry accessor (policy.data.discountAmount) and wire a real Java
+    accessor — not silently degrade it to a // TODO. Order/shape mirrors
+    TestStateDisclosure; only the seed CSV's leaf form differs.
+    """
+    _heading(doc, "Bare-Leaf Variant Notice")
+
+    _para(doc, "Dear {account.data.firstName} {account.data.lastName},")
+    _para(doc, "")
+    _para(doc, "Please review the disclosure that applies to your policy below.")
+    _para(doc, "")
+
+    _heading(doc, "Policy Details", level=2)
+    tbl = doc.add_table(rows=1, cols=2)
+    tbl.rows[0].cells[0].text = "Field"
+    tbl.rows[0].cells[1].text = "Value"
+    _table_row(tbl, "Policy Number", "{policy.policyNumber}")
+    _table_row(tbl, "Discount Type", "{policy.data.discountType}")
+    _para(doc, "")
+
+    _heading(doc, "Applicable Disclosure", level=2)
+    _para(doc, "[[$bareLeafClause]]")
+    _para(doc, "")
+
+    _para(doc, "Thank you for choosing ZenCover.")
+    _para(doc, "")
+    _para(doc, "ZenCover Customer Services")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -364,6 +403,7 @@ FIXTURES = [
     ("TestGiftSchedule(segment).docx", _build_gift_schedule),
     ("TestStateDisclosure(segment).docx", _build_state_disclosure),
     ("TestVariantThenBinary(segment).docx", _build_variant_then_binary),
+    ("TestVariantBareLeaf(segment).docx", _build_variant_bare_leaf),
 ]
 
 

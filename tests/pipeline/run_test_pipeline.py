@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Full-pipeline test runner — Leg 0 → conditional-form pause → Leg 2+3 → Leg 4.
+Full-pipeline test runner — Leg 0 → variants.csv fill → parse → Leg 2+3 → Leg 4.
 
 Usage:
-    # Interactive: pauses after each Leg 0 run so you can fill the form manually
+    # Interactive: pauses after each Leg 0 run so you can fill the variants.csv manually
     python3 tests/pipeline/run_test_pipeline.py
 
-    # Automated: auto-fills conditions from condition_seeds.yaml (CI-friendly)
+    # Automated: builds the filled variants.csv from condition_seeds.yaml (CI-friendly)
     python3 tests/pipeline/run_test_pipeline.py --auto
 
     # Run only one fixture (by stem, no extension)
@@ -48,13 +48,8 @@ ALL_FIXTURES = [
     "TestGiftSchedule(segment).docx",
     "TestStateDisclosure(segment).docx",
     "TestVariantThenBinary(segment).docx",
+    "TestVariantBareLeaf(segment).docx",
 ]
-
-# Variant-block fixtures: their [[$token]] blocks are filled from a ready-made
-# CSV here (copied over the Leg 0 stub before parsing), the variant analogue of
-# condition_seeds.yaml for binary blocks.
-VARIANT_SEEDS_DIR = REPO / "tests" / "pipeline" / "variant_seeds"
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -77,33 +72,65 @@ def _stem(filename: str) -> str:
     return Path(filename).stem
 
 
-def _autofill_form(form_path: Path, seeds: dict[int, str]) -> None:
-    """Replace 'Condition: ' placeholders with seeded expressions."""
-    text = form_path.read_text(encoding="utf-8")
-    # Tempered so the body can't run past the next "## Block" header — without
-    # this, a variant block (no Condition: line) lets the match span into the
-    # following binary block and mis-fill it (the variant-then-binary case).
-    block_re = re.compile(
-        r"(##\s+Block\s+(\d+)(?:(?!##\s+Block).)*?Condition:) *(\n)", re.DOTALL
-    )
-
-    def replacer(m):
-        block_id = int(m.group(2))
-        condition = seeds.get(block_id, "quote.quoteNumber != null")
-        return f"{m.group(1)} {condition}{m.group(3)}"
-
-    new_text = block_re.sub(replacer, text)
-    form_path.write_text(new_text, encoding="utf-8")
-    print(f"    auto-filled {len(seeds)} condition(s) in {form_path.name}")
+def _read_csv_rows_simple(path: Path) -> list[list[str]]:
+    """Read a variants.csv into raw row lists, dropping ``#`` comment lines."""
+    import csv  # noqa: PLC0415
+    lines = [ln for ln in path.read_text(encoding="utf-8").splitlines()
+             if not ln.lstrip().startswith("#")]
+    return list(csv.reader(lines))
 
 
-def _wait_for_form(form_path: Path, stem: str) -> None:
+def _build_filled_csv(csv_path: Path, sidecar_path: Path, seeds: dict) -> None:
+    """Build a filled ``<stem>.variants.csv`` from Leg 0's stub + sidecar + seeds.
+
+    The variants-only analogue of the old ``_autofill_form``: every block kind
+    flows through one CSV. Per block (keyed by the sidecar's join ``key``):
+      - **variant**: emit the seed's ``[{when, text}, …]`` rows verbatim.
+      - **template** (``render: template``): one ``when``-only row (text blank).
+      - **binary**: a conditioned row (seed ``when`` + the stub's prefilled text)
+        plus an empty-default row.
+    """
+    import csv  # noqa: PLC0415
+    import io  # noqa: PLC0415
+    sidecar = yaml.safe_load(sidecar_path.read_text(encoding="utf-8")) or []
+    # Recover each binary block's prefilled text from the stub's first
+    # conditioned (non-blank `when`) row.
+    stub_text: dict[str, str] = {}
+    for row in _read_csv_rows_simple(csv_path)[1:]:
+        if len(row) >= 3 and row[1].strip():
+            stub_text.setdefault(row[0], row[2])
+
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["placeholder", "when", "text"])
+    for b in sidecar:
+        key = b.get("key")
+        seed = seeds.get(key)
+        if b.get("variant"):
+            if not isinstance(seed, list):
+                raise SystemExit(f"seed for variant block {key!r} must be a list of rows")
+            for r in seed:
+                w.writerow([key, r.get("when", ""), r.get("text", "")])
+        elif b.get("render") == "template":
+            if not seed:
+                raise SystemExit(f"missing `when` seed for template block {key!r}")
+            w.writerow([key, seed, ""])
+        else:  # binary → one-real-row + empty-default fold
+            if not seed:
+                raise SystemExit(f"missing `when` seed for binary block {key!r}")
+            w.writerow([key, seed, stub_text.get(key, "")])
+            w.writerow([key, "", ""])
+    csv_path.write_text(buf.getvalue(), encoding="utf-8")
+    print(f"    built filled variants.csv ({len(sidecar)} block(s))")
+
+
+def _wait_for_csv(csv_path: Path, stem: str) -> None:
     print(f"\n  {'='*60}")
-    print(f"  PAUSE — fill the conditional form for: {stem}")
-    print(f"  Form: {form_path}")
+    print(f"  PAUSE — fill the variants CSV for: {stem}")
+    print(f"  CSV: {csv_path}")
     print(f"  {'='*60}")
-    print(f"\n  Fill in each 'Condition:' line using accessor-path expressions.")
-    print(f"  Examples: quote.quoteNumber != null  |  policy.data.discountAmount != null")
+    print(f"\n  Fill the `when` column (and variant `text` rows) using the condition DSL.")
+    print(f"  Examples: quote.quoteNumber present  |  state == \"CA\"  |  premium > 500")
     print(f"  Run `python3 -m velocity_converter.list_paths` to see all available accessors.")
     print(f"\n  Press ENTER when done (or Ctrl+C to abort)...")
     try:
@@ -151,46 +178,40 @@ def run_fixture(fixture_file: str, auto: bool, seeds_data: dict) -> dict:
         errors.append("Leg 0 failed")
         return {"stem": stem, "mapping_path": None, "success": False, "errors": errors}
 
-    # --- Fill conditional form (lives in the action-needed/ space now) ---
-    form_path = action_needed_dir(output_dir) / f"{stem}.conditional-form.md"
-    if not form_path.exists():
-        errors.append(f"conditional-form.md not found at {form_path}")
-        return {"stem": stem, "mapping_path": None, "success": False, "errors": errors}
-
-    print(f"\n[2/4] Conditional form — {'auto-fill' if auto else 'manual fill'}")
-    if auto:
-        doc_seeds = seeds_data.get(stem, {})
-        if not doc_seeds:
-            print(f"    WARNING: no seeds for {stem!r}, using fallback condition")
-        _autofill_form(form_path, {int(k): v for k, v in doc_seeds.items()})
-    else:
-        _wait_for_form(form_path, stem)
-
-    # Variant blocks: drop the ready seed CSV over Leg 0's stub so the sibling
-    # CSV the parse step auto-detects is the filled one (auto mode only).
-    seed_csv = VARIANT_SEEDS_DIR / f"{stem}.variants.csv"
-    if auto and seed_csv.exists():
-        shutil.copyfile(seed_csv, action_needed_dir(output_dir) / f"{stem}.variants.csv")
-        print(f"    seeded {seed_csv.name}")
-
-    # --- Parse conditional form ---
-    print(f"\n[3/4] Parse conditional form → conditional-registry.yaml")
-    r_parse = _run(
-        [
-            sys.executable, "-m", "velocity_converter.leg0_ingest",
-            "--parse-conditional-form", str(form_path),
-            "--output-dir", str(output_dir),
-        ],
-        "parse-conditional-form",
-    )
-    if r_parse.returncode != 0:
-        errors.append("parse-conditional-form failed")
-        return {"stem": stem, "mapping_path": None, "success": False, "errors": errors}
+    # --- Variants CSV (single human-fill file; lives in action-needed/) ---
+    csv_path = action_needed_dir(output_dir) / f"{stem}.variants.csv"
+    sidecar_path = output_dir / f"{stem}.conditional-blocks.yaml"
+    has_blocks = csv_path.exists() and sidecar_path.exists()
 
     registry_path = output_dir / f"{stem}.conditional-registry.yaml"
-    if not registry_path.exists():
-        errors.append(f"conditional-registry.yaml not written at {registry_path}")
-        return {"stem": stem, "mapping_path": None, "success": False, "errors": errors}
+    if has_blocks:
+        print(f"\n[2/4] Variants CSV — {'auto-fill' if auto else 'manual fill'}")
+        if auto:
+            doc_seeds = seeds_data.get(stem, {})
+            if not doc_seeds:
+                print(f"    WARNING: no seeds for {stem!r}")
+            _build_filled_csv(csv_path, sidecar_path, doc_seeds)
+        else:
+            _wait_for_csv(csv_path, stem)
+
+        # --- Parse variants CSV (+ sidecar) → conditional-registry.yaml ---
+        print(f"\n[3/4] Parse variants CSV → conditional-registry.yaml")
+        r_parse = _run(
+            [
+                sys.executable, "-m", "velocity_converter.leg0_ingest",
+                "--parse-variants-csv", str(csv_path),
+                "--output-dir", str(output_dir),
+            ],
+            "parse-variants-csv",
+        )
+        if r_parse.returncode != 0:
+            errors.append("parse-variants-csv failed")
+            return {"stem": stem, "mapping_path": None, "success": False, "errors": errors}
+        if not registry_path.exists():
+            errors.append(f"conditional-registry.yaml not written at {registry_path}")
+            return {"stem": stem, "mapping_path": None, "success": False, "errors": errors}
+    else:
+        print(f"\n[2/4] No conditional blocks for {stem} — skipping variants CSV + parse.")
 
     # --- Leg 2 + Leg 3 ---
     print(f"\n[4/4] Leg 2+3 — fill mapping + generate template")

@@ -198,10 +198,9 @@ def _predict_writes(
         stem = Path(input_html).stem
         base = f"{out_dir}/{stem}"
         action = action_needed_dir(Path(base))
-        # Scan mode emits ONLY the human-fill files (variants.csv only when present,
-        # so it is not predicted here).
+        # Scan mode emits ONLY the human-fill file (the single variants.csv).
         writes += [
-            f"{action}/{stem}.conditional-form.md",
+            f"{action}/{stem}.variants.csv",
         ]
     if operation in ("leg0", "leg0+leg2+leg3") and input_html:
         stem = Path(input_html).stem
@@ -211,7 +210,8 @@ def _predict_writes(
             f"{base}/{stem}.raw.html",
             f"{base}/{stem}.annotated.html",
             f"{base}/{stem}.mapping.yaml",
-            f"{action}/{stem}.conditional-form.md",
+            f"{base}/{stem}.conditional-blocks.yaml",
+            f"{action}/{stem}.variants.csv",
         ]
     if operation in ("leg1", "leg1+leg2", "leg1+leg2+leg3", "leg1+leg2+leg3+leg4") and input_html:
         stem = Path(input_html).stem
@@ -392,12 +392,14 @@ def run_leg0(input_path: str, output_dir: str) -> dict:
     stem = input_p.stem
     out_p = _resolve_safe(output_dir, repo_root)
 
-    # (dir, filename) pairs — the conditional form is projected into action-needed/.
+    # (dir, filename) pairs — the variants CSV is projected into action-needed/;
+    # the machine sidecar pairs with it in the per-stem output dir.
     artifact_locs = [
         (out_p, f"{stem}.raw.html"),
         (out_p, f"{stem}.annotated.html"),
         (out_p, f"{stem}.mapping.yaml"),
-        (action_needed_dir(out_p), f"{stem}.conditional-form.md"),
+        (out_p, f"{stem}.conditional-blocks.yaml"),
+        (action_needed_dir(out_p), f"{stem}.variants.csv"),
     ]
     artifacts = [
         str((d / name).relative_to(repo_root))
@@ -408,11 +410,11 @@ def run_leg0(input_path: str, output_dir: str) -> dict:
 
 
 def run_leg0_scan(input_path: str, output_dir: str) -> dict:
-    """Run Leg 0 in --scan mode: emit ONLY the human-fill files.
+    """Run Leg 0 in --scan mode: emit ONLY the human-fill file.
 
-    Front-loads the customer handoff — the conditional form (and variants.csv
-    when a variant block exists) are produced without the machine artifacts, so
-    the customer can start filling them while the full ingest is deferred.
+    Front-loads the customer handoff — the single variants.csv (covering every
+    conditional block) is produced without the machine artifacts, so the customer
+    can start filling it while the full ingest is deferred.
     Returns ok/artifacts/stdout/stderr.
     """
     repo_root = _find_repo_root()
@@ -433,9 +435,8 @@ def run_leg0_scan(input_path: str, output_dir: str) -> dict:
     stem = _resolve_safe(input_path, repo_root).stem
     out_p = _resolve_safe(output_dir, repo_root)
 
-    # Scan emits only the human-fill files (projected into action-needed/).
+    # Scan emits only the single human-fill file (projected into action-needed/).
     artifact_locs = [
-        (action_needed_dir(out_p), f"{stem}.conditional-form.md"),
         (action_needed_dir(out_p), f"{stem}.variants.csv"),
     ]
     artifacts = [
@@ -642,15 +643,15 @@ def _warn_missing_cond_registry(suggested_path: Path) -> None:
     n = len(set(re.findall(r'\$doc\.cond\d+', annotated.read_text(encoding="utf-8"))))
     if n == 0:
         return
-    form = action_needed_dir(form_dir) / f"{stem}.conditional-form.md"
-    if form.exists():
+    csv = action_needed_dir(form_dir) / f"{stem}.variants.csv"
+    if csv.exists():
         fix = (
             f"python3 -m velocity_converter.leg0_ingest "
-            f"--parse-conditional-form {form} "
+            f"--parse-variants-csv {csv} "
             f"--output-dir {form_dir}"
         )
     else:
-        fix = "(conditional-form.md not found — re-run Leg 0 first)"
+        fix = "(variants.csv not found — re-run Leg 0 first)"
     print(
         f"WARNING: {n} conditional(s) detected in {stem}.annotated.html "
         f"but no conditional-registry.yaml found.\nRun: {fix}"

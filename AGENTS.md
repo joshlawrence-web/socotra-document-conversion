@@ -12,7 +12,7 @@ without redeploying the entire product config JAR.
 | Leg | Script | Input → Output |
 |-----|--------|----------------|
 | -1 | `legminus1_resolve_paths.py` | doc with bare `{leaf}` → `.path-review.md`, `.path-map.yaml`, `.path-changes.md`, `.resolved.<ext>` |
-| 0 | `leg0_ingest.py` | `.docx`/`.pdf` → `.raw.html`, `.conditional-form.md` |
+| 0 | `leg0_ingest.py` | `.docx`/`.pdf` → `.raw.html`, `.variants.csv`, `.conditional-blocks.yaml` |
 | 1 | `convert.py` | `.html` → `.mapping.yaml` |
 | 2 | `leg2_fill_mapping.py` | `.mapping.yaml` → `.mapping.yaml` (enriched), `.review.md` |
 | 3 | `leg3_substitute.py` | `.mapping.yaml` → `.final.vm` |
@@ -38,14 +38,14 @@ All authoring lives under `workspace/`, split into three demo-readable buckets:
 workspace/
   inbox/           source docs you feed the pipeline (.docx/.pdf/.html)
   action-needed/   FLAT — the files a human must hand-edit before continuing:
-                     <stem>.conditional-form.md   (fill the conditions)
-                     <stem>.variants.csv          (fill variant rows, when present)
+                     <stem>.variants.csv          (fill ALL conditional text — one file)
                      <stem>.path-review.md        (Leg -1: edit the Final: lines)
-  output/<stem>/   per-stem machine artifacts (.mapping.yaml, .final.vm, reports, .java, …)
+  output/<stem>/   per-stem machine artifacts (.mapping.yaml, .conditional-blocks.yaml,
+                   .final.vm, reports, .java, …)
 ```
 
 The legs always pass the per-stem **machine** dir (`workspace/output/<stem>`) as
-`--output-dir`; the three human-fill files are routed to `workspace/action-needed/`
+`--output-dir`; the human-fill files are routed to `workspace/action-needed/`
 automatically (see `velocity_converter/workspace.py`). `inbox/` is tracked;
 `output/` and `action-needed/` are generated (gitignored). Tests use the same
 split under `tests/pipeline/`.
@@ -117,7 +117,7 @@ any placeholder not found in the source is reported, not silently dropped.
 
 When the user provides a `.docx` or `.pdf` file, run Leg 0 (then optionally full pipeline).
 
-**Leg 0 only** (convert doc → raw HTML + extract fields + conditional form):
+**Leg 0 only** (convert doc → raw HTML + extract fields + variants CSV):
 ```
 python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg0 input=<path.docx|path.pdf> output=workspace/output"
 ```
@@ -127,10 +127,12 @@ python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg0 input=<path.docx|pa
 python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg0+leg2+leg3 input=<path.docx|path.pdf> registry=registry/path-registry.yaml output=workspace/output"
 ```
 
-**After customer returns the filled conditional form:**
+**After customer returns the filled variants CSV:**
 ```
-python3 -m velocity_converter.leg0_ingest --parse-conditional-form workspace/action-needed/<stem>.conditional-form.md --output-dir workspace/output/<stem>/
+python3 -m velocity_converter.leg0_ingest --parse-variants-csv workspace/action-needed/<stem>.variants.csv --output-dir workspace/output/<stem>/
 ```
+(The legacy `--parse-conditional-form <form.md>` flag is retained only for reading
+in-flight `conditional-form.md` files; new documents use `--parse-variants-csv`.)
 
 **Trigger phrases — Leg 0** (not exhaustive — use judgment):
 - "convert my Word document"
@@ -144,20 +146,29 @@ python3 -m velocity_converter.leg0_ingest --parse-conditional-form workspace/act
 - "process the customer document end to end"
 - "run leg 0 through leg 3"
 
-**Trigger phrases — parse conditional form** (not exhaustive — use judgment):
-- "the customer returned the conditional form"
-- "parse the conditional form"
+**Trigger phrases — parse variants CSV** (not exhaustive — use judgment):
+- "the customer returned the variants CSV"
+- "parse the variants csv"
+- "parse the conditional form" (legacy reader)
 - "generate the conditional registry"
 
 **Output lands in** `workspace/output/<stem>/` (machine artifacts):
 - `<stem>.raw.html` — raw converted HTML (pre-annotation)
 - `<stem>.annotated.html` — HTML with `{field}` → `$TBD_field`, `[[cond]]` → `$doc.condN`
 - `<stem>.mapping.yaml` — leg2-compatible mapping (enriched in-place by Leg 2)
-- `<stem>.conditional-registry.yaml` — written after customer returns the form
+- `<stem>.conditional-blocks.yaml` — machine sidecar carrying the per-block metadata
+  the 3-column CSV can't (`id`, `key`, `placeholder`, `variant`, `render`, `source_text`,
+  `top_level`, `parent_id`, `depth`); read back at parse time alongside the filled CSV
+- `<stem>.conditional-registry.yaml` — written after customer returns the CSV
 
-…and the **human-fill** files land in `workspace/action-needed/` (flat):
-- `<stem>.conditional-form.md` — customer-facing conditional form (send to customer)
-- `<stem>.variants.csv` — companion CSV for `[[$token]]` variant blocks (when present)
+…and the **human-fill** file lands in `workspace/action-needed/` (flat):
+- `<stem>.variants.csv` — the single customer-facing file for ALL conditional text
+  (send to customer). Covers every block kind: a binary `[[text]]` block folds into a
+  conditioned row (text pre-filled from the document) + an empty-default row (customer
+  fills only the `when`); a `render: template` loop-in-conditional block becomes a single
+  `when`-only row (text blank — the section wording stays in the document); an N-way
+  `[[$token]]` block gets one row per condition + a default row. Columns are always
+  `placeholder,when,text`.
 
 **Occurrence symbols** — a `{field}` placeholder may declare its occurrence with a
 prefix: `{field}` required (default), `{$field}` optional, `{+field}` one or more,
@@ -181,11 +192,22 @@ a stderr warning.
 block flips that block to `render: template`: the block's content (loop included)
 stays in the `.vm` wrapped in `#if($data.condN)`…`#end`, and the plugin puts `condN`
 as a **Boolean** instead of a baked string (an exception to the "plugin owns
-conditional text" rule). The flag flows conditional-form → conditional-registry
-(`render: template`) → Leg 4. Refused with a warning (markers left literal): a loop
-*crossing* a block boundary, or inside a *nested* block. A conditional fully inside
-a loop is allowed but warned — conditions are document-scoped, so it renders
-identically for every item.
+conditional text" rule). The flag flows variants.csv (a single `when`-only row) +
+conditional-blocks.yaml → conditional-registry (`render: template`) → Leg 4. Refused
+with a warning (markers left literal): a loop *crossing* a block boundary, or inside a
+*nested* block. A conditional fully inside a loop is allowed but warned — conditions are
+document-scoped, so it renders identically for every item.
+
+The one genuinely-unsupported edge (documented, not handled): an N-way `[[$token]]`
+block whose variants each carry their **own** loop (different loop-bearing wording per
+condition). Loop bodies can't live in a CSV `text` cell, and `render: template` is binary
+show/hide, not N-way. Vanishingly unlikely in practice.
+
+**Conditions use the condition DSL.** Every block's `when` flows through
+`condition_dsl.parse_variants_csv`, so conditions are written with `present`/`absent`
+(not `!= null`). Conditions are document-scoped — they reference quote/account/policy
+(segment) accessors, never per-exposure `item.*` (the DSL rejects per-exposure accessors
+at document scope).
 
 ---
 
@@ -194,12 +216,13 @@ identically for every item.
 **ALWAYS run this check before executing Leg 2, Leg 3, or Leg 4 when the source was a Leg 0 run.**
 
 1. Check if `workspace/output/<stem>/<stem>.conditional-registry.yaml` exists.
-2. Check if `workspace/action-needed/<stem>.conditional-form.md` exists.
-3. If the **registry does NOT exist** and the **form DOES exist** → parse the conditional form first, then proceed:
+2. Check if `workspace/action-needed/<stem>.variants.csv` exists.
+3. If the **registry does NOT exist** and the **CSV DOES exist** → parse the variants CSV first, then proceed:
 
 ```
-python3 -m velocity_converter.leg0_ingest --parse-conditional-form workspace/action-needed/<stem>.conditional-form.md --output-dir workspace/output/<stem>/
+python3 -m velocity_converter.leg0_ingest --parse-variants-csv workspace/action-needed/<stem>.variants.csv --output-dir workspace/output/<stem>/
 ```
+(For an in-flight `conditional-form.md`, use the legacy `--parse-conditional-form` flag instead.)
 
 4. Only after the registry is written (or confirmed to already exist) → run the requested downstream legs.
 
@@ -237,7 +260,7 @@ python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg1 input=<path> output
 python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg2 mapping=<path> registry=registry/path-registry.yaml"
 ```
 
-**Leg 2+3** (suggest paths + write final template, starting from an existing mapping — use after leg0 + parsing the conditional form):
+**Leg 2+3** (suggest paths + write final template, starting from an existing mapping — use after leg0 + parsing the variants CSV):
 ```
 python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg2+leg3 mapping=<path> registry=registry/path-registry.yaml"
 ```
@@ -371,10 +394,17 @@ python3 tests/pipeline/run_test_pipeline.py --auto --render-preview
 
 Output lands in `tests/pipeline/output/<stem>/`. Exit code is non-zero on failure.
 
-**What is tested:** Leg 0 → conditional-form fill → parse → Leg 2+3 → Leg 4 (single combined plugin)
-across five fixtures: `TestQuoteSummary(quote)`, `TestItemCert(segment)`, `TestRenewalNotice(segment)`,
-`TestItemsSchedule(segment)` (loops over the items array via `[Item]`/`[/Item]` markers),
-`TestGiftSchedule(segment)` (an `[Item]` loop inside a `[[conditional]]` → `render: template` block).
+**What is tested:** Leg 0 → variants.csv fill → `--parse-variants-csv` → Leg 2+3 → Leg 4
+(single combined plugin) across eight fixtures: `TestQuoteSummary(quote)`,
+`TestItemCert(segment)`, `TestRenewalNotice(segment)`, `TestItemsSchedule(segment)`
+(loops over the items array via `[Item]`/`[/Item]` markers), `TestGiftSchedule(segment)`
+(an `[Item]` loop inside a `[[conditional]]` → `render: template` block),
+`TestStateDisclosure(segment)` (an N-way `[[$token]]` variant block),
+`TestVariantThenBinary(segment)` (a `[[$token]]` variant block immediately followed by a
+binary `[[…]]` block), and `TestVariantBareLeaf(segment)` (a `[[$token]]` block whose
+variant text uses a BARE leaf `{discountAmount}` to exercise Leg 4's variant-text leaf
+resolution / "Decision B"). The harness builds the filled `variants.csv` from
+`condition_seeds.yaml` and runs `--parse-variants-csv` (no more `conditional-form.md` fill step).
 
 **Adding a new fixture** (four-step checklist):
 1. Add a builder function to `tools/generate_test_fixtures.py` and append it to `FIXTURES`.

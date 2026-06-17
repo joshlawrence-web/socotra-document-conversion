@@ -29,7 +29,7 @@ Registry-only resolution; produces a human-validated `.path-review.md` before Le
 | `write_path_review/map/changes()` | 161 / 220 / 248 | The three artifacts |
 | `main()` | 529 | CLI: `--suggest` vs `--apply` |
 
-### Leg 0 — `leg0_ingest.py` (1219 lines) — `.docx`/`.pdf` → HTML + mapping + conditional form
+### Leg 0 — `leg0_ingest.py` — `.docx`/`.pdf` → HTML + mapping + variants CSV
 | Symbol | Line | Role |
 |---|---|---|
 | `convert_docx()` / `convert_pdf()` | 74 / 137 | Document → raw HTML |
@@ -38,12 +38,14 @@ Registry-only resolution; produces a human-validated `.path-review.md` before Le
 | `extract_conditionals()` | 432 | `[[…]]` blocks (incl. `[[$variant]]`), nesting, block IDs |
 | `annotate_conditionals()` | 518 | Conditional blocks → `$doc.condN` |
 | `extract_loops()` | 596 | `[Name]…[/Name]` → `#foreach` scaffold; moves fields into loop |
-| `write_leg2_mapping()` | 779 | Emit `.mapping.yaml` (Leg 2 contract) |
-| `write_conditional_form()` | 821 | Customer-facing `.conditional-form.md` |
-| `write_variants_csv_stub()` | 881 | `.variants.csv` stub for `[[$token]]` blocks |
-| `parse_conditional_form()` | 923 | **`--parse-conditional-form` mode** — filled form → blocks |
-| `write_conditional_registry()` | 1024 | Emit `.conditional-registry.yaml` |
-| `main()` | 1066 | CLI: default ingest vs `--parse-conditional-form` |
+| `write_leg2_mapping()` | 793 | Emit `.mapping.yaml` (Leg 2 contract) |
+| `write_variants_csv()` | 835 | Single human-fill `.variants.csv` for ALL conditional text (binary / template / N-way) |
+| `write_conditional_blocks()` | 899 | Machine sidecar `.conditional-blocks.yaml` (per-block metadata the CSV can't carry) |
+| `load_conditional_blocks()` | 925 | Read the sidecar back at parse time |
+| `parse_conditional_form()` | 943 | **legacy `--parse-conditional-form` mode** — in-flight form → blocks |
+| `parse_variants_csv_to_blocks()` | 1050 | **`--parse-variants-csv` mode** — filled CSV + sidecar → blocks |
+| `write_conditional_registry()` | 1129 | Emit `.conditional-registry.yaml` |
+| `main()` | 1256 | CLI: default ingest vs `--parse-variants-csv` (legacy `--parse-conditional-form`) |
 
 ### Leg 1 — `convert.py` (1358 lines) — HTML mockup → `.vm` + `.mapping.yaml`
 | Symbol | Line | Role |
@@ -108,8 +110,9 @@ Registry-only resolution; produces a human-validated `.path-review.md` before Le
 | `_build_cond_field_lookup()` | 205 | Variable name → Java wiring |
 | `_augment_field_lookup_for_variants()` | 320 | Add field tokens from variant text |
 | `_analyse_cond_fields()` | 400 | Classify unresolved (hard-fail) / unsupported / mixed-scope |
-| `render_conditional_puts()` | 1244 | Binary + variant `if/else-if/else` chains |
-| `_render_variant_puts()` | 1184 | N-way variant chain (first match wins) |
+| `render_conditional_puts()` | 1324 | Binary + variant `if/else-if/else` chains (binary routes through the variant generator) |
+| `_render_variant_puts()` | 1209 | N-way + binary variant chain (first match wins) |
+| `_render_template_put()` | 1269 | Template (`render: template`) block → Boolean from `when` AST (or legacy `conditions[]`) |
 | `condition_to_java()` | *(condition_dsl.py:546)* | Condition AST → Java boolean expr |
 | `render_occurrence_guards()` | 482 | Null/empty guards for required / one_or_more |
 | `_parse_existing_plugin_keys()` / `parse_plugin_keys()` | 742 / 749 | **Additive mode** — read existing `.java` |

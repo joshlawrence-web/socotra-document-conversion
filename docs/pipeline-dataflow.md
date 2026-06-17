@@ -32,9 +32,9 @@ flowchart LR
   RAW[".raw.html\n(extracted, unmodified)"]
   ANN[".annotated.html\n(fields + conditionals tagged)"]
   L0MAP[".mapping.yaml\n(TBD placeholders)"]
-  FORM[/".conditional-form.md\nsend to customer"/]
-  VARCSV[/".variants.csv\nN-way variant blocks\nfill in Excel"/]
-  CONDREG[".conditional-registry.yaml\n(parsed from filled form)"]
+  VARCSV[/".variants.csv\nALL conditional text\nfill in Excel"/]
+  CONDBLK[".conditional-blocks.yaml\nmachine sidecar"]
+  CONDREG[".conditional-registry.yaml\n(parsed from filled CSV)"]
 
   %% ── Leg 1 artifact ───────────────────────────────────
   L1MAP[".mapping.yaml\n(TBD placeholders)"]
@@ -65,20 +65,20 @@ flowchart LR
   PATHMAP -.->|"--path-map"| Leg0
   RESOLVED -.->|"or ingest directly"| Leg0
 
-  %% ── Leg 0 scan (front-loaded human-fill files only) ──
+  %% ── Leg 0 scan (front-loaded human-fill file only) ──
   Scan["Leg 0 --scan\n(intake: shares _parse_document)"]
-  DOC -.->|"leg0_scan / intake\n(forms up front)"| Scan
-  Scan --> FORM
-  Scan -->|"only if a [[$token]]\nvariant block exists"| VARCSV
+  DOC -.->|"leg0_scan / intake\n(CSV up front)"| Scan
+  Scan --> VARCSV
+  Scan -.->|"machine sidecar"| CONDBLK
 
   DOC -->|"leg0"| Leg0
   Leg0 --> RAW
   Leg0 --> ANN
   Leg0 --> L0MAP
-  Leg0 --> FORM
-  Leg0 -->|"only if a [[$token]]\nvariant block exists"| VARCSV
-  FORM -->|"parse-conditional-form\nafter customer fills"| CONDREG
-  VARCSV -->|"sibling CSV merged\nat parse time"| CONDREG
+  Leg0 --> VARCSV
+  Leg0 --> CONDBLK
+  VARCSV -->|"parse-variants-csv\nafter customer fills\n(legacy: parse-conditional-form)"| CONDREG
+  CONDBLK -.->|"read alongside CSV\nat parse time"| CONDREG
 
   HTML -->|"leg1"| Leg1
   Leg1 --> L1MAP
@@ -134,9 +134,8 @@ flowchart TD
 
   L0["Leg 0\ningest doc → HTML + mapping"]:::machine
   L1["Leg 1\nconvert HTML mockup → mapping"]:::machine
-  H2["🙋 FILL .conditional-form.md\nanswer each conditional block"]:::human
-  H3["🙋 FILL .variants.csv\nN-way variant rows (if present)"]:::human
-  PARSE["Leg 0 --parse-conditional-form\n→ conditional-registry.yaml"]:::machine
+  H2["🙋 FILL .variants.csv\nALL conditional text\n(one file, every block kind)"]:::human
+  PARSE["Leg 0 --parse-variants-csv\n→ conditional-registry.yaml"]:::machine
 
   L2["Leg 2\nsuggest + grade accessor paths"]:::machine
   R1["👀 REVIEW .review.md\nresolve low / medium confidence"]:::review
@@ -151,16 +150,13 @@ flowchart TD
 
   IN -.->|"optional, bare {leaf}"| LM1
   LM1 --> H1
-  IN -.->|"intake (bundle all\nhand-fill files up front)"| INTAKE
+  IN -.->|"intake (bundle both\nhand-fill files up front)"| INTAKE
   INTAKE --> H1
   INTAKE --> H2
-  INTAKE -.->|"if [[$variant]] block"| H3
   H1 -.->|"legminus1_apply"| L0
   IN --> L0
   IN --> L1
   L0 --> H2
-  L0 -.->|"if [[$variant]] block"| H3
-  H3 --> H2
   H2 -.->|"parse"| PARSE
   PARSE --> L2
   L1 --> L2
@@ -179,15 +175,15 @@ flowchart TD
 - 🚀 **green** — the final manual action: deploy the two generated files (hot-swap, no JAR rebuild)
 - ▢ blue — a fully automated leg (no human needed)
 
-The two **required** human moments are answering the conditional form (`.conditional-form.md`,
-plus `.variants.csv` for N-way blocks) and — only when the author wrote bare leaves —
+The two **required** human moments are filling the variants CSV (`.variants.csv` — the
+single file for ALL conditional text) and — only when the author wrote bare leaves —
 confirming accessors in `.path-review.md`. Everything else is automated or advisory.
 
 **Intake** (`RUN_PIPELINE intake`, or `leg0_scan` on its own) bundles these required edits
-into one up-front handoff: it runs Leg -1 *suggest* + Leg 0 `--scan` to emit all three
-hand-fill files (`.path-review.md`, `.conditional-form.md`, `.variants.csv`) at once,
-deferring the machine artifacts to the later full ingest. This collapses the two otherwise
-separate interruptions (path-review after Leg -1, the form after Leg 0) into a single moment.
+into one up-front handoff: it runs Leg -1 *suggest* + Leg 0 `--scan` to emit both
+hand-fill files (`.path-review.md`, `.variants.csv`) at once, deferring the machine
+artifacts to the later full ingest. This collapses the two otherwise separate interruptions
+(path-review after Leg -1, the conditional text after Leg 0) into a single moment.
 
 ---
 
@@ -207,26 +203,33 @@ registry-matched, not JAR-verified; Leg 2 still verifies them against the render
 
 ### Starting from a Word or PDF document (Leg 0 path)
 
-Leg 0 (`leg0_ingest.py`) converts a `.docx` or `.pdf` into four artifacts: `.raw.html` (the
+Leg 0 (`leg0_ingest.py`) converts a `.docx` or `.pdf` into five artifacts: `.raw.html` (the
 unmodified extracted HTML), `.annotated.html` (HTML with `{field}` placeholders replaced by
 `$TBD_field` tokens and conditional blocks tagged as `$doc.condN`), `.mapping.yaml` (the
-Leg 2 input, pre-populated with TBD placeholders), and `.conditional-form.md` (a
-Markdown questionnaire listing every detected conditional block, to be filled in by the
-customer or document owner). The form displays field placeholders in the author's
-`{field}` syntax; parsing converts them back to canonical `$TBD_field` tokens in the
-registry (both forms parse).
+Leg 2 input, pre-populated with TBD placeholders), `.variants.csv` (the **single human-fill
+file for ALL conditional text** — one row group per detected block, to be filled in by the
+customer or document owner), and `.conditional-blocks.yaml` (a machine sidecar carrying the
+per-block metadata the 3-column CSV can't: `id`, `key`, `placeholder`, `variant`, `render`,
+`source_text`, `top_level`, `parent_id`, `depth`). The CSV columns are always
+`placeholder,when,text`. Every block kind folds into the same CSV:
 
-**Front-loading the customer handoff (`leg0 --scan`).** The two human-fill files —
-`.conditional-form.md` and (when a `[[$token]]` block exists) `.variants.csv` — depend
-only on the document's *markup* (the `[[…]]` blocks and `[Name]` loops), not on the
-registry, path resolution, or the mapping. Scan mode runs the same document parse but
-writes *only* those two files, deferring `.raw.html`/`.annotated.html`/`.mapping.yaml`
-to a later full ingest. This lets you hand the customer their forms up front — ideally
-bundled with Leg -1's `.path-review.md` so all the hand-fill files arrive in one package
-instead of two interruptions. The forms scan writes are byte-identical to the full
-ingest's (shared parse); the later full ingest re-parses (deterministic, cheap) and
-re-emits them. Note: scan still requires the doc-to-text conversion, so it runs at the
-*front* of Leg 0, not before it — the block set can't be known without parsing the doc.
+- a **binary** `[[text]]` block → a conditioned row whose `text` is pre-filled from the
+  document, plus an empty-default row; the customer fills only the `when`.
+- a **template** (loop-inside-conditional, `render: template`) block → a single `when`-only
+  row, `text` blank because the section's wording stays in the document.
+- an **N-way** `[[$token]]` variant block → one row per condition + a default row.
+
+**Front-loading the customer handoff (`leg0 --scan`).** The human-fill file
+(`.variants.csv`) and its machine sidecar (`.conditional-blocks.yaml`) depend only on the
+document's *markup* (the `[[…]]` blocks and `[Name]` loops), not on the registry, path
+resolution, or the mapping. Scan mode runs the same document parse but writes *only* the
+CSV (plus the sidecar), deferring `.raw.html`/`.annotated.html`/`.mapping.yaml` to a later
+full ingest. This lets you hand the customer their CSV up front — ideally bundled with
+Leg -1's `.path-review.md` so both hand-fill files arrive in one package instead of two
+interruptions. The CSV scan writes is byte-identical to the full ingest's (shared parse);
+the later full ingest re-parses (deterministic, cheap) and re-emits it. Note: scan still
+requires the doc-to-text conversion, so it runs at the *front* of Leg 0, not before it —
+the block set can't be known without parsing the doc.
 
 A conditional block may contain `{field}` placeholders. Because the Leg 4 plugin owns
 conditional text (the template only outputs `${data.condN}`), those fields are resolved
@@ -241,23 +244,31 @@ DataFetcher-sourced fields are TODO-flagged in the plugin report instead of wire
 block, an author can write a single token — `[[$disclosureClause]]` — to mean "pick one of
 N text variants by data at render time" (e.g. a different disclosure per state). The token
 name becomes the block's stable join key end-to-end (`$doc.<token>` → `${data.<token>}` →
-`put("<token>", …)`), replacing the positional `condN` for that block. For each such token
-Leg 0 also writes a pre-filled `.variants.csv` stub (`placeholder, when, text` — row order
-is priority, a blank/`*`/`else` `when` is the default row). The customer fills it in Excel
-("Save As → CSV UTF-8"). At `--parse-conditional-form` time the sibling CSV is auto-detected
-and normalised: each `when` is parsed by the condition DSL (`condition_dsl.py`), bare leaf
-names resolve to full accessors against the registry, and the variants/default/scope merge
-into the block in `.conditional-registry.yaml`. A validation error (bad condition, missing
+`put("<token>", …)`), replacing the positional `condN` for that block. Each such token gets
+one row per condition + a default row in the same `.variants.csv` (`placeholder, when, text`
+— row order is priority, a blank/`*`/`else` `when` is the default row). The customer fills it
+in Excel ("Save As → CSV UTF-8"). At `--parse-variants-csv` time the CSV is read alongside
+its `.conditional-blocks.yaml` sidecar and normalised: each `when` is parsed by the condition
+DSL (`condition_dsl.parse_variants_csv`, using `present`/`absent` rather than `!= null`),
+bare leaf names resolve to full accessors against the registry, and the variants/default/scope
+merge into the block in `.conditional-registry.yaml`. Conditions are document-scoped — they
+reference quote/account/policy(segment) accessors, never per-exposure `item.*` (the DSL
+rejects per-exposure accessors at document scope). A validation error (bad condition, missing
 default, mixed scope, type mismatch) is reported and the registry is **not** written. Leg 4
 then emits an `if`/`else if`/`else` chain (first match wins, `Objects.equals`/`compareTo`,
 null-safe) selecting the variant text — field placeholders inside each variant are wired the
 same way as binary blocks.
 
-When the conditional form is returned, run `leg0_ingest.py --parse-conditional-form` to
-produce `.conditional-registry.yaml`. Leg 2 reads this registry automatically if it exists
-alongside the mapping file. If the conditional form is skipped, Leg 2 still runs — the
-`$doc.condN` placeholders in the template will remain unresolved until the registry is
-provided.
+The one genuinely-unsupported edge: an N-way `[[$token]]` block whose variants each carry
+their **own** loop (different loop-bearing wording per condition) — loop bodies can't live in
+a CSV `text` cell, and `render: template` is binary show/hide, not N-way. Vanishingly unlikely.
+
+When the variants CSV is returned, run `leg0_ingest.py --parse-variants-csv` to produce
+`.conditional-registry.yaml`. (The legacy `--parse-conditional-form <form.md>` flag is
+retained only for reading in-flight `conditional-form.md` files.) Leg 2 reads this registry
+automatically if it exists alongside the mapping file. If the variants CSV is skipped, Leg 2
+still runs — the `$doc.condN` placeholders in the template will remain unresolved until the
+registry is provided.
 
 ### Starting from an HTML mockup (Leg 1 path)
 

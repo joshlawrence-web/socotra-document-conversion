@@ -5,7 +5,6 @@ Layout::
     workspace/
       inbox/           source docs (pipeline input)
       action-needed/   FLAT — files a human must hand-edit:
-                         {stem}.conditional-form.md
                          {stem}.variants.csv
                          {stem}.path-review.md
       output/<stem>/   per-stem machine artifacts (.final.vm, .mapping.yaml, …)
@@ -33,7 +32,6 @@ ACTION_NEEDED = "action-needed"
 # Filename suffixes that live in action-needed/. Everything else a leg writes
 # stays in the machine output/<stem>/ dir.
 ACTION_NEEDED_SUFFIXES = (
-    ".conditional-form.md",
     ".variants.csv",
     ".path-review.md",
 )

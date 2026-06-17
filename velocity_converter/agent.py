@@ -219,10 +219,10 @@ def run(invocation: str, auto_yes: bool) -> int:
             return 1
         print(r1.get("stdout", ""))
 
-        # Step 2 — Leg 0 scan: emit the conditional form (+ variants.csv). Runs
-        # WITHOUT a path-map — path-review isn't filled yet, and the forms show the
-        # author's bare {field} syntax regardless, so it's harmless.
-        print("Intake step 2/2 — Leg 0 scan (conditional form + variants)…")
+        # Step 2 — Leg 0 scan: emit the single variants.csv (every conditional
+        # block). Runs WITHOUT a path-map — path-review isn't filled yet, and the
+        # CSV shows the author's bare {field} syntax regardless, so it's harmless.
+        print("Intake step 2/2 — Leg 0 scan (variants.csv)…")
         r2 = run_leg0_scan(input_path=input_html, output_dir=f"{output}/{stem}")
         if not r2["ok"]:
             print(f"Leg 0 scan failed (rc={r2['returncode']}):\n{r2['stderr']}", file=sys.stderr)

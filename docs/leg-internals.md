@@ -15,7 +15,7 @@ Line numbers drift as code changes; `grep -n 'def <name>'` if one looks off.
 
 ```mermaid
 flowchart TD
-  A["main()<br/>CLI entry"] -->|--parse-conditional-form| B["parse_conditional_form() — 923"]
+  A["main()<br/>CLI entry"] -->|"--parse-variants-csv<br/>(legacy: --parse-conditional-form)"| B["parse_variants_csv_to_blocks() — 1050<br/>+ load_conditional_blocks() — 925"]
   A -->|"--input .docx/.pdf (ingest or --scan)"| P["_parse_document()<br/>(writes nothing → ParseResult)"]
 
   subgraph PD["_parse_document()"]
@@ -36,40 +36,46 @@ flowchart TD
   Q -->|"yes (scan / intake)"| W["_write_human_fill_files()"]
   Q -->|"no (full ingest)"| L["write raw + annotated +<br/>write_leg2_mapping() — 779"]
   L --> W
-  W --> M["write_conditional_form() — 821"]
-  M --> N["write_variants_csv_stub() — 881<br/>(only if a variant block exists)"]
+  W --> M["write_variants_csv() — 835<br/>(all conditional text, one file)"]
+  M --> N["write_conditional_blocks() — 899<br/>(machine sidecar)"]
   B --> O["write_conditional_registry() — 1024"]
 ```
 
 **Entry:** `main()` — three modes: (1) default ingest (`--input <.docx|.pdf>`) extracts
-fields/conditionals/loops and emits annotated HTML + mapping + form; (2) `--input … --scan`
-runs the same parse but writes ONLY the human-fill files (conditional-form + variants.csv),
-front-loading the customer handoff; (3) `--parse-conditional-form <filled-form.md>` parses
-customer responses → conditional-registry.yaml.
+fields/conditionals/loops and emits annotated HTML + mapping + the variants CSV + its sidecar;
+(2) `--input … --scan` runs the same parse but writes ONLY the human-fill file (variants.csv)
+plus its machine sidecar (conditional-blocks.yaml), front-loading the customer handoff;
+(3) `--parse-variants-csv <filled.variants.csv>` parses customer responses (reading the CSV +
+its sidecar) → conditional-registry.yaml. The legacy `--parse-conditional-form <form.md>` flag
+is retained only for reading in-flight `conditional-form.md` files.
 
 **Shared parse:** both ingest and `--scan` call `_parse_document()` → `ParseResult`
 (convert → `extract_fields` → `annotate_fields` → `extract_conditionals` →
 `annotate_conditionals` → `extract_loops`); it writes nothing. The caller then chooses
 which artifacts to persist — full ingest writes machine artifacts + `_write_human_fill_files()`,
-scan writes only `_write_human_fill_files()`. The `render: template` flag the form depends on
+scan writes only `_write_human_fill_files()`. The `render: template` flag the CSV depends on
 is set inside `extract_loops`, so scan must run the full parse (not a markup-only regex).
 
 **Inputs → Outputs:** `.docx`/`.pdf` (+ optional `path-map.yaml`) → `.raw.html`,
-`.annotated.html`, `.mapping.yaml`, `.conditional-form.md` (+ `.variants.csv` if variants exist);
-or filled `.conditional-form.md` + `.variants.csv` → `.conditional-registry.yaml`.
+`.annotated.html`, `.mapping.yaml`, `.variants.csv` (the single human-fill file for ALL
+conditional text), `.conditional-blocks.yaml` (machine sidecar); or filled `.variants.csv`
++ `.conditional-blocks.yaml` → `.conditional-registry.yaml`.
 
 **Key internal stages:**
 - `convert_docx()` (74) / `convert_pdf()` (137) — parse paragraphs/tables/text → raw HTML.
 - `extract_fields()` (225) — regex-extract `{field}` tokens with occurrence symbols (`$ + *`), dedupe, optionally resolve dotted names via registry.
 - `extract_conditionals()` (432) — recursive `[[…]]` matching; detect variant tokens `[[$placeholder]]`, assign stable block IDs, nest children, dedupe keys.
 - `extract_loops()` (596) — match `[Name]…[/Name]`; move enclosed fields to loop scope; flip a containing conditional block to `render: template`; emit `#foreach`/`#end`.
-- `parse_conditional_form()` (923) — parse filled form + sibling `.variants.csv` → block list with resolved conditions.
+- `write_variants_csv()` (835) — emit `.variants.csv`, the single human-fill file for ALL conditional text (binary blocks fold to a conditioned row + empty-default row; template blocks to a `when`-only row; N-way blocks to one row per condition + a default).
+- `write_conditional_blocks()` (899) — emit the `.conditional-blocks.yaml` machine sidecar (id/key/placeholder/variant/render/source_text/top_level/parent_id/depth) the 3-column CSV can't carry.
+- `load_conditional_blocks()` (925) / `parse_variants_csv_to_blocks()` (1050) — read the sidecar + filled CSV → block list with conditions resolved through the DSL.
 - `write_leg2_mapping()` (779) — emit `.mapping.yaml` in Leg 2 contract (variables + loops, top-level/loop field split).
 
 **Invariants / gotchas:**
 - **Field token format:** `{field}` + occurrence symbol → deduped, normalized to `$TBD_field` (symbol never appears in output); name conflicts keep the first symbol seen and warn on stderr.
 - **Loop field membership** is decided *after* field annotation: a field whose every occurrence is inside `[Name]…[/Name]` moves to that loop; a field used both in and out stays top-level.
-- **Conditional with a loop inside** flips to `render: template` — `#if($doc.condN)` wraps the loop in the template and the plugin emits `condN` as a Boolean. Nested loops, or a loop crossing a block boundary, are refused (markers left literal, stderr warning).
+- **Conditional with a loop inside** flips to `render: template` — `#if($doc.condN)` wraps the loop in the template and the plugin emits `condN` as a Boolean; in the CSV it surfaces as a single `when`-only row (text blank). Nested loops, or a loop crossing a block boundary, are refused (markers left literal, stderr warning). Genuinely unsupported: an N-way `[[$token]]` block whose variants each carry their own loop (loop bodies can't live in a CSV `text` cell, and `render: template` is binary, not N-way).
+- **Conditions use the condition DSL** (`condition_dsl.parse_variants_csv`) — `present`/`absent`, not `!= null`. Conditions are document-scoped: quote/account/policy(segment) accessors only; per-exposure `item.*` is rejected at document scope.
 - **Variant placeholder dedupe:** `[[$stateClause]]` → placeholder `stateClause`; a colliding placeholder warns and falls back to positional `cond<id>` so registry keys stay unique.
 - **Path-map rewrite** runs *before* extraction (non-destructive; the source doc is never modified — the rewrite targets the working HTML).
 
@@ -237,7 +243,7 @@ flowchart TD
   Q --> R["_required_keys() — 840"]
   R --> S["_diff_keys() — 873 (offset cond ids)"]
   S --> T["_append_to_plugin() — 898"]
-  P --> V["render_conditional_puts() — 1244"]
+  P --> V["render_conditional_puts() — 1324"]
   T --> V
   V --> W["render_occurrence_guards() — 482"]
   W --> X["write .java"]
@@ -258,7 +264,7 @@ flowchart TD
 2. `_collect_datafetcher_calls()` (975) — DataFetcher vars per scope (quote & policy).
 3. `load_conditional_registry()` (1049) → `_build_cond_field_lookup()` (205) + `_augment_field_lookup_for_variants()` (320) → `_analyse_cond_fields()` (400).
 4. `render_java()` (1383) or `_append_to_plugin()` (898) — assemble the `.java`.
-5. `render_conditional_puts()` (1244) — binary + variant `if/else-if/else` chains.
+5. `render_conditional_puts()` (1324) — binary + variant `if/else-if/else` chains (binary now routes through the variant generator); template blocks via `_render_template_put()` (1269).
 6. `render_occurrence_guards()` (482) — null/empty checks for required & one_or_more.
 7. `validate_path()` (javap-walk) → `compile_check()` (1666, optional) → `write_report()` (1428).
 
@@ -269,8 +275,9 @@ flowchart TD
 - **Named variant blocks** merge by `block_key()` (name-based) — no positional renumber; a duplicate name is a logged conflict.
 
 **Conditional / variant / occurrence handling:**
-- **Binary block:** `String cond<id> = ""; if (<java_cond>) { cond<id> = <baked_text>; }`.
-- **N-way variant** (`_render_variant_puts()` 1184): `if (<cond0>) {…} else if (…) {…} else { <default> }`, first match wins.
+- **Binary block:** now routes through the variant generator (`_render_variant_puts()` 1209) as a one-real-row + empty-default fold: `String cond<id> = ""; if (<java_cond>) { cond<id> = <baked_text>; }`.
+- **N-way variant** (`_render_variant_puts()` 1209): `if (<cond0>) {…} else if (…) {…} else { <default> }`, first match wins.
+- **Template block** (`_render_template_put()` 1269): emits a Boolean `condN` from the single `when` AST (new flow) or legacy `conditions[]`.
 - **Field tokens inside blocks** → in-scope fields wired as Java accessor concat (`Objects.toString(policy.data().lastName(), "")`); unresolved field inside a block **hard-fails** (run Leg 2); unsupported (per-exposure/account/DataFetcher) → `// TODO` + WARN row.
 - **Occurrence guards:** required/one_or_more vars add to `missingRequired`; throw `IllegalStateException` before returning `renderingData`.
 - **Scope blocking:** a quote-scoped condition in the policy overload (or vice-versa) renders an empty put; mixed-scope blocks render empty in both overloads.

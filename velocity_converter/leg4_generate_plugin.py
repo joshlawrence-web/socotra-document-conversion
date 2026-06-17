@@ -345,18 +345,43 @@ def _augment_field_lookup_for_variants(
     if not names:
         return field_lookup
     acc_to_vel = _registry_accessor_to_velocity(registry_path)
-    synth_vars = [{"name": n, "data_source": acc_to_vel[n]} for n in names if n in acc_to_vel]
-    # Names not in the registry: mark unsupported (TODO + WARN row, never a hard
-    # fail — variant text is not path-validated at parse time the way `when` is).
-    extra = {
-        n: {
+    # Decision B (variants-only plan §2.4): a variant-text token may be a bare
+    # leaf (`{discountAmount}`), not the full accessor — mirror Leg -1's leaf →
+    # accessor resolution so a bare leaf no longer silently degrades to a TODO.
+    # A leaf that ends exactly one registry accessor resolves; >1 (ambiguous) or
+    # 0 (unmatched) is routed to the human via Leg -1 pass 2 (path-review),
+    # reported here as a WARN row — never a hard fail (variant text is not
+    # path-validated at parse time the way a `when` condition is).
+    leaf_to_accs: dict[str, list[str]] = {}
+    for acc in acc_to_vel:
+        leaf_to_accs.setdefault(acc.split(".")[-1], []).append(acc)
+
+    synth_vars: list[dict] = []
+    extra: dict[str, dict] = {}
+    for n in names:
+        if n in acc_to_vel:
+            synth_vars.append({"name": n, "data_source": acc_to_vel[n]})
+            continue
+        accs = leaf_to_accs.get(n, []) if "." not in n else []
+        if len(accs) == 1:
+            synth_vars.append({"name": n, "data_source": acc_to_vel[accs[0]]})
+            continue
+        if accs:
+            reason = (
+                f"ambiguous bare leaf — matches {', '.join(sorted(accs))}; write the "
+                "full accessor in the variant text, or resolve it via path-review (Leg -1 pass 2)"
+            )
+        else:
+            reason = (
+                "not found in registry (cannot derive Java accessor for variant text) — "
+                "resolve via path-review (Leg -1 pass 2) or write the full accessor"
+            )
+        extra[n] = {
             "data_source": "",
             "scope": None,
             "java_expr": "",
-            "unsupported_reason": "not found in registry (cannot derive Java accessor for variant text)",
+            "unsupported_reason": reason,
         }
-        for n in names if n not in acc_to_vel
-    }
     if synth_vars:
         synth = _build_cond_field_lookup(
             {"variables": synth_vars, "loops": []}, vel_to_cat,
@@ -1241,6 +1266,61 @@ def _render_variant_puts(block: dict, scope: str, field_lookup: dict[str, dict] 
     )
 
 
+def _render_template_put(block: dict, scope: str, bid, key: str, truncated: str) -> str:
+    """Render a ``render: template`` block to a single Boolean put.
+
+    The loop/prose stays in the template under ``#if($data.<key>)`` — the plugin
+    only supplies the Boolean. Condition source: the variants-only flow carries a
+    single ``when`` AST in ``variants[0]`` (scope computed at parse time); legacy
+    registries carry ``conditions[]``/``operator``. A scope-blocked or unfilled
+    condition puts ``false`` (an empty string is truthy in Velocity's ``#if``).
+    """
+    variants = block.get("variants") or []
+    if variants:  # variants-only flow: a single resolved `when` AST.
+        block_scope = (block.get("scope") or "").strip()
+        if block_scope and block_scope != scope:
+            return (
+                f'        // Conditional block {bid} (template-rendered): '
+                f'{block_scope}-scoped, n/a in {scope} context\n'
+                f'        renderingData.put("{key}", false);'
+            )
+        ast = ast_from_dict(variants[0].get("when") or {})
+        java_cond = condition_to_java(ast, scope)
+        return (
+            f'        // Conditional block {bid} (template-rendered): {truncated}\n'
+            f'        renderingData.put("{key}", {java_cond});'
+        )
+
+    # Legacy conditions[]/operator path (old registries, pre-variants-only).
+    raw_conds = block.get("conditions") or []
+    quote_scoped = any(c.strip().startswith("quote.") for c in raw_conds)
+    policy_scoped = any(c.strip().startswith("policy.") for c in raw_conds)
+    if raw_conds and scope == "policy" and quote_scoped:
+        return (
+            f'        // Conditional block {bid} (template-rendered): quote-scoped, n/a in policy context\n'
+            f'        renderingData.put("{key}", false);'
+        )
+    if raw_conds and scope == "quote" and policy_scoped:
+        return (
+            f'        // Conditional block {bid} (template-rendered): policy-scoped condition(s), n/a in quote context\n'
+            f'        renderingData.put("{key}", false);'
+        )
+    if raw_conds:
+        joiner = " || " if block.get("operator") == "OR" else " && "
+        java_cond = joiner.join(
+            _accessor_to_java(_rewrite_condition_root(c, scope)) for c in raw_conds
+        )
+        return (
+            f'        // Conditional block {bid} (template-rendered): {truncated}\n'
+            f'        renderingData.put("{key}", {java_cond});'
+        )
+    return (
+        f'        // TODO: fill conditions for {key} in conditional-registry.yaml\n'
+        f'        // (template-rendered) {truncated}\n'
+        f'        renderingData.put("{key}", false);'
+    )
+
+
 def render_conditional_puts(
     blocks: list[dict], scope: str = "quote", field_lookup: dict[str, dict] | None = None
 ) -> str:
@@ -1268,53 +1348,22 @@ def render_conditional_puts(
         truncated = preview[:60] + ("..." if len(preview) > 60 else "")
         raw_conds = b.get("conditions") or []
 
-        # N-way variant block (the 50-state feature): an if/else-if chain
-        # selecting one text by data, with a trailing default else. A loop/
-        # Boolean (render: template) block cannot also be a text selector.
+        # Template-rendered block (contains a loop): the loop/prose stays in the
+        # template under #if($data.<key>); the plugin supplies only the Boolean.
+        # Checked before the variants branch — the new flow carries the single
+        # `when` as a one-entry variants payload, so order matters.
+        if b.get("render") == "template":
+            lines.append(_render_template_put(b, scope, bid, key, truncated))
+            continue
+
+        # N-way variant block (the 50-state feature) + folded binary blocks: an
+        # if/else-if chain selecting one text by data, with a trailing default.
         if b.get("variants"):
-            if b.get("render") == "template":
-                raise ValueError(
-                    f"conditional block '{key}' has both a loop (render: template) and "
-                    "text variants — a loop block cannot be an N-way text selector"
-                )
             lines.append(_render_variant_puts(b, scope, field_lookup))
             continue
 
         quote_scoped = any(c.strip().startswith("quote.") for c in raw_conds)
         policy_scoped = any(c.strip().startswith("policy.") for c in raw_conds)
-
-        # Template-rendered block (contains a loop): content stays in the
-        # template under #if($data.condN) — the plugin only supplies the
-        # Boolean. No text baking, no field wiring. A scope-blocked or
-        # unfilled condition puts false (an empty string would be truthy
-        # in Velocity's #if).
-        if b.get("render") == "template":
-            if raw_conds and scope == "policy" and quote_scoped:
-                lines.append(
-                    f'        // Conditional block {bid} (template-rendered): quote-scoped, n/a in policy context\n'
-                    f'        renderingData.put("{key}", false);'
-                )
-            elif raw_conds and scope == "quote" and policy_scoped:
-                lines.append(
-                    f'        // Conditional block {bid} (template-rendered): policy-scoped condition(s), n/a in quote context\n'
-                    f'        renderingData.put("{key}", false);'
-                )
-            elif raw_conds:
-                joiner = " || " if b["operator"] == "OR" else " && "
-                java_cond = joiner.join(
-                    _accessor_to_java(_rewrite_condition_root(c, scope)) for c in raw_conds
-                )
-                lines.append(
-                    f'        // Conditional block {bid} (template-rendered): {truncated}\n'
-                    f'        renderingData.put("{key}", {java_cond});'
-                )
-            else:
-                lines.append(
-                    f'        // TODO: fill conditions for {key} in conditional-registry.yaml\n'
-                    f'        // (template-rendered) {truncated}\n'
-                    f'        renderingData.put("{key}", false);'
-                )
-            continue
 
         # Classify this block's field tokens for the current scope.
         field_exprs: dict[str, str] = {}
@@ -1579,15 +1628,15 @@ def write_report(
         report_out_dir = report_path.parent
         n_conds = _count_annotated_conditionals(report_out_dir, stem)
         if n_conds > 0:
-            form_path = action_needed_dir(report_out_dir) / f"{stem}.conditional-form.md"
-            if form_path.exists():
+            csv_path = action_needed_dir(report_out_dir) / f"{stem}.variants.csv"
+            if csv_path.exists():
                 fix_cmd = (
                     f"python3 -m velocity_converter.leg0_ingest "
-                    f"--parse-conditional-form {form_path} "
+                    f"--parse-variants-csv {csv_path} "
                     f"--output-dir {report_out_dir}"
                 )
             else:
-                fix_cmd = "(conditional-form.md not found — re-run Leg 0 first)"
+                fix_cmd = "(variants.csv not found — re-run Leg 0 first)"
             lines.append(
                 f"> ⚠ WARNING: {n_conds} conditional(s) detected in `{stem}.annotated.html` "
                 f"but no `conditional-registry.yaml` was found — all conditionals were omitted from the plugin.\n"
@@ -1852,15 +1901,15 @@ def _process_form(
     if not cond_yaml.exists():
         n_conds = _count_annotated_conditionals(form_dir, stem)
         if n_conds > 0:
-            form_path = action_needed_dir(form_dir) / f"{stem}.conditional-form.md"
-            if form_path.exists():
+            csv_path = action_needed_dir(form_dir) / f"{stem}.variants.csv"
+            if csv_path.exists():
                 fix_cmd = (
                     f"python3 -m velocity_converter.leg0_ingest "
-                    f"--parse-conditional-form {form_path} "
+                    f"--parse-variants-csv {csv_path} "
                     f"--output-dir {form_dir}"
                 )
             else:
-                fix_cmd = "(conditional-form.md not found — re-run Leg 0 first)"
+                fix_cmd = "(variants.csv not found — re-run Leg 0 first)"
             print(
                 f"WARNING: {n_conds} conditional(s) detected in {stem}.annotated.html "
                 f"but no conditional-registry.yaml found.\nRun: {fix_cmd}",

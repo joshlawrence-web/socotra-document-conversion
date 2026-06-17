@@ -240,11 +240,12 @@ def scan_document(
     """Scan a Word (.docx) or PDF for its conditional blocks and emit ONLY the
     customer-facing hand-fill files — no machine artifacts.
 
-    Runs Leg 0 in --scan mode: it parses the document and writes the
-    conditional-form.md (and a variants.csv when a `[[$token]]` block exists),
-    deferring the raw/annotated HTML and mapping to a later full ingest. Use this
-    to front-load the customer handoff — hand them the forms to fill while the
-    rest of the pipeline waits. The forms are byte-identical to a full ingest's.
+    Runs Leg 0 in --scan mode: it parses the document and writes the single
+    variants.csv (covering every conditional block — binary, template, and
+    `[[$token]]` variant), deferring the raw/annotated HTML and mapping to a later
+    full ingest. Use this to front-load the customer handoff — hand them the CSV
+    to fill while the rest of the pipeline waits. The CSV is byte-identical to a
+    full ingest's.
 
     Use when the user says: "send the customer the conditional form", "what does
     the customer need to fill in", "prep the intake package", "just give me the
@@ -264,11 +265,11 @@ def scan_document(
 
     from velocity_converter.workspace import action_needed_dir
     action = action_needed_dir(out)
-    lines = [f"Leg 0 scan complete. Hand these to the customer to fill:"]
-    for name in (f"{stem}.conditional-form.md", f"{stem}.variants.csv"):
+    lines = [f"Leg 0 scan complete. Hand this to the customer to fill:"]
+    for name in (f"{stem}.variants.csv",):
         if (action / name).exists():
             lines.append(f"  {action}/{name}")
-    lines.append(f"\nAfter they return the form(s), run ingest_document on {inp} for the full conversion.")
+    lines.append(f"\nAfter they return the CSV, run ingest_document on {inp} for the full conversion.")
     return "\n".join(lines)
 
 
@@ -277,12 +278,13 @@ def ingest_document(
     input_path: str,
     output_dir: str = "workspace/output",
 ) -> str:
-    """Ingest a Word (.docx) or PDF document into raw HTML and a conditional form.
+    """Ingest a Word (.docx) or PDF document into raw HTML and a variants CSV.
 
     Runs Leg 0 of the pipeline:
       - Converts .docx or .pdf to raw HTML
       - Annotates {field} tokens as $TBD_* placeholders
-      - Extracts conditional blocks into a customer-facing form
+      - Extracts conditional blocks into a customer-facing variants.csv (+ a
+        machine conditional-blocks.yaml sidecar)
       - Writes .mapping.yaml for Leg 2 input
 
     Use when the user says: "convert my Word document", "ingest this PDF",
@@ -306,13 +308,14 @@ def ingest_document(
         (out, f"{stem}.raw.html"),
         (out, f"{stem}.annotated.html"),
         (out, f"{stem}.mapping.yaml"),
-        (action, f"{stem}.conditional-form.md"),
+        (out, f"{stem}.conditional-blocks.yaml"),
+        (action, f"{stem}.variants.csv"),
     ]
     lines = [f"Leg 0 complete. Output: {out}"]
     for d, name in artifact_locs:
         if (d / name).exists():
             lines.append(f"  {name}")
-    lines.append(f"\nFill {stem}.conditional-form.md (in {action}/) for conditional logic review.")
+    lines.append(f"\nFill {stem}.variants.csv (in {action}/) for conditional logic review.")
     lines.append(f"Then run suggest_velocity_paths on {out}/{stem}.mapping.yaml to continue.")
     return "\n".join(lines)
 

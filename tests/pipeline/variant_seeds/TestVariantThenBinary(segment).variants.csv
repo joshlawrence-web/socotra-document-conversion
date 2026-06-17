@@ -1,9 +1,0 @@
-# Variant seed for TestVariantThenBinary(segment) — copied over the Leg 0 stub by
-# run_test_pipeline.py --auto. The variant block ([[$disclosureClause]]) precedes
-# a binary block in the document; this fixture guards the variant-then-binary
-# parse fix. Texts use FULL accessors ({policy.policyNumber}, {policy.data.discountAmount})
-# so Leg 4 wires them into the if/else-if chain and compiles against the JAR.
-placeholder,when,text
-disclosureClause,"discountType == ""FLAT""","Policy {policy.policyNumber}: a flat discount of {policy.data.discountAmount} has been applied."
-disclosureClause,"discountType == ""PERCENT""","Policy {policy.policyNumber}: a percentage discount applies to your premium."
-disclosureClause,,"Policy {policy.policyNumber}: no discount applies. Amount on file is {policy.data.discountAmount}."

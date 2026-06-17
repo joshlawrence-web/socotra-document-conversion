@@ -697,6 +697,7 @@ def parse_variants_csv(
     *,
     classpath: str | None = None,
     product: str | None = None,
+    template_placeholders: set[str] | None = None,
 ) -> VariantParseResult:
     """Normalise a customer ``<stem>.variants.csv`` into structured variants.
 
@@ -705,7 +706,14 @@ def parse_variants_csv(
     placeholder this validates: exactly one default, ≥1 conditioned row, every
     ``when`` parses + (with a registry) validates, and a single shared scope.
     Bare leaf names in ``when`` are resolved against the registry.
+
+    ``template_placeholders`` (variants-only plan §2.3, Decision A): keys for
+    loop-bearing ``render: template`` blocks. Such a block carries a single
+    ``when`` and **no** text/default (its wording stays in the document), so the
+    default-row and N-way validations are skipped for it; >1 conditioned row is
+    rejected (the unsupported per-variant-loop edge).
     """
+    template_placeholders = template_placeholders or set()
     result = VariantParseResult()
     p = Path(path)
     if not p.is_file():
@@ -761,10 +769,19 @@ def parse_variants_csv(
                 continue
             variants.append({"when": ast_to_dict(ast), "text": text, "_ast": ast})
 
-        if default_count == 0:
-            errors.append(f"{ph}: no default row (blank/*/else 'when') — block would render empty when nothing matches")
-        elif default_count > 1:
-            errors.append(f"{ph}: {default_count} default rows (expected exactly one)")
+        is_template = ph in template_placeholders
+        if is_template:
+            if default_count:
+                errors.append(f"{ph}: template (loop) block takes a single `when` only — "
+                              "remove the default/blank-when row(s)")
+            if len(variants) > 1:
+                errors.append(f"{ph}: template (loop) block has {len(variants)} conditioned rows — "
+                              "an N-way block whose variants each carry a loop is unsupported")
+        else:
+            if default_count == 0:
+                errors.append(f"{ph}: no default row (blank/*/else 'when') — block would render empty when nothing matches")
+            elif default_count > 1:
+                errors.append(f"{ph}: {default_count} default rows (expected exactly one)")
         if not variants and not errors:
             errors.append(f"{ph}: no conditioned variant rows")
         if len(scopes) > 1:

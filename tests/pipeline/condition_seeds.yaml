@@ -1,35 +1,75 @@
-# Predefined conditions for automated pipeline test runs.
+# Predefined conditions for automated pipeline test runs (variants-only flow).
 #
-# Keys match the document stem (filename without extension).
-# Each block number maps to a valid accessor-expression from path-registry.yaml.
-# These are used by run_test_pipeline.py --auto to fill the conditional-form.md
-# before running --parse-conditional-form.
+# Keys match the document stem (filename without extension). Under each stem,
+# keys are the block keys from Leg 0's machine sidecar (<stem>.conditional-blocks.yaml):
+#   - binary / template block (cond<n>): a scalar `when` string in the condition
+#     DSL (use `present`/`absent`, NOT `!= null`). Binary blocks fold to a
+#     one-real-row + empty-default variant; the conditioned row's text is taken
+#     from Leg 0's prefilled stub. Template (loop) blocks use the `when` as a
+#     Boolean — the section text stays in the document.
+#   - variant block ($token): a list of {when, text} rows (row order = priority,
+#     first match wins). Exactly one row has a blank `when` (the default/else).
 #
-# Update these if new registry paths are added or the fixtures change.
+# run_test_pipeline.py --auto builds the filled <stem>.variants.csv from these
+# seeds + Leg 0's stub, then runs --parse-variants-csv.
+#
+# Conditions are document-scoped, so they reference quote/account/policy(segment)
+# accessors — never per-exposure item.* (which has no local at document scope and
+# is correctly rejected by the condition DSL).
 
 "TestQuoteSummary(quote)":
-  1: "quoteNumber != null"
-  2: "endTime != null"
+  cond1: "quote.quoteNumber present"
+  cond2: "quote.endTime present"
 
 "TestItemCert(segment)":
-  1: "item.data.itemInWarrantyAtTakeup != null"
-  2: "item.data.itemInWorkingOrderAtTakeup != null"
-  3: "item.data.purchasePrice != null"
+  cond1: "policy.data.coolingOffPeriod present"
+  cond2: "policy.data.gracePeriod present"
+  cond3: "policy.data.settlementPeriod present"
 
 "TestRenewalNotice(segment)":
-  1: "policy.data.discountAmount != null"
-  2: "policy.data.coolingOffPeriod != null"
-  3: "policy.data.gracePeriod != null"
+  cond1: "policy.data.discountAmount present"
+  cond2: "policy.data.coolingOffPeriod present"
+  cond3: "policy.data.gracePeriod present"
 
 "TestItemsSchedule(segment)":
-  1: "item.data.purchasePrice != null"
+  cond1: "policy.data.discountAmount present"
 
+# cond1 is the [Item] loop inside a [[conditional]] → render: template block
+# (the `when` is a Boolean; the loop text stays in the document). cond2 is a
+# trailing binary block.
 "TestGiftSchedule(segment)":
-  1: "policy.data.discountAmount != null"
-  2: "policy.data.gracePeriod != null"
+  cond1: "policy.data.discountAmount present"
+  cond2: "policy.data.gracePeriod present"
 
-# Block 1 is the [[$disclosureClause]] variant (filled from variant_seeds, no
-# condition here); Block 2 is the trailing binary block — the one the old parser
-# bug stole the condition from.
+# disclosureClause is the N-way [[$token]] variant block.
+"TestStateDisclosure(segment)":
+  disclosureClause:
+    - when: 'discountType == "FLAT"'
+      text: 'Policy {policy.policyNumber}: a flat discount of {policy.data.discountAmount} has been applied.'
+    - when: 'discountType == "PERCENT"'
+      text: 'Policy {policy.policyNumber}: a percentage discount applies to your premium.'
+    - when: ''
+      text: 'Policy {policy.policyNumber}: no discount applies. Amount on file is {policy.data.discountAmount}.'
+
+# disclosureClause ([[$token]] variant) immediately followed by cond2 (binary) —
+# the regression guard for the variant-then-binary parse fix (now one CSV path).
 "TestVariantThenBinary(segment)":
-  2: "policy.data.coolingOffPeriod != null"
+  disclosureClause:
+    - when: 'discountType == "FLAT"'
+      text: 'Policy {policy.policyNumber}: a flat discount of {policy.data.discountAmount} has been applied.'
+    - when: 'discountType == "PERCENT"'
+      text: 'Policy {policy.policyNumber}: a percentage discount applies to your premium.'
+    - when: ''
+      text: 'Policy {policy.policyNumber}: no discount applies. Amount on file is {policy.data.discountAmount}.'
+  cond2: "policy.data.coolingOffPeriod present"
+
+# Decision B: the variant text uses a BARE leaf ({discountAmount}) — Leg 4 must
+# resolve it to policy.data.discountAmount and wire a real accessor, not a TODO.
+"TestVariantBareLeaf(segment)":
+  bareLeafClause:
+    - when: 'discountType == "FLAT"'
+      text: 'Policy {policy.policyNumber}: a flat discount of {discountAmount} has been applied.'
+    - when: 'discountType == "PERCENT"'
+      text: 'Policy {policy.policyNumber}: a percentage discount applies to your premium.'
+    - when: ''
+      text: 'Policy {policy.policyNumber}: no discount applies. Amount on file is {discountAmount}.'

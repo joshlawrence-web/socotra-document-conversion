@@ -277,13 +277,40 @@ def write_path_changes(results: list[dict], stem: str, out: Path,
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def run_suggest(input_path: Path, registry_path: Path, output_dir: Path) -> int:
+def _variants_csv_text(csv_path: Path) -> str:
+    """Concatenate the ``text`` cells of a ``<stem>.variants.csv`` so
+    :func:`collect_placeholders` can scan the ``{leaf}`` tokens the customer
+    authored *in the CSV* (variants-only plan §2.6, Decision B).
+
+    The variant text post-dates Leg -1 pass 1 (the source doc held only the
+    ``[[$token]]`` marker), so its leaves were never seen by the first scan —
+    feeding the CSV text in as a second source surfaces them.
+    """
+    from velocity_converter.condition_dsl import _read_csv_rows  # noqa: PLC0415
+    try:
+        rows = _read_csv_rows(csv_path.read_text(encoding="utf-8"))
+    except OSError:
+        return ""
+    return "\n".join(r.get("text", "") for r in rows)
+
+
+def run_suggest(
+    input_path: Path,
+    registry_path: Path,
+    output_dir: Path,
+    variants_csv: Path | None = None,
+) -> int:
     text = _doc_to_text(input_path)
     source = input_path.name
     roots, root_err = parse_rendering_roots(source)
     if root_err:
         print(f"WARNING: {root_err}", file=sys.stderr)
     reg = yaml.safe_load(registry_path.read_text(encoding="utf-8")) or {}
+
+    # Pass 2 (Decision B): also scan the filled variants.csv's text cells.
+    pass2 = variants_csv is not None and variants_csv.is_file()
+    if pass2:
+        text = text + "\n" + _variants_csv_text(variants_csv)
 
     fields = collect_placeholders(text)
     if not fields:
@@ -299,6 +326,33 @@ def run_suggest(input_path: Path, registry_path: Path, output_dir: Path) -> int:
     review = action_needed_file(out_dir, f"{stem}.path-review.md")
     pmap = out_dir / f"{stem}.path-map.yaml"
     changes = out_dir / f"{stem}.path-changes.md"
+
+    if pass2:
+        # Dedup against pass 1's path-map: leaves already resolved up front are
+        # carried forward silently — only net-new (variant-text) leaves surface
+        # into the delta review. Leave the pass-1 path-map/audit untouched; the
+        # human edits the delta review and re-runs --parse-path-review, which
+        # merges the net-new leaves into the existing map (run_apply unions the
+        # prior path-map with the review).
+        prior_leaves: set[str] = set()
+        if pmap.exists():
+            prior_data = yaml.safe_load(pmap.read_text(encoding="utf-8")) or {}
+            prior_leaves = {f["leaf"] for f in (prior_data.get("fields") or [])}
+        net_new = [r for r in results if r["leaf"] not in prior_leaves]
+        if not net_new:
+            print("Pass 2: no net-new variant-text leaves — path-review unchanged "
+                  "(Decision B skip; nothing for the customer to resolve).")
+            return 0
+        write_path_review(net_new, stem, source, input_path, roots, review)
+        n_res = sum(1 for r in net_new if r["status"] == "resolved")
+        n_amb = sum(1 for r in net_new if r["status"] == "ambiguous")
+        n_none = sum(1 for r in net_new if r["status"] == "unmatched")
+        print(f"Wrote {review}")
+        print(f"\nPass 2: {len(net_new)} net-new variant-text leaf(s): "
+              f"{n_res} resolved, {n_amb} ambiguous, {n_none} unmatched.")
+        print(f"Edit the Final lines in {review.name}, then re-run with --parse-path-review "
+              "(net-new leaves merge into the existing path-map).")
+        return 0
 
     write_path_review(results, stem, source, input_path, roots, review)
     write_path_map(results, stem, source, input_path, roots, pmap)
@@ -450,8 +504,16 @@ def run_apply(review_path: Path, output_dir: Path | None) -> int:
             input_path = Path(prior_data["input_path"])
     prior_by_leaf = {f["leaf"]: f for f in prior_fields}
 
-    # Iterate the prior field order if available, else the review order.
-    leaves = [f["leaf"] for f in prior_fields] or list(final_by_leaf)
+    # Iterate the prior field order, then append any net-new leaves the review
+    # introduced (Decision B pass 2: variant-text leaves absent from pass 1's
+    # path-map must merge in, not be dropped). Falls back to review order when
+    # there is no prior map at all.
+    leaves = [f["leaf"] for f in prior_fields]
+    for leaf in final_by_leaf:
+        if leaf not in prior_by_leaf:
+            leaves.append(leaf)
+    if not leaves:
+        leaves = list(final_by_leaf)
 
     results: list[dict] = []
     decided: dict[str, str] = {}
@@ -535,6 +597,10 @@ def main() -> int:
     parser.add_argument("--output-dir", default=None, help="Output directory")
     parser.add_argument("--parse-path-review", default=None, metavar="REVIEW.md",
                         help="Parse a (human-edited) review → final map + resolved doc")
+    parser.add_argument("--variants-csv", default=None, metavar="VARIANTS.csv",
+                        help="Pass 2 (Decision B): also scan a filled <stem>.variants.csv's "
+                             "text cells; emit a delta review of net-new variant-text leaves "
+                             "(deduped against the pass-1 path-map)")
     args = parser.parse_args()
 
     if args.parse_path_review:
@@ -560,7 +626,11 @@ def main() -> int:
         return 1
 
     output_dir = Path(args.output_dir) if args.output_dir else input_path.parent
-    return run_suggest(input_path, registry_path, output_dir)
+    variants_csv = Path(args.variants_csv) if args.variants_csv else None
+    if variants_csv and not variants_csv.exists():
+        print(f"Error: variants CSV not found: {variants_csv}", file=sys.stderr)
+        return 1
+    return run_suggest(input_path, registry_path, output_dir, variants_csv=variants_csv)
 
 
 if __name__ == "__main__":

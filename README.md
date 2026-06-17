@@ -22,7 +22,8 @@ flowchart LR
   RAW[".raw.html"]
   ANN[".annotated.html"]
   L0MAP[".mapping.yaml\n(TBD placeholders)"]
-  FORM[/".conditional-form.md\nsend to customer"/]
+  VARCSV[/".variants.csv\nsend to customer\n(all conditional text)"/]
+  CONDBLK[".conditional-blocks.yaml\n(machine sidecar)"]
   CONDREG[".conditional-registry.yaml"]
   L1MAP[".mapping.yaml\n(TBD placeholders)"]
   ENRICHED[".mapping.yaml\n(path suggestions)"]
@@ -39,8 +40,9 @@ flowchart LR
   PATHMAP -.->|"--path-map"| Leg0
 
   DOC -->|"leg0"| Leg0
-  Leg0 --> RAW & ANN & L0MAP & FORM
-  FORM -->|"parse-conditional-form\nafter customer fills"| CONDREG
+  Leg0 --> RAW & ANN & L0MAP & VARCSV & CONDBLK
+  VARCSV -->|"parse-variants-csv\nafter customer fills"| CONDREG
+  CONDBLK -.->|"read at parse time"| CONDREG
 
   HTML -->|"leg1"| Leg1
   Leg1 --> L1MAP
@@ -66,7 +68,7 @@ flowchart LR
 
 This is a **five-leg pipeline (Leg 0–4)**:
 
-**Leg 0** (`leg0_ingest.py`) ingests a Word/PDF doc; extracts HTML + a conditional-form for the customer to fill in.
+**Leg 0** (`leg0_ingest.py`) ingests a Word/PDF doc; extracts HTML + a single `.variants.csv` for the customer to fill in (the one human-fill file for ALL conditional text), plus a machine `.conditional-blocks.yaml` sidecar read back at parse time.
 
 **Leg 1** (`convert.py`) converts an HTML mockup — annotated with `{{variable_name}}` placeholders and `*loop_name*` markers — into a Velocity `.vm` template and a `.mapping.yaml` file whose `data_source` fields are populated with `$TBD_*` placeholders.
 
@@ -233,7 +235,7 @@ If you say *"only fill the high confidence fields"*, the server substitutes only
 | `tools/` | Dev tooling (`generate_test_fixtures.py`) |
 | `.cursor/skills/` | Leg 1 and Leg 2 agent runbooks (docs only — code lives in the package) |
 | `workspace/inbox/` | Source docs you feed the pipeline (`.docx`/`.pdf`/`.html`) |
-| `workspace/action-needed/` | Human-fill files awaiting a person — conditional forms, variant CSVs, path reviews (gitignored) |
+| `workspace/action-needed/` | Human-fill files awaiting a person — variant CSVs (all conditional text), path reviews (gitignored) |
 | `workspace/output/` | Per-stem generated pipeline outputs (gitignored — run the pipeline to populate) |
 | `registry/` | Pre-generated path registry plus Leg 2 config (`terminology.yaml`, `skill-lessons.yaml`) |
 | `socotra-config/` | Bundled sample Socotra config — drives the demo registry |

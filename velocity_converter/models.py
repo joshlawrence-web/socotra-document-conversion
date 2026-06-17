@@ -396,7 +396,8 @@ def block_key(block: dict) -> str:
 
 
 class ConditionalRegistry(RootModel[list[ConditionalBlock]]):
-    """List-of-blocks document written by leg0 --parse-conditional-form."""
+    """List-of-blocks document written by leg0 --parse-variants-csv (or the
+    legacy --parse-conditional-form)."""
 
 
 # ---------------------------------------------------------------------------
