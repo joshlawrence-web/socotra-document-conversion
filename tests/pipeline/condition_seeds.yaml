@@ -27,3 +27,9 @@
 "TestGiftSchedule(segment)":
   1: "policy.data.discountAmount != null"
   2: "policy.data.gracePeriod != null"
+
+# Block 1 is the [[$disclosureClause]] variant (filled from variant_seeds, no
+# condition here); Block 2 is the trailing binary block — the one the old parser
+# bug stole the condition from.
+"TestVariantThenBinary(segment)":
+  2: "policy.data.coolingOffPeriod != null"

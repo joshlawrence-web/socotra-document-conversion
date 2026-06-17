@@ -1,17 +1,28 @@
 #!/usr/bin/env python3
-"""Demo UI for the Velocity Converter pipeline.
+"""Demo UI for the Velocity Converter pipeline — intake front-door edition.
 
 Single-file local web app (stdlib only — no Flask):
 
     python3 tools/demo_ui.py            # serves http://localhost:8765
     python3 tools/demo_ui.py --port 9000
 
-Flow:
-  1. Drag/drop or pick a .docx/.pdf  -> saved to workspace/inbox/, Leg 0 runs.
-  2. Output files listed per form    -> double-click any file to open it
-     natively (fill the conditional form there).
-  3. "Generate template" runs the conditional-form parse (if needed) +
-     Leg 2 + Leg 3; optional toggle also runs Leg 4 (plugin).
+This UI tells the "Priya / ZenCover Welcome Letter" story (docs/demo-story.md):
+the customer writes a normal Word letter with four markers, hands it over once,
+and the pipeline gives back three fill-in-the-blank files.
+
+Flow (four stages, left to right):
+  1. Intake    — drop a .docx/.pdf → Leg -1 (suggest) + Leg 0 (scan) produce the
+                 THREE human-fill files: <stem>.path-review.md,
+                 <stem>.conditional-form.md, <stem>.variants.csv.
+  2. Fill      — click any fill file to edit it right in the browser:
+                 confirm the Final: accessor lines, write the Condition: lines,
+                 fill the variant rows. Save without leaving the page.
+  3. Resolve   — "Resolve & ingest" runs Leg -1 (apply) → path-map, then the full
+                 Leg 0 ingest WITH that path-map → the machine .mapping.yaml.
+                 Human fill files are snapshotted/restored across the re-ingest so
+                 customer answers are never clobbered.
+  4. Generate  — parse the conditional form (+ variants) → registry, then Leg 2+3
+                 → .final.vm; optional toggle also runs Leg 4 (snapshot plugin).
 """
 
 from __future__ import annotations
@@ -32,10 +43,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from velocity_converter.agent_tools import (  # noqa: E402
-    run_leg0,
+    run_leg0_scan,
     run_leg2,
     run_leg3,
     run_leg4,
+    run_legminus1,
+    run_legminus1_apply,
 )
 from velocity_converter.models import (  # noqa: E402
     ContractError,
@@ -57,6 +70,9 @@ DATAMODEL_JAR = "build/core-datamodel-v1.7.61.jar"
 
 ALLOWED_UPLOAD_SUFFIXES = {".docx", ".pdf"}
 
+# The three customer-facing hand-fill files (suffixes), in fill order.
+FILL_SUFFIXES = (".path-review.md", ".conditional-form.md", ".variants.csv")
+
 
 # --------------------------------------------------------------------------
 # Pipeline helpers
@@ -69,11 +85,27 @@ def _rel(p: Path) -> str:
         return str(p)
 
 
+def _inbox_source(stem: str) -> Path | None:
+    """Locate the original .docx/.pdf in workspace/inbox/ for a form stem."""
+    for suffix in (".docx", ".pdf"):
+        cand = INPUT_DIR / f"{stem}{suffix}"
+        if cand.is_file():
+            return cand
+    return None
+
+
+def _count_blank(path: Path, pattern: str) -> int:
+    """Count lines matching ``pattern`` (a `^…$` regex) in a text file."""
+    if not path.exists():
+        return 0
+    return len(re.findall(pattern, path.read_text(encoding="utf-8"), re.M))
+
+
 def form_status(form_dir: Path) -> dict:
     stem = form_dir.name
-    # Machine artifacts live in form_dir; the human-fill files (conditional form,
-    # variants CSV, path review) live in the flat action-needed/ space. Surface
-    # both in the card so the demo still shows what needs filling.
+    # Machine artifacts live in form_dir; the human-fill files (path review,
+    # conditional form, variants CSV) live in the flat action-needed/ space.
+    # Surface both in the card so the demo shows everything that needs filling.
     action_dir = action_needed_dir(form_dir)
     action_files = sorted(action_dir.glob(f"{stem}.*")) if action_dir.is_dir() else []
     files = sorted(
@@ -83,17 +115,31 @@ def form_status(form_dir: Path) -> dict:
     )
     plugin = sorted(form_dir.glob("*DocumentDataSnapshotPluginImpl.java"))
 
+    review_f = action_dir / f"{stem}.path-review.md"
+    variants_f = action_dir / f"{stem}.variants.csv"
+    pathmap_f = form_dir / f"{stem}.path-map.yaml"
     registry_f = form_dir / f"{stem}.conditional-registry.yaml"
     form_f = action_dir / f"{stem}.conditional-form.md"
+    mapping_f = form_dir / f"{stem}.mapping.yaml"
+
+    # Leg -1: how many Final: accessor lines the human still has to fill.
+    path_unfilled = _count_blank(review_f, r"^Final:\s*$")
+
     form_stale = (
         registry_f.exists()
         and form_f.exists()
         and form_f.stat().st_mtime > registry_f.stat().st_mtime
     )
-    # Count conditions the customer still has to fill in — from the form when
-    # it is the freshest source of truth, otherwise from the parsed registry.
+    # path-review edited after the ingest that consumed it → paths are stale.
+    paths_stale = (
+        pathmap_f.exists()
+        and review_f.exists()
+        and review_f.stat().st_mtime > pathmap_f.stat().st_mtime
+    )
+    # Count conditions the customer still has to fill — from the form when it is
+    # the freshest source of truth, otherwise from the parsed registry.
     if form_f.exists() and (not registry_f.exists() or form_stale):
-        unfilled = len(re.findall(r"^Condition:\s*$", form_f.read_text(encoding="utf-8"), re.M))
+        unfilled = _count_blank(form_f, r"^Condition:\s*$")
     elif registry_f.exists():
         unfilled = len(unfilled_conditions(stem))
     else:
@@ -106,7 +152,12 @@ def form_status(form_dir: Path) -> dict:
             {"name": f.name, "path": _rel(f), "size": f.stat().st_size}
             for f in files
         ],
-        "ingested": (form_dir / f"{stem}.mapping.yaml").exists(),
+        "pathReview": review_f.exists(),
+        "pathUnfilled": path_unfilled,
+        "pathMap": pathmap_f.exists(),
+        "pathsStale": paths_stale,
+        "variants": variants_f.exists(),
+        "ingested": mapping_f.exists(),
         "conditionalForm": form_f.exists(),
         "registry": registry_f.exists(),
         "template": (form_dir / f"{stem}.final.vm").exists(),
@@ -123,6 +174,43 @@ def list_forms() -> list[dict]:
     return [f for f in forms if f["files"]]
 
 
+def do_intake(rel_path: str) -> dict:
+    """Run the intake front door: Leg -1 (suggest) + Leg 0 (scan).
+
+    Produces the three human-fill files at once — path-review.md,
+    conditional-form.md and variants.csv (when a [[$token]] block exists).
+    Mirrors the ``RUN_PIPELINE intake`` operation in agent.py.
+    """
+    src = (REPO_ROOT / rel_path).resolve()
+    if not str(src).startswith(str(INPUT_DIR.resolve())) or not src.is_file():
+        return {"ok": False, "error": "File must live in workspace/inbox/."}
+    if src.suffix.lower() not in ALLOWED_UPLOAD_SUFFIXES:
+        return {"ok": False, "error": "Intake needs a .docx or .pdf document."}
+
+    stem = src.stem
+    # Step 1 — Leg -1 suggest: bare {leaf} → accessor review (registry-only).
+    r1 = run_legminus1(
+        input_path=_rel(src),
+        registry=PATH_REGISTRY,
+        output_dir="workspace/output",
+    )
+    if not r1.get("ok"):
+        return {"ok": False, "error": f"Leg -1 (suggest) failed.\n{r1.get('stderr', '')}", "stem": stem}
+
+    # Step 2 — Leg 0 scan: conditional form (+ variants.csv) only, no machine
+    # artifacts. Runs without a path-map (path-review isn't filled yet).
+    r2 = run_leg0_scan(input_path=_rel(src), output_dir=f"workspace/output/{stem}")
+    if not r2.get("ok"):
+        return {"ok": False, "error": f"Leg 0 (scan) failed.\n{r2.get('stderr', '')}", "stem": stem}
+
+    return {
+        "ok": True,
+        "stem": stem,
+        "artifacts": (r1.get("artifacts") or []) + (r2.get("artifacts") or []),
+        "stdout": (r1.get("stdout") or "") + (r2.get("stdout") or ""),
+    }
+
+
 def do_upload(filename: str, body: bytes) -> dict:
     name = Path(filename).name  # strip any path components
     suffix = Path(name).suffix.lower()
@@ -134,13 +222,7 @@ def do_upload(filename: str, body: bytes) -> dict:
     INPUT_DIR.mkdir(parents=True, exist_ok=True)
     dest = INPUT_DIR / name
     dest.write_bytes(body)
-
-    stem = dest.stem
-    result = run_leg0(
-        input_path=_rel(dest),
-        output_dir=f"workspace/output/{stem}",
-    )
-    result["stem"] = stem
+    result = do_intake(_rel(dest))
     result["saved"] = _rel(dest)
     return result
 
@@ -159,14 +241,69 @@ def list_samples() -> list[dict]:
     ]
 
 
-def do_ingest(rel_path: str) -> dict:
-    """Run Leg 0 on a file already sitting in workspace/inbox/."""
-    src = (REPO_ROOT / rel_path).resolve()
-    if not str(src).startswith(str(INPUT_DIR.resolve())) or not src.is_file():
-        return {"ok": False, "error": "File must live in workspace/inbox/."}
-    result = run_leg0(input_path=_rel(src), output_dir=f"workspace/output/{src.stem}")
-    result["stem"] = src.stem
-    return result
+def do_resolve_ingest(stem: str) -> dict:
+    """Stage 3: apply the filled path-review (Leg -1), then full Leg 0 ingest.
+
+    Leg -1 apply parses the human-edited path-review.md into a path-map. The full
+    Leg 0 ingest is then run WITH that path-map so bare {leaf} placeholders bake
+    into full accessors in the .mapping.yaml. The conditional-form.md and
+    variants.csv are snapshotted before the ingest and restored after, because
+    Leg 0 rewrites them as blank stubs (it would otherwise wipe customer answers).
+    """
+    form_dir = OUTPUT_DIR / stem
+    src = _inbox_source(stem)
+    if src is None:
+        return {"ok": False, "error": f"No source .docx/.pdf for '{stem}' in workspace/inbox/."}
+
+    steps: list[dict] = []
+    action_dir = action_needed_dir(form_dir)
+    review = action_dir / f"{stem}.path-review.md"
+
+    # --- Leg -1 apply (only when a path-review exists) ---
+    if review.exists():
+        if _count_blank(review, r"^Final:\s*$"):
+            return {
+                "ok": False,
+                "error": f"{stem}.path-review.md still has blank Final: lines — fill them first.",
+            }
+        r1 = run_legminus1_apply(review=_rel(review), output_dir=f"workspace/output/{stem}")
+        steps.append({"step": "Leg -1 apply — resolve paths", **r1})
+        if not r1.get("ok"):
+            return {"ok": False, "steps": steps, "error": "Leg -1 apply failed."}
+
+    path_map = form_dir / f"{stem}.path-map.yaml"
+
+    # --- snapshot the human-fill forms so the ingest can't clobber answers ---
+    fill_files = [
+        action_dir / f"{stem}.conditional-form.md",
+        action_dir / f"{stem}.variants.csv",
+    ]
+    snapshot = {p: p.read_bytes() for p in fill_files if p.exists()}
+
+    # --- full Leg 0 ingest (with the path-map when available) ---
+    cmd = [
+        sys.executable, "-m", "velocity_converter.leg0_ingest",
+        "--input", str(src),
+        "--output-dir", str(form_dir),
+    ]
+    if path_map.exists():
+        cmd += ["--path-map", str(path_map)]
+    r = subprocess.run(cmd, capture_output=True, text=True, cwd=str(REPO_ROOT))
+
+    # --- restore the customer's fills (block structure is identical per doc) ---
+    for p, data in snapshot.items():
+        p.write_bytes(data)
+
+    ok = r.returncode == 0
+    steps.append({
+        "step": "Leg 0 ingest — extract fields + build mapping",
+        "ok": ok,
+        "stdout": r.stdout,
+        "stderr": r.stderr,
+    })
+    if not ok:
+        return {"ok": False, "steps": steps, "error": "Leg 0 ingest failed."}
+    return {"ok": True, "steps": steps, "form": form_status(form_dir)}
 
 
 MAX_PREVIEW_BYTES = 300_000
@@ -184,6 +321,20 @@ def read_file(rel_path: str) -> dict:
         "content": data[:MAX_PREVIEW_BYTES].decode("utf-8", "replace"),
         "truncated": len(data) > MAX_PREVIEW_BYTES,
     }
+
+
+def save_fill_file(rel_path: str, content: str) -> dict:
+    """Save an edited human-fill file back into action-needed/."""
+    target = (REPO_ROOT / rel_path).resolve()
+    action_root = (REPO_ROOT / "workspace" / "action-needed").resolve()
+    if (
+        not str(target).startswith(str(action_root))
+        or not target.is_file()
+        or not target.name.endswith(FILL_SUFFIXES)
+    ):
+        return {"ok": False, "error": "Only the path-review / conditional-form / variants fill files can be edited here."}
+    target.write_text(content, encoding="utf-8")
+    return {"ok": True}
 
 
 def config_status() -> dict:
@@ -290,7 +441,7 @@ def save_config_file(rel_path: str, content: str) -> dict:
 
 
 def do_reset(stem: str) -> dict:
-    """Delete a form's generated output folder (workspace/output/<stem>/)."""
+    """Delete a form's generated output + its human-fill files (fresh start)."""
     target = (OUTPUT_DIR / stem).resolve()
     if (
         not stem
@@ -299,7 +450,11 @@ def do_reset(stem: str) -> dict:
         or not target.is_dir()
     ):
         return {"ok": False, "error": "Form output folder not found."}
+    action_dir = action_needed_dir(target)
     shutil.rmtree(target)
+    if action_dir.is_dir():
+        for f in action_dir.glob(f"{stem}.*"):
+            f.unlink()
     return {"ok": True}
 
 
@@ -332,6 +487,11 @@ def unfilled_conditions(stem: str) -> list[int]:
     entries = yaml.safe_load(registry.read_text(encoding="utf-8")) or []
     bad = []
     for e in entries:
+        # Variant blocks carry no Condition: line — their selection lives in the
+        # sibling variants.csv (variants/default), so an empty `conditions` here
+        # is expected, not unfilled. Only binary/template blocks need a condition.
+        if e.get("variant"):
+            continue
         conds = [str(c).strip() for c in (e.get("conditions") or [])]
         if not conds or any(c in ("", "---", "TBD", "None") for c in conds):
             bad.append(e.get("id"))
@@ -343,7 +503,15 @@ def preflight_conditions(stem: str) -> dict | None:
     form_dir = OUTPUT_DIR / stem
     registry = form_dir / f"{stem}.conditional-registry.yaml"
     form = action_needed_dir(form_dir) / f"{stem}.conditional-form.md"
-    stale = registry.exists() and form.exists() and form.stat().st_mtime > registry.stat().st_mtime
+    # The registry is parsed from BOTH the conditional form and its sibling
+    # variants.csv, so either being newer than the registry means it's stale.
+    # (Comparing only the form misses CSV-only edits — variant text/conditions.)
+    variants = action_needed_dir(form_dir) / f"{stem}.variants.csv"
+    newest_input = max(
+        (f.stat().st_mtime for f in (form, variants) if f.exists()),
+        default=0.0,
+    )
+    stale = registry.exists() and form.exists() and newest_input > registry.stat().st_mtime
     if form.exists() and (not registry.exists() or stale):
         r = parse_conditional_form(stem)
         if not r["ok"]:
@@ -415,7 +583,7 @@ def do_generate(stem: str, with_plugin: bool) -> dict:
     form_dir = OUTPUT_DIR / stem
     mapping = f"workspace/output/{stem}/{stem}.mapping.yaml"
     if not (REPO_ROOT / mapping).exists():
-        return {"ok": False, "error": f"{stem}.mapping.yaml not found — run ingest first."}
+        return {"ok": False, "error": f"{stem}.mapping.yaml not found — run “Resolve & ingest” first."}
 
     steps: list[dict] = []
 
@@ -542,20 +710,24 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(self._body() or b"{}")
             if path == "/api/open":
                 self._json(do_open(payload.get("path", "")))
+            elif path == "/api/intake":
+                self._json(do_intake(payload.get("path", "")))
+            elif path == "/api/resolve-ingest":
+                self._json(do_resolve_ingest(payload.get("stem", "")))
             elif path == "/api/generate":
                 self._json(do_generate(payload.get("stem", ""), bool(payload.get("plugin"))))
             elif path == "/api/plugin":
                 self._json(do_plugin(payload.get("stem", "")))
             elif path == "/api/parse-form":
                 self._json(parse_conditional_form(payload.get("stem", "")))
-            elif path == "/api/ingest":
-                self._json(do_ingest(payload.get("path", "")))
             elif path == "/api/reset":
                 self._json(do_reset(payload.get("stem", "")))
             elif path == "/api/plugin-all":
                 self._json(do_plugin_all(payload.get("stems") or []))
             elif path == "/api/rebuild-registry":
                 self._json(rebuild_registry())
+            elif path == "/api/save-fill":
+                self._json(save_fill_file(payload.get("path", ""), payload.get("content", "")))
             elif path == "/api/save-config":
                 self._json(save_config_file(payload.get("path", ""), payload.get("content", "")))
             else:
@@ -573,7 +745,7 @@ PAGE = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Velocity Converter — Pipeline Console</title>
+<title>Velocity Converter — Intake Console</title>
 <style>
   :root {
     --navy-0: #050a18;
@@ -602,7 +774,7 @@ PAGE = r"""<!doctype html>
   .mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; }
 
   /* ---- header ---- */
-  header { max-width: 1180px; margin: 0 auto 30px; display: flex; align-items: baseline; gap: 16px; }
+  header { max-width: 1180px; margin: 0 auto 8px; display: flex; align-items: baseline; gap: 16px; }
   .logo {
     width: 38px; height: 38px; border-radius: 10px; align-self: center; flex: none;
     background: conic-gradient(from 210deg, var(--teal), #2b6cff, var(--chartreuse), var(--teal));
@@ -621,11 +793,16 @@ PAGE = r"""<!doctype html>
     position: absolute; top: 3px; right: 3px; width: 8px; height: 8px; border-radius: 50%;
     background: var(--danger); box-shadow: 0 0 8px var(--danger);
   }
+  .story {
+    max-width: 1180px; margin: 0 auto 22px; color: var(--text-dim); font-size: 13px;
+    border-left: 2px solid rgba(22, 224, 207, .35); padding-left: 12px;
+  }
+  .story b { color: var(--text); font-weight: 600; }
 
   /* ---- pipeline rail ---- */
-  .rail { max-width: 1180px; margin: 0 auto 18px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 26px; position: relative; }
+  .rail { max-width: 1180px; margin: 0 auto 18px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; position: relative; }
   .rail::before {
-    content: ""; position: absolute; top: 34px; left: 8%; right: 8%; height: 1px; z-index: 0;
+    content: ""; position: absolute; top: 34px; left: 6%; right: 6%; height: 1px; z-index: 0;
     background: linear-gradient(90deg, transparent, var(--teal-dim), var(--chartreuse), transparent);
     opacity: .5;
   }
@@ -634,7 +811,7 @@ PAGE = r"""<!doctype html>
     background: linear-gradient(165deg, rgba(22, 38, 79, .75), rgba(10, 18, 40, .92));
     border: 1px solid rgba(22, 224, 207, .18);
     border-radius: var(--radius);
-    padding: 20px 20px 22px;
+    padding: 18px 16px 18px;
     backdrop-filter: blur(6px);
     box-shadow: 0 14px 40px rgba(2, 6, 18, .55), inset 0 1px 0 rgba(255,255,255,.04);
   }
@@ -645,12 +822,12 @@ PAGE = r"""<!doctype html>
     background: linear-gradient(135deg, var(--teal), var(--chartreuse));
     box-shadow: 0 0 16px rgba(22, 224, 207, .35);
   }
-  .stage h2 { display: inline; font-size: 14px; letter-spacing: .18em; text-transform: uppercase; font-weight: 600; }
-  .stage p { color: var(--text-dim); font-size: 13px; margin: 12px 0 0; }
+  .stage h2 { display: inline; font-size: 13px; letter-spacing: .16em; text-transform: uppercase; font-weight: 600; }
+  .stage p { color: var(--text-dim); font-size: 12.5px; margin: 12px 0 0; }
 
   /* ---- dropzone ---- */
   .drop {
-    margin-top: 14px; padding: 26px 14px; text-align: center; cursor: pointer;
+    margin-top: 14px; padding: 22px 12px; text-align: center; cursor: pointer;
     border: 1.5px dashed rgba(22, 224, 207, .4); border-radius: 12px;
     color: var(--text-dim); transition: all .18s ease;
   }
@@ -671,6 +848,11 @@ PAGE = r"""<!doctype html>
   }
   .chip:hover { color: var(--text); border-color: var(--chartreuse); background: rgba(195, 245, 60, .06); }
   .chip .tick { color: var(--chartreuse); }
+
+  /* ---- markers legend ---- */
+  .markers { list-style: none; margin: 12px 0 0; padding: 0; font-size: 12px; }
+  .markers li { margin: 5px 0; color: var(--text-dim); }
+  .markers code { color: var(--chartreuse); font-family: "SF Mono", ui-monospace, Menlo, monospace; }
 
   /* ---- forms board ---- */
   .board { max-width: 1180px; margin: 26px auto 0; display: grid; grid-template-columns: 1fr; gap: 22px; }
@@ -713,7 +895,8 @@ PAGE = r"""<!doctype html>
   .file:hover { background: rgba(22, 224, 207, .08); }
   .file .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .file .sz { color: var(--text-dim); font-size: 11px; flex: none; }
-  .file.key .nm { color: var(--chartreuse); }
+  .file.fill .nm { color: var(--chartreuse); }
+  .file.key .nm { color: var(--teal); }
   .file.urgent { background: rgba(255, 93, 122, .07); }
   .file.urgent .nm { color: var(--danger); }
   .hint { color: var(--text-dim); font-size: 11.5px; margin: 8px 2px 12px; }
@@ -834,25 +1017,39 @@ PAGE = r"""<!doctype html>
 <header>
   <div class="logo"></div>
   <h1>Velocity Converter</h1>
-  <div class="sub">Socotra &middot; document pipeline console</div>
+  <div class="sub">Socotra &middot; document intake console</div>
   <button class="btn-ghost iconbtn" id="gear" title="System — Socotra config &amp; path registry">⚙<span id="gear-dot" hidden></span></button>
 </header>
 
+<div class="story">
+  <b>Write the letter like you'd write it to a person.</b> Wherever a real value goes, leave a marker.
+  Hand it over once — the pipeline gives back three fill-in-the-blank files. Fill them like a form; no code.
+</div>
+
 <div class="rail">
   <div class="stage">
-    <span class="stage-num">1</span><h2>Ingest</h2>
-    <p>Upload a Word or PDF document. Leg&nbsp;0 extracts fields, annotates conditionals and emits the customer conditional form.</p>
+    <span class="stage-num">1</span><h2>Intake</h2>
+    <p>Drop a Word/PDF letter. Leg&nbsp;-1 + Leg&nbsp;0 emit the three customer fill-in files at once.</p>
     <div class="drop" id="drop">Drop a <b>.docx</b> / <b>.pdf</b> here<br>or click to browse</div>
     <input type="file" id="fileInput" accept=".docx,.pdf" multiple hidden>
     <div class="chips" id="samples"></div>
   </div>
   <div class="stage">
-    <span class="stage-num">2</span><h2>Conditions</h2>
-    <p>Double-click the <b style="color:var(--chartreuse)">conditional-form.md</b> in a form card to open it and fill in the Velocity expressions, then save.</p>
+    <span class="stage-num">2</span><h2>Fill</h2>
+    <p>Click a <b style="color:var(--chartreuse)">fill file</b> in a card to edit it in-browser:</p>
+    <ul class="markers">
+      <li><code>path-review.md</code> — confirm the <code>Final:</code> accessor lines</li>
+      <li><code>conditional-form.md</code> — write each <code>Condition:</code></li>
+      <li><code>variants.csv</code> — fill the <code>[[$token]]</code> versions</li>
+    </ul>
   </div>
   <div class="stage">
-    <span class="stage-num">3</span><h2>Generate</h2>
-    <p>Run Legs&nbsp;2&nbsp;+&nbsp;3 to resolve paths and write the production <b style="color:var(--teal)">.final.vm</b>. Optionally generate &amp; compile the snapshot plugin (Leg&nbsp;4).</p>
+    <span class="stage-num">3</span><h2>Resolve</h2>
+    <p>“Resolve &amp; ingest” applies your paths (Leg&nbsp;-1) then runs Leg&nbsp;0 with the path-map to build the machine <b style="color:var(--teal)">.mapping.yaml</b>.</p>
+  </div>
+  <div class="stage">
+    <span class="stage-num">4</span><h2>Generate</h2>
+    <p>Parse the conditions, then Legs&nbsp;2&nbsp;+&nbsp;3 write the production <b style="color:var(--teal)">.final.vm</b>. Optionally build the snapshot plugin (Leg&nbsp;4).</p>
   </div>
 </div>
 
@@ -864,7 +1061,7 @@ PAGE = r"""<!doctype html>
 </div>
 
 <div class="board" id="board"></div>
-<div class="empty" id="empty" hidden>No forms ingested yet — drop a document above to begin.</div>
+<div class="empty" id="empty" hidden>No documents yet — drop a <b>.docx</b> / <b>.pdf</b> above to start the intake.</div>
 
 <div id="system" hidden>
   <div id="system-head">
@@ -952,30 +1149,46 @@ function stepPill(label, state) {
 }
 
 function pipelinePills(f) {
-  const conditionsDone = f.registry && f.unfilled === 0 && !f.formStale;
-  const conditionsState = f.unfilled > 0 ? 'warn'
+  const intakeDone = f.pathReview || f.conditionalForm;
+  const pathsState = f.pathUnfilled > 0 ? 'warn'
+    : f.pathsStale ? 'stale'
+    : f.pathMap ? 'done'
+    : (f.pathReview ? 'next' : 'pending');
+  const ingestState = f.ingested ? (f.pathsStale ? 'stale' : 'done')
+    : ((f.pathReview && f.pathUnfilled === 0) ? 'next' : 'pending');
+  const conditionsState = !f.ingested ? 'pending'
+    : f.unfilled > 0 ? 'warn'
     : f.formStale ? 'stale'
     : f.registry ? 'done'
     : (f.conditionalForm ? 'next' : 'pending');
+  const conditionsDone = f.registry && f.unfilled === 0 && !f.formStale;
   const templateState = f.template ? (f.unfilled > 0 ? 'warn' : 'done')
-    : (conditionsDone ? 'next' : 'pending');
+    : (f.ingested && conditionsDone ? 'next' : 'pending');
   const pluginState = f.plugin ? (f.unfilled > 0 ? 'warn' : 'done')
     : (f.template && f.unfilled === 0 ? 'next' : 'pending');
   return [
-    stepPill('Ingested', f.ingested ? 'done' : 'next'),
-    stepPill('Form', f.conditionalForm ? 'done' : 'pending'),
-    stepPill(
-      f.unfilled > 0 ? `Conditions (${f.unfilled} to fill)` : 'Conditions',
-      conditionsState
-    ),
+    stepPill('Intake', intakeDone ? 'done' : 'next'),
+    stepPill(f.pathUnfilled > 0 ? `Paths (${f.pathUnfilled} to fill)` : 'Paths', pathsState),
+    stepPill('Ingest', ingestState),
+    stepPill(f.unfilled > 0 ? `Conditions (${f.unfilled} to fill)` : 'Conditions', conditionsState),
     stepPill('Template', templateState),
     stepPill('Plugin', pluginState),
   ].join('<span class="pill-sep" aria-hidden="true">›</span>');
 }
 
 function nextStep(f) {
+  if (!f.pathReview && !f.conditionalForm)
+    return { text: 'Run intake to start', severity: 'next' };
+  if (f.pathUnfilled > 0)
+    return {
+      text: `Confirm ${f.pathUnfilled} accessor${f.pathUnfilled > 1 ? 's' : ''} in ${f.stem}.path-review.md`,
+      severity: 'warn',
+      highlightFile: `${f.stem}.path-review.md`,
+    };
   if (!f.ingested)
-    return { text: 'Ingest a document to start', severity: 'next' };
+    return { text: 'Resolve paths & ingest (Leg -1 apply → Leg 0)', severity: 'next' };
+  if (f.pathsStale)
+    return { text: 'Path review changed — re-run “Resolve & ingest”', severity: 'hot' };
   if (f.unfilled > 0)
     return {
       text: `Fill ${f.unfilled} condition${f.unfilled > 1 ? 's' : ''} in ${f.stem}.conditional-form.md`,
@@ -985,7 +1198,7 @@ function nextStep(f) {
   if (f.formStale)
     return { text: 'Conditional form changed — re-parse before generating', severity: 'hot' };
   if (!f.registry)
-    return { text: 'Parse the conditional form', severity: 'next' };
+    return { text: 'Generate the template (parses conditions first)', severity: 'next' };
   if (!f.template)
     return { text: 'Generate template (Leg 2 + 3)', severity: 'next' };
   if (!f.plugin)
@@ -1006,31 +1219,47 @@ function render(forms) {
     const isBusy = busy.has(f.stem);
     const plugChecked = chkState.has(f.stem) ? chkState.get(f.stem) : f.plugin;
     const step = nextStep(f);
-    const blocked = f.unfilled > 0;
-    const blockTitle = blocked
-      ? ` title="Fill ${f.unfilled} condition${f.unfilled > 1 ? 's' : ''} first"`
-      : '';
+
     const fileRows = f.files.map(file => {
-      const key = file.name.endsWith('.conditional-form.md') || file.name.endsWith('.final.vm');
+      const fill = /\.(path-review\.md|conditional-form\.md|variants\.csv)$/.test(file.name);
+      const key = file.name.endsWith('.final.vm') || file.name.endsWith('.mapping.yaml');
       const urgent = step.highlightFile && file.name === step.highlightFile;
-      return `<div class="file ${key ? 'key' : ''} ${urgent ? 'urgent' : ''}" data-path="${esc(file.path)}" title="Click to preview · double-click to open">
+      return `<div class="file ${fill ? 'fill' : ''} ${key ? 'key' : ''} ${urgent ? 'urgent' : ''}" data-path="${esc(file.path)}" title="Click to view / edit · double-click to open natively">
         <span class="nm mono">${esc(file.name)}</span><span class="sz">${kb(file.size)}</span></div>`;
     }).join('');
+
+    // Stage-appropriate primary action.
+    let primary = '';
+    if (!f.ingested || f.pathsStale) {
+      const blocked = f.pathUnfilled > 0;
+      const blockTitle = blocked ? ` title="Confirm the path-review accessors first"` : '';
+      primary = `<button class="btn-primary" data-act="resolve" ${isBusy || blocked ? 'disabled' : ''}${blockTitle}>
+        ${isBusy ? '<span class="spin"></span>Running…' : (f.pathsStale && f.ingested ? 'Re-resolve &amp; ingest' : 'Resolve &amp; ingest')}
+      </button>`;
+    }
+    let generate = '';
+    if (f.ingested) {
+      const blocked = f.unfilled > 0;
+      const blockTitle = blocked ? ` title="Fill ${f.unfilled} condition${f.unfilled > 1 ? 's' : ''} first"` : '';
+      generate = `<button class="btn-primary" data-act="generate" ${isBusy || blocked ? 'disabled' : ''}${blockTitle}>
+          ${isBusy ? '<span class="spin"></span>Running…' : (f.formStale && !blocked ? 'Re-parse &amp; generate' : (f.template ? 'Regenerate template' : 'Generate template'))}
+        </button>
+        <label class="chk"><input type="checkbox" data-chk="plugin" ${plugChecked ? 'checked' : ''}> + plugin (Leg 4)</label>
+        <button class="btn-ghost" data-act="plugin" ${isBusy || blocked ? 'disabled' : ''}${blockTitle}>Plugin only</button>`;
+    }
+
     card.innerHTML = `
       <h3>${esc(f.stem)}</h3>
       <div class="next-step next-step--${step.severity}">→ ${esc(step.text)}</div>
       <div class="pills">${pipelinePills(f)}</div>
       <div class="files">${fileRows}</div>
-      <div class="hint">Click a file to preview it — double-click to open natively</div>
+      <div class="hint">Click a fill file to edit it in-browser — double-click any file to open it natively</div>
       <div class="actions">
-        <button class="btn-primary" data-act="generate" ${isBusy || blocked ? 'disabled' : ''}${blockTitle}>
-          ${isBusy ? '<span class="spin"></span>Running…' : (f.formStale && !blocked ? 'Re-parse &amp; generate' : (f.template ? 'Regenerate template' : 'Generate template'))}
-        </button>
-        <label class="chk"><input type="checkbox" data-chk="plugin" ${plugChecked ? 'checked' : ''}> + plugin (Leg 4)</label>
-        <button class="btn-ghost" data-act="plugin" ${isBusy || blocked ? 'disabled' : ''}${blockTitle}>Plugin only</button>
+        ${primary}
+        ${generate}
         <span style="flex:1"></span>
         <button class="btn-ghost iconbtn" data-act="folder" title="Open output folder">📂</button>
-        <button class="btn-ghost iconbtn" data-act="reset" title="Delete generated outputs for this form">🗑</button>
+        <button class="btn-ghost iconbtn" data-act="reset" title="Delete generated outputs + fill files for this form">🗑</button>
       </div>`;
     board.appendChild(card);
   }
@@ -1045,10 +1274,10 @@ async function refresh() {
   const toolbar = document.getElementById('toolbar');
   toolbar.hidden = data.forms.length < 2;
   if (!toolbar.hidden) {
-    const unfilled = data.forms.reduce((n, f) => n + (f.unfilled || 0), 0);
+    const unfilled = data.forms.reduce((n, f) => n + (f.unfilled || 0) + (f.pathUnfilled || 0), 0);
     document.getElementById('toolbar-label').innerHTML =
       `${data.forms.length} forms` +
-      (unfilled ? ` · <span style="color:var(--danger)">${unfilled} conditions still to fill</span>` : ' · all conditions filled');
+      (unfilled ? ` · <span style="color:var(--danger)">${unfilled} blanks still to fill</span>` : ' · all blanks filled');
   }
   const snap = JSON.stringify(data.forms) + '|' + [...busy].join();
   if (snap === lastSnapshot) return;
@@ -1062,22 +1291,23 @@ async function loadSamples() {
   const el = document.getElementById('samples');
   if (!r.ok || !r.samples.length) { el.innerHTML = ''; samplePaths = []; return; }
   samplePaths = r.samples.map(s => s.path);
-  el.innerHTML = '<span class="chips-label">or ingest a sample</span>' + r.samples.map(s =>
-    `<span class="chip" data-path="${esc(s.path)}" title="${s.ingested ? 'Already ingested — click to re-run Leg 0' : 'Click to run Leg 0'}">${s.ingested ? '<span class="tick">✓</span> ' : ''}${esc(s.name)}</span>`
+  el.innerHTML = '<span class="chips-label">or run intake on a sample</span>' + r.samples.map(s =>
+    `<span class="chip" data-path="${esc(s.path)}" title="${s.ingested ? 'Already started — click to re-run intake' : 'Click to run intake (Leg -1 + Leg 0 scan)'}">${s.ingested ? '<span class="tick">✓</span> ' : ''}${esc(s.name)}</span>`
   ).join('') + (r.samples.length > 1
-    ? `<span class="chip" data-all="1" title="Run Leg 0 over every sample document"><span class="tick">⚡</span> Ingest all (${r.samples.length})</span>`
+    ? `<span class="chip" data-all="1" title="Run intake over every sample document"><span class="tick">⚡</span> Intake all (${r.samples.length})</span>`
     : '');
 }
 
-async function ingestSample(path) {
+async function intakeSample(path) {
   const name = path.split('/').pop();
-  drop.innerHTML = `<span class="spin"></span>Ingesting <b>${esc(name)}</b> (Leg 0)…`;
-  log(`Ingesting sample <b>${esc(name)}</b> → Leg 0…`);
-  const r = await api('/api/ingest', { method: 'POST', body: JSON.stringify({ path }) });
+  drop.innerHTML = `<span class="spin"></span>Intake <b>${esc(name)}</b> (Leg -1 + Leg 0 scan)…`;
+  log(`Intake <b>${esc(name)}</b> → Leg -1 (suggest) + Leg 0 (scan)…`);
+  const r = await api('/api/intake', { method: 'POST', body: JSON.stringify({ path }) });
   if (r.ok) {
-    log(`✓ Ingested <b>${esc(r.stem)}</b> → ${(r.artifacts || []).length} artifacts in <span class="mono">workspace/output/${esc(r.stem)}/</span>`, 'ok');
+    log(`✓ Intake <b>${esc(r.stem)}</b> → ${(r.artifacts || []).length} fill files in <span class="mono">workspace/action-needed/</span>`, 'ok');
+    log(`Next: open the <b>path-review</b>, <b>conditional-form</b> and <b>variants</b> files in the card, fill them, save.`, 'warn');
   } else {
-    log(`✗ ${esc(r.error || r.stderr || 'Leg 0 failed')}`, 'err');
+    log(`✗ ${esc(r.error || 'Intake failed')}`, 'err');
   }
   await refresh();
 }
@@ -1087,9 +1317,9 @@ document.getElementById('samples').addEventListener('click', async (e) => {
   if (!chip) return;
   const paths = chip.dataset.all ? samplePaths : [chip.dataset.path];
   drop.classList.add('busy');
-  if (chip.dataset.all) log(`<b>Multi-ingest</b> — running Leg 0 over ${paths.length} documents…`);
-  for (const p of paths) await ingestSample(p);
-  if (chip.dataset.all) log(`<b>Multi-ingest complete</b> — ${paths.length} forms ready. Fill each conditional form, then “Generate all templates”.`, 'warn');
+  if (chip.dataset.all) log(`<b>Multi-intake</b> — running intake over ${paths.length} documents…`);
+  for (const p of paths) await intakeSample(p);
+  if (chip.dataset.all) log(`<b>Multi-intake complete</b> — ${paths.length} forms ready to fill.`, 'warn');
   drop.classList.remove('busy');
   drop.innerHTML = 'Drop a <b>.docx</b> / <b>.pdf</b> here<br>or click to browse';
   loadSamples();
@@ -1124,7 +1354,7 @@ document.getElementById('plugin-all').addEventListener('click', async () => {
   await refresh();
 });
 
-/* ---- preview panel (with in-place config editing) ---- */
+/* ---- preview panel (with in-place editing of fill + config files) ---- */
 const previewEl = document.getElementById('preview');
 const previewBody = document.getElementById('preview-body');
 const previewTa = document.getElementById('preview-ta');
@@ -1132,8 +1362,9 @@ const previewEditBtn = document.getElementById('preview-edit');
 const previewSaveBtn = document.getElementById('preview-save');
 let previewPath = null;
 
-const isEditable = (path, truncated) =>
-  path.startsWith('socotra-config/') && path.endsWith('.json') && !truncated;
+const isFill = (path) => /\/(.*)\.(path-review\.md|conditional-form\.md|variants\.csv)$/.test(path);
+const isConfig = (path) => path.startsWith('socotra-config/') && path.endsWith('.json');
+const isEditable = (path, truncated) => !truncated && (isFill(path) || isConfig(path));
 
 function exitEditMode() {
   previewTa.hidden = true;
@@ -1171,7 +1402,8 @@ previewEditBtn.addEventListener('click', () => {
 });
 
 previewSaveBtn.addEventListener('click', async () => {
-  const r = await api('/api/save-config', {
+  const endpoint = isFill(previewPath) ? '/api/save-fill' : '/api/save-config';
+  const r = await api(endpoint, {
     method: 'POST',
     body: JSON.stringify({ path: previewPath, content: previewTa.value }),
   });
@@ -1179,10 +1411,14 @@ previewSaveBtn.addEventListener('click', async () => {
   previewBody.textContent = previewTa.value;
   exitEditMode();
   log(`✓ Saved <span class="mono">${esc(previewPath)}</span>`, 'ok');
-  if (r.status && !r.status.inSync) {
+  if (isFill(previewPath)) {
+    await refresh();
+  } else if (r.status && !r.status.inSync) {
     log('Config changed — path registry is now <b>stale</b>. Rebuild it from the ⚙ System panel.', 'warn');
+    applyConfigStatus(r.status);
+  } else {
+    applyConfigStatus(r.status);
   }
-  applyConfigStatus(r.status);
 });
 
 document.getElementById('preview-close').addEventListener('click', () => { previewEl.hidden = true; });
@@ -1248,6 +1484,17 @@ document.getElementById('sys-rebuild').addEventListener('click', async () => {
   applyConfigStatus(r.status);
 });
 
+async function resolveForm(stem) {
+  log(`<b>${esc(stem)}</b> — resolving paths (Leg -1 apply) + ingest (Leg 0)…`);
+  const r = await api('/api/resolve-ingest', { method: 'POST', body: JSON.stringify({ stem }) });
+  for (const s of (r.steps || [])) {
+    log(`${s.ok ? '✓' : '✗'} ${esc(s.step)}`, s.ok ? 'ok' : 'err');
+    if (s.stderr && s.stderr.trim()) log(esc(s.stderr.trim()).slice(0, 600), s.ok ? 'warn' : 'err');
+  }
+  log(r.ok ? `<b>${esc(stem)}</b> — ingested ✦ now fill the conditions, then Generate.` : esc(r.error || 'Resolve & ingest failed'), r.ok ? 'ok' : 'err');
+  return r.ok;
+}
+
 async function generateForm(stem, withPlugin) {
   log(`<b>${esc(stem)}</b> — generating template${withPlugin ? ' + plugin' : ''} (Leg 2 → 3${withPlugin ? ' → 4' : ''})…`);
   const r = await api('/api/generate', { method: 'POST', body: JSON.stringify({ stem, plugin: withPlugin }) });
@@ -1279,13 +1526,14 @@ board.addEventListener('click', async (e) => {
   const card = btn.closest('.card');
   const stem = card.dataset.stem;
   const act = btn.dataset.act;
-  const withPlugin = card.querySelector('[data-chk=plugin]').checked;
+  const plugChk = card.querySelector('[data-chk=plugin]');
+  const withPlugin = plugChk ? plugChk.checked : false;
 
   if (act === 'folder') { openNative(card.dataset.dir); return; }
   if (act === 'reset') {
-    if (!confirm(`Delete all generated outputs for "${stem}"?\n(${card.dataset.dir} — the source document in workspace/inbox/ is kept.)`)) return;
+    if (!confirm(`Delete all generated outputs and fill files for "${stem}"?\n(${card.dataset.dir} + action-needed/${stem}.* — the source document in workspace/inbox/ is kept.)`)) return;
     const r = await api('/api/reset', { method: 'POST', body: JSON.stringify({ stem }) });
-    log(r.ok ? `Reset <b>${esc(stem)}</b> — output folder removed.` : (r.error || 'Reset failed'), r.ok ? 'warn' : 'err');
+    log(r.ok ? `Reset <b>${esc(stem)}</b> — output + fill files removed.` : (r.error || 'Reset failed'), r.ok ? 'warn' : 'err');
     await refresh();
     loadSamples();
     return;
@@ -1293,7 +1541,9 @@ board.addEventListener('click', async (e) => {
   busy.add(stem);
   refresh();
 
-  if (act === 'generate') {
+  if (act === 'resolve') {
+    await resolveForm(stem);
+  } else if (act === 'generate') {
     await generateForm(stem, withPlugin);
   } else if (act === 'plugin') {
     log(`<b>${esc(stem)}</b> — generating snapshot plugin (Leg 4)…`);
@@ -1313,8 +1563,8 @@ board.addEventListener('click', async (e) => {
 async function uploadFiles(files) {
   for (const file of files) {
     drop.classList.add('busy');
-    drop.innerHTML = `<span class="spin"></span>Ingesting <b>${esc(file.name)}</b> (Leg 0)…`;
-    log(`Uploading <b>${esc(file.name)}</b> → Leg 0 ingest…`);
+    drop.innerHTML = `<span class="spin"></span>Intake <b>${esc(file.name)}</b> (Leg -1 + Leg 0 scan)…`;
+    log(`Uploading <b>${esc(file.name)}</b> → intake (Leg -1 + Leg 0 scan)…`);
     try {
       const r = await api('/api/upload', {
         method: 'POST',
@@ -1322,10 +1572,10 @@ async function uploadFiles(files) {
         body: file,
       });
       if (r.ok) {
-        log(`✓ Ingested <b>${esc(r.stem)}</b> → ${(r.artifacts || []).length} artifacts in <span class="mono">workspace/output/${esc(r.stem)}/</span>`, 'ok');
-        log(`Next: open <span class="mono">${esc(r.stem)}.conditional-form.md</span>, fill the conditions, save — then hit <b>Generate template</b>.`, 'warn');
+        log(`✓ Intake <b>${esc(r.stem)}</b> → ${(r.artifacts || []).length} fill files in <span class="mono">workspace/action-needed/</span>`, 'ok');
+        log(`Next: open the <b>path-review</b> / <b>conditional-form</b> / <b>variants</b> files, fill them, save — then <b>Resolve &amp; ingest</b>.`, 'warn');
       } else {
-        log(`✗ ${esc(r.error || r.stderr || 'Leg 0 failed')}`, 'err');
+        log(`✗ ${esc(r.error || 'Intake failed')}`, 'err');
       }
     } catch (err) {
       log('Upload failed: ' + err, 'err');
@@ -1343,7 +1593,7 @@ fileInput.addEventListener('change', () => { uploadFiles([...fileInput.files]); 
 ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('armed'); }));
 drop.addEventListener('drop', e => uploadFiles([...e.dataTransfer.files]));
 
-log('Pipeline console online.', 'ok');
+log('Intake console online.', 'ok');
 refresh();
 loadSamples();
 loadConfig(false);

@@ -423,9 +423,12 @@ python3 tests/pipeline/run_test_pipeline.py --auto --render-preview
 Output lands in `tests/pipeline/output/<stem>/`. Exit code is non-zero on failure.
 
 **What is tested:** Leg 0 → conditional-form fill → parse → Leg 2+3 → Leg 4 (single combined plugin)
-across five fixtures: `TestQuoteSummary(quote)`, `TestItemCert(segment)`, `TestRenewalNotice(segment)`,
+across seven fixtures: `TestQuoteSummary(quote)`, `TestItemCert(segment)`, `TestRenewalNotice(segment)`,
 `TestItemsSchedule(segment)` (loops over the items array via `[Item]`/`[/Item]` markers),
-`TestGiftSchedule(segment)` (an `[Item]` loop inside a `[[conditional]]` → `render: template` block).
+`TestGiftSchedule(segment)` (an `[Item]` loop inside a `[[conditional]]` → `render: template` block),
+`TestStateDisclosure(segment)` (an N-way `[[$token]]` variant block), and
+`TestVariantThenBinary(segment)` (a `[[$token]]` variant block immediately followed by a binary
+`[[…]]` block — regression guard for the conditional-form parse fix).
 
 **Adding a new fixture** (four-step checklist):
 1. Add a builder function to `tools/generate_test_fixtures.py` and append it to `FIXTURES`.

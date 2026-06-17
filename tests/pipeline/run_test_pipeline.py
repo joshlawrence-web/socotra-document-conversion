@@ -47,6 +47,7 @@ ALL_FIXTURES = [
     "TestItemsSchedule(segment).docx",
     "TestGiftSchedule(segment).docx",
     "TestStateDisclosure(segment).docx",
+    "TestVariantThenBinary(segment).docx",
 ]
 
 # Variant-block fixtures: their [[$token]] blocks are filled from a ready-made
@@ -79,7 +80,12 @@ def _stem(filename: str) -> str:
 def _autofill_form(form_path: Path, seeds: dict[int, str]) -> None:
     """Replace 'Condition: ' placeholders with seeded expressions."""
     text = form_path.read_text(encoding="utf-8")
-    block_re = re.compile(r"(##\s+Block\s+(\d+).*?Condition:) *(\n)", re.DOTALL)
+    # Tempered so the body can't run past the next "## Block" header — without
+    # this, a variant block (no Condition: line) lets the match span into the
+    # following binary block and mis-fill it (the variant-then-binary case).
+    block_re = re.compile(
+        r"(##\s+Block\s+(\d+)(?:(?!##\s+Block).)*?Condition:) *(\n)", re.DOTALL
+    )
 
     def replacer(m):
         block_id = int(m.group(2))

@@ -949,8 +949,14 @@ def parse_conditional_form(
     text = md_path.read_text(encoding="utf-8")
     blocks = []
 
+    # The body capture is *tempered* so it cannot run past the next "## Block"
+    # header or a "Variant placeholder:" line — without this, a variant block
+    # (which has no Condition: line) would let the binary match swallow the
+    # following binary block and steal its condition (duplicate-id collision).
     block_re = re.compile(
-        r"##\s+Block\s+(\d+)\s*\n+>\s+(.+?)\s*\n+(Rendering:\s*template[^\n]*\n+)?Condition:\s*([^\n]*)",
+        r"##\s+Block\s+(\d+)\s*\n+>\s+"
+        r"((?:(?!\n##\s+Block\s+\d+|\nVariant placeholder:).)+?)\s*\n+"
+        r"(Rendering:\s*template[^\n]*\n+)?Condition:\s*([^\n]*)",
         re.DOTALL,
     )
     for m in block_re.finditer(text):
