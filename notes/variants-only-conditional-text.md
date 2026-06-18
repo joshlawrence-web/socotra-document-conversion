@@ -111,6 +111,16 @@ Rough, unvalidated — flesh out before committing.
 
 ## Decision
 
-Not scheduled. Park here until the `feat/multi-variant-conditionals` work lands and
+**Updated 2026-06-17 — actionable plan written:** see
+[variants-only-conditional-text-plan.md](variants-only-conditional-text-plan.md).
+Two open questions are now decided: (A) loop-in-conditional IS supported — a
+`render: template` block becomes a `when`-only `variants.csv` row (text stays in the
+`.vm`, loop leaves already resolved by Leg -1); the only unsupported edge is an N-way
+block with per-variant loops; (B) bare leaves in variant text get the same
+human-in-the-loop resolution as doc leaves
+(reuse Leg -1's `path-review` machinery, re-run after edit). The Decision B resolver has
+standalone value and is the suggested first landing step.
+
+_(Original park note:)_ Parked until the `feat/multi-variant-conditionals` work lands and
 the variant-text wiring WARN is resolved — those answer whether the collapse is
 clean or leaves template blocks as a stubborn special case.
