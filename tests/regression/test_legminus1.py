@@ -106,6 +106,20 @@ class TestMatchLeaf(unittest.TestCase):
         self.assertEqual(r["status"], "unmatched")
         self.assertEqual(r["chosen"], "")
 
+    def test_full_accessor_passthrough(self):
+        # Gap 1: an author who wrote the full accessor (not a bare leaf) resolves
+        # to itself instead of reporting NO MATCH.
+        r = match_leaf("account.data.firstName", None, self.cands)
+        self.assertEqual(r["status"], "resolved")
+        self.assertEqual(r["match"], "full accessor")
+        self.assertEqual(r["chosen"], "account.data.firstName")
+
+    def test_dotted_non_accessor_still_unmatched(self):
+        # A dotted token that is NOT a known accessor stays unmatched (no false
+        # pass-through).
+        r = match_leaf("account.data.bogusField", None, self.cands)
+        self.assertEqual(r["status"], "unmatched")
+
     def test_exact_beats_name_similar(self):
         # policyNumber (system, exact) wins over reservedPolicyNumber (name-similar).
         r = match_leaf("policyNumber", None, self.cands)

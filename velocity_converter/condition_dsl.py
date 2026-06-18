@@ -149,6 +149,11 @@ def _parse_literal_token(tok: _Tok) -> object:
             return True
         if low == "false":
             return False
+        if low in ("null", "nil", "none"):
+            raise ConditionError(
+                "use `present`/`absent` for null checks, not `!= null` "
+                "(e.g. `quote.quoteNumber present`)"
+            )
         raise ConditionError(f"expected a literal, found bare word {tok.text!r}")
     raise ConditionError(f"expected a literal, found {tok.text!r}")
 
@@ -314,12 +319,30 @@ def build_registry_index(registry: dict | None) -> dict[str, dict]:
         if isinstance(node, dict):
             vel, cat = node.get("velocity"), node.get("category")
             if vel and cat:
+                base_type = str(node.get("base_type") or node.get("type") or "")
                 acc = _derive_condition_accessor(str(vel), str(cat))
                 if acc:
                     index[acc] = {
-                        "base_type": str(node.get("base_type") or node.get("type") or ""),
+                        "base_type": base_type,
                         "category": str(cat),
                         "scope": _accessor_scope(acc),
+                    }
+                # Gap 4: custom fields are stored as policy_data ($data.data.<f>)
+                # and derive a policy.data.<f> accessor — so a quote-scoped doc
+                # could only condition on quote *system* fields. Index a
+                # quote.data.<f> alias too, letting quote-scoped conditions reach
+                # custom fields. (Usable only at quote scope; the policy-scope
+                # check rejects a `quote.` root before the path-exists check.)
+                if str(cat) == "policy_data":
+                    tail = str(vel)[len("$data."):] if str(vel).startswith("$data.") else str(vel)
+                    index["quote." + tail] = {
+                        "base_type": base_type,
+                        "category": str(cat),
+                        "scope": "quote",
+                        # Reachable only by the full `quote.data.<f>` accessor — kept
+                        # out of bare-leaf resolution so a leaf like `discountType`
+                        # stays single-candidate (policy.data.<f>) and unambiguous.
+                        "alias": True,
                     }
             for v in node.values():
                 _walk(v)
@@ -629,7 +652,9 @@ def ast_from_dict(d: dict) -> ConditionAST:
 def _build_leaf_map(index: dict[str, dict]) -> dict[str, list[str]]:
     """leaf name → [accessor, …] from a registry index (for bare-leaf resolution)."""
     leaf_map: dict[str, list[str]] = {}
-    for acc in index:
+    for acc, entry in index.items():
+        if entry.get("alias"):  # alias accessors are full-accessor-only (Gap 4)
+            continue
         leaf_map.setdefault(acc.split(".")[-1], []).append(acc)
     return leaf_map
 
