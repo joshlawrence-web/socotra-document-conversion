@@ -820,13 +820,16 @@ def parse_variants_csv(
             if len(variants) > 1:
                 errors.append(f"{ph}: template (loop) block has {len(variants)} conditioned rows — "
                               "an N-way block whose variants each carry a loop is unsupported")
+            if not variants and not errors:
+                errors.append(f"{ph}: template (loop) block has no `when` row — fill the condition")
         else:
             if default_count == 0:
                 errors.append(f"{ph}: no default row (blank/*/else 'when') — block would render empty when nothing matches")
             elif default_count > 1:
                 errors.append(f"{ph}: {default_count} default rows (expected exactly one)")
-        if not variants and not errors:
-            errors.append(f"{ph}: no conditioned variant rows")
+            # A default-only block (exactly one default, no conditioned rows) is
+            # valid: it always renders the default text. Empty `variants` + a
+            # `default` flows downstream as an unconditional value.
         if len(scopes) > 1:
             errors.append(f"{ph}: variants mix scopes ({', '.join(sorted(scopes))}) — all must be one scope")
 

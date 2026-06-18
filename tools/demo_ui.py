@@ -499,10 +499,11 @@ def unfilled_conditions(stem: str) -> list:
     """Return keys of registry blocks left without a usable condition.
 
     Variants-only: every block carries its condition in ``variants`` (binary/
-    variant → when+text; template → the when) or legacy ``conditions[]``. The CSV
-    parser already rejects an unfilled block (the registry wouldn't be written),
-    so this only catches a hand-edited/legacy registry with a genuinely empty
-    block.
+    variant → when+text; template → the when) or legacy ``conditions[]``. A
+    default-only variant (no conditioned rows, always renders its ``default``
+    text) is also filled. The CSV parser already rejects an unfilled block (the
+    registry wouldn't be written), so this only catches a hand-edited/legacy
+    registry with a genuinely empty block.
     """
     registry = OUTPUT_DIR / stem / f"{stem}.conditional-registry.yaml"
     if not registry.exists():
@@ -512,7 +513,7 @@ def unfilled_conditions(stem: str) -> list:
     entries = yaml.safe_load(registry.read_text(encoding="utf-8")) or []
     bad = []
     for e in entries:
-        if e.get("variants") or e.get("conditions"):
+        if e.get("variants") or e.get("conditions") or e.get("default"):
             continue
         bad.append(e.get("key") or e.get("id"))
     return bad

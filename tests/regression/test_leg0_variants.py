@@ -99,15 +99,24 @@ class TestVariantsCsvStub(unittest.TestCase):
             write_variants_csv([], "Demo", out)
             self.assertFalse(out.exists())
 
-    def test_stub_when_uses_present_not_null(self):
-        # Gap 3: pre-filled `when` examples must be valid DSL — never `!= null`.
+    def test_stub_has_no_fabricated_conditions(self):
+        # The stub lists blocks with blank `when` cells — no invented sample
+        # conditions for the customer to delete. The document wording is kept.
         blocks = extract_conditionals("<p>[[literal]]</p>")
         with TemporaryDirectory() as d:
             out = Path(d) / "Demo.variants.csv"
             write_variants_csv(blocks, "Demo", out)
             text = out.read_text()
+        # No invalid DSL and no fabricated example conditions in the data rows.
         self.assertNotIn("!= null", text)
-        self.assertIn("present", text)
+        import csv  # noqa: PLC0415
+        lines = [ln for ln in text.splitlines() if ln and not ln.startswith("#")]
+        rows = list(csv.reader(lines))[1:]  # drop the column header
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertEqual(row[1].strip(), "", f"stub row has a fabricated when: {row}")
+        # The binary block's document wording is preserved in `text`.
+        self.assertIn("literal", text)
 
     def test_does_not_clobber_edited_csv(self):
         # Gap 2: a re-ingest must not overwrite a customer's filled CSV.
@@ -115,7 +124,9 @@ class TestVariantsCsvStub(unittest.TestCase):
         with TemporaryDirectory() as d:
             out = Path(d) / "Demo.variants.csv"
             write_variants_csv(blocks, "Demo", out)
-            edited = out.read_text().replace("quote.quoteNumber present", 'state == "CA"')
+            # Simulate the customer filling in the blank `when` on the text row.
+            edited = out.read_text().replace("cond1,,literal", 'cond1,"state == ""CA""",literal')
+            assert edited != out.read_text(), "test edit must actually change the stub"
             out.write_text(edited, encoding="utf-8")
             # Re-ingest (same blocks) must keep the edited content, not regenerate.
             write_variants_csv(blocks, "Demo", out)
@@ -171,6 +182,23 @@ class TestParseVariantsCsvMerge(unittest.TestCase):
             csv_path, meta = _setup(d, empty_csv, self._blocks())
             with self.assertRaises(ValueError):
                 parse_variants_csv_to_blocks(csv_path, meta, registry=_REGISTRY)
+
+    def test_default_only_variant_is_valid(self):
+        # A variant block filled with a single blank-`when` (default) row and no
+        # conditioned row is valid: it always renders that text. This is the
+        # natural "just fill the text" case after sample conditions were dropped.
+        default_only = (
+            "placeholder,when,text\n"
+            "stateClause,,Always this text\n"
+        )
+        with TemporaryDirectory() as d:
+            csv_path, meta = _setup(d, default_only, self._blocks())
+            blocks = parse_variants_csv_to_blocks(csv_path, meta, registry=_REGISTRY)
+        b = blocks[0]
+        self.assertEqual(b["key"], "stateClause")
+        self.assertEqual(b["default"], "Always this text")
+        self.assertEqual(b["variants"], [])
+        self.assertEqual(b["scope"], "")  # no conditions → no scope
 
 
 if __name__ == "__main__":

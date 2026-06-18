@@ -354,7 +354,7 @@ def _augment_field_lookup_for_variants(
     """
     names: set[str] = set()
     for b in cond_blocks:
-        if not b.get("variants"):
+        if not b.get("variants") and not b.get("default"):
             continue
         texts = [v.get("text") or "" for v in (b.get("variants") or [])]
         texts.append(b.get("default") or "")
@@ -465,7 +465,7 @@ def _analyse_cond_fields(
         # N-way variant block: classify the field tokens in its variant texts +
         # default (brace form) for the report. Unsupported → WARN row; never a
         # hard fail (variant text is not path-validated at parse time).
-        if b.get("variants"):
+        if b.get("variants") or b.get("default"):
             for t in [v.get("text") or "" for v in (b.get("variants") or [])] + [b.get("default") or ""]:
                 for m in _FIELD_BRACE_RE.finditer(t):
                     info = field_lookup.get(m.group(1))
@@ -906,10 +906,11 @@ def _required_keys(suggested: dict, cond_blocks: list[dict]) -> dict[str, str]:
                 break
         result[key] = root_id
 
-    # Positional binary blocks only — named variant blocks merge by name at the
-    # additive site (§1a: named keys don't collide by position, no renumber).
+    # Positional binary blocks only — named variant blocks (incl. default-only
+    # ones, which carry a placeholder) merge by name at the additive site
+    # (§1a: named keys don't collide by position, no renumber).
     for b in cond_blocks:
-        if not b.get("variants"):
+        if not b.get("variants") and not b.get("placeholder"):
             result[f"cond{b['id']}"] = "cond"
 
     return result
@@ -1267,14 +1268,20 @@ def _render_variant_puts(block: dict, scope: str, field_lookup: dict[str, dict] 
         d_exprs, d_todo = _classify_text_fields(default_tbd, field_lookup, scope)
         todo_all.extend(d_todo)
         java_default = _source_text_to_java(default_tbd, d_exprs)
-        branches.append(f"        }} else {{\n            {key} = {java_default};")
+        if variants:
+            branches.append(f"        }} else {{\n            {key} = {java_default};")
+        else:
+            # Default-only block (no conditioned rows): assign the text
+            # unconditionally — there is no if-chain to attach an `else` to.
+            branches.append(f"        {key} = {java_default};")
 
     todo_comment = "".join(
         f'        // TODO: field {name} not wired — {reason}\n'
         for name, reason in dict(todo_all).items()
     )
     chain = "\n".join(branches)
-    close = "        }" if branches else ""
+    # Only the conditioned (if/else-if) chain opens a brace block to close.
+    close = "        }" if variants else ""
     return (
         f'        // Conditional block {bid} (variant ${placeholder}): '
         f'{len(variants)} variant(s) + default\n'
@@ -1378,7 +1385,9 @@ def render_conditional_puts(
 
         # N-way variant block (the 50-state feature) + folded binary blocks: an
         # if/else-if chain selecting one text by data, with a trailing default.
-        if b.get("variants"):
+        # A default-only named variant (placeholder set, no conditioned rows)
+        # also routes here — it renders its default text unconditionally.
+        if b.get("variants") or b.get("placeholder"):
             lines.append(_render_variant_puts(b, scope, field_lookup))
             continue
 
@@ -2030,13 +2039,14 @@ def _process_form(
         offset_cond_blocks = [
             {**b, "id": local_to_global[b["id"]]}
             for b in cond_blocks
-            if not b.get("variants") and b["id"] in local_to_global
+            if not b.get("variants") and not b.get("placeholder") and b["id"] in local_to_global
         ]
-        # Named variant blocks merge by name (set-union, no positional offset).
-        # A name already in the plugin is a conflict to report, not a renumber.
+        # Named variant blocks merge by name (set-union, no positional offset) —
+        # this includes default-only variants (placeholder set, no conditioned
+        # rows). A name already in the plugin is a conflict to report, not a renumber.
         named_cond_keys: list[str] = []
         for b in cond_blocks:
-            if not b.get("variants"):
+            if not b.get("variants") and not b.get("placeholder"):
                 continue
             bkey = block_key(b)
             if bkey in existing_keys:

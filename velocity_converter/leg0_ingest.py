@@ -837,14 +837,15 @@ def write_variants_csv(blocks: list[dict], stem: str, output_path: Path) -> None
     conditional blocks (variants-only plan §2.1).
 
     One row group per block, keyed by the block's join ``key`` (pre-filled — the
-    customer never renames it). Block kind drives the stub:
+    customer never renames it). The stub lists the blocks with their document
+    wording but **no fabricated conditions** — every ``when`` is blank for the
+    customer to fill. Block kind drives the row shape:
 
-    - **variant** (``[[$token]]``): one example conditioned row + one default
-      row; the customer fills/adds rows. ``text`` carries the wording.
-    - **binary** (``[[text]]``): a 2-row fold — one conditioned row whose
-      ``text`` is pre-filled from the document, plus an empty-default row. The
-      text shows when ``when`` matches, nothing otherwise; the customer fills
-      only ``when``.
+    - **variant** (``[[$token]]``): one conditioned row + one default row, both
+      blank; the customer fills/adds rows and supplies each variant's ``text``.
+    - **binary** (``[[text]]``): a 2-row fold — one row whose ``text`` is
+      pre-filled from the document, plus an empty-default row. The text shows
+      when ``when`` matches, nothing otherwise; the customer fills only ``when``.
     - **template** (``render: template`` — a loop inside a conditional): a single
       ``when``-only row, ``text`` left blank because the section's wording stays
       in the document. The customer fills only ``when``.
@@ -885,12 +886,15 @@ def write_variants_csv(blocks: list[dict], stem: str, output_path: Path) -> None
     for b in blocks:
         key = block_key(b)
         if b.get("render") == "template":
-            w.writerow([key, 'policy.data.field present', ""])
+            # loop-in-conditional: a single `when`-only row, blank for the customer.
+            w.writerow([key, "", ""])
         elif b.get("variant"):
-            w.writerow([key, 'state == "CA"', "Example text for California -- edit me."])
-            w.writerow([key, "", "Default text used when no condition matches -- edit me."])
+            # N-way [[$token]]: one conditioned row to fill + the default row.
+            w.writerow([key, "", ""])
+            w.writerow([key, "", ""])
         else:  # binary block folds into a one-real-row + empty-default variant.
-            w.writerow([key, 'quote.quoteNumber present', _tbd_to_braces(b.get("source_text", ""))])
+            # The document's wording is pre-filled in `text`; the customer fills `when`.
+            w.writerow([key, "", _tbd_to_braces(b.get("source_text", ""))])
             w.writerow([key, "", ""])
     content = "\n".join(header) + "\n" + buf.getvalue()
 

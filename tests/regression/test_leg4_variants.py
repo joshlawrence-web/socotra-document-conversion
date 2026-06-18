@@ -57,6 +57,17 @@ class TestVariantCodegen(unittest.TestCase):
         # First match wins → CA before NY.
         self.assertLess(java.index('"CA"'), java.index('"NY"'))
 
+    def test_default_only_variant_unconditional(self):
+        # A default-only variant (no conditioned rows) renders its text
+        # unconditionally — no if-chain and no dangling `} else {`.
+        b = _block(scope="", variants=[], default="Always shown.")
+        java = render_conditional_puts([b], scope="quote", field_lookup=FL)
+        self.assertIn('String stateClause = "";', java)
+        self.assertIn('stateClause = "Always shown.";', java)
+        self.assertNotIn("} else {", java)
+        self.assertNotIn("if (", java)
+        self.assertIn('renderingData.put("stateClause", stateClause);', java)
+
     def test_uses_objects_equals_not_refeq(self):
         java = render_conditional_puts([_block()], scope="policy", field_lookup=FL)
         self.assertIn("Objects.equals(", java)

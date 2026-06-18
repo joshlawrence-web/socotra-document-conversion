@@ -93,11 +93,11 @@ def _build_filled_csv(csv_path: Path, sidecar_path: Path, seeds: dict) -> None:
     import csv  # noqa: PLC0415
     import io  # noqa: PLC0415
     sidecar = yaml.safe_load(sidecar_path.read_text(encoding="utf-8")) or []
-    # Recover each binary block's prefilled text from the stub's first
-    # conditioned (non-blank `when`) row.
+    # Recover each binary block's prefilled text from the stub's row that
+    # carries it (the stub leaves every `when` blank, so key off non-blank text).
     stub_text: dict[str, str] = {}
     for row in _read_csv_rows_simple(csv_path)[1:]:
-        if len(row) >= 3 and row[1].strip():
+        if len(row) >= 3 and row[2].strip():
             stub_text.setdefault(row[0], row[2])
 
     buf = io.StringIO()
