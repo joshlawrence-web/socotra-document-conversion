@@ -31,9 +31,20 @@ from velocity_converter.agent import parse_invocation  # noqa: E402
             {"input": "foo.html", "registry": "r.yaml"},
         ),
         (
-            "RUN_PIPELINE leg0 input=form.docx output=samples/output",
+            "RUN_PIPELINE leg0 input=form.docx output=workspace/output",
             "leg0",
-            {"input": "form.docx", "output": "samples/output"},
+            {"input": "form.docx", "output": "workspace/output"},
+        ),
+        (
+            # leg0_scan must NOT be truncated to leg0 (+ stray _scan) by the regex
+            "RUN_PIPELINE leg0_scan input=form.docx output=workspace/output",
+            "leg0_scan",
+            {"input": "form.docx", "output": "workspace/output"},
+        ),
+        (
+            "RUN_PIPELINE intake input=form.docx registry=r.yaml output=workspace/output",
+            "intake",
+            {"input": "form.docx", "registry": "r.yaml"},
         ),
         (
             "RUN_PIPELINE list_paths registry=r.yaml",

@@ -2,6 +2,99 @@
 
 End-to-end view of every file artifact and human touchpoint in the Velocity Converter pipeline.
 
+> This doc covers the flow *between* legs. For what happens *inside* a leg, see
+> [leg-internals.md](leg-internals.md); to jump to a specific function, see [CODEMAP.md](CODEMAP.md).
+
+This doc has **three views**, escalating from friendly to detailed:
+1. **Customer journey** (below) — what the *document author* sees and does. No files, no legs.
+2. **Full artifact flow** — every intermediate file the pipeline writes.
+3. **Human-in-the-loop view** — the same flow, colour-coded by who acts when.
+
+---
+
+## Customer journey — what the document author actually does
+
+The pipeline produces a lot of intermediate files (next section), but the **customer never
+sees them**. From the author's chair the whole job is: *write a letter, answer two forms, get
+a self-filling template back.* The narrative version (Priya & Sam) lives in
+[demo-story.md](demo-story.md); these diagrams are its shape.
+
+### Touchpoint flow — the handoffs over time
+
+Three customer touchpoints (numbered). Everything between them is the operator running the
+pipeline; the author waits.
+
+```mermaid
+sequenceDiagram
+    actor Priya as 🙋 Author
+    participant Sam as 🛠️ Operator
+    participant Pipe as ⚙️ Pipeline
+
+    Note over Priya: ① AUTHOR THE DOC
+    Priya->>Priya: Write the letter in Word with 4 markers:<br/>{field} · [[text]] · [Name]…[/Name] · [[$token]]
+    Priya->>Sam: Hand over the .docx
+
+    Sam->>Pipe: RUN_PIPELINE intake<br/>(Leg -1 suggest + Leg 0 scan)
+    Pipe-->>Sam: 2 fill-in files (path-review.md + variants.csv)
+
+    Note over Priya,Sam: ② ANSWER THE FORMS (no code)
+    Sam->>Priya: "Here are your 2 fill-in files"
+    Priya->>Priya: path-review.md — confirm each {field} → real path
+    Priya->>Priya: variants.csv — write the "when" for each block,<br/>+ version rows for each [[$token]]
+    Priya->>Sam: Return both files, filled
+
+    Sam->>Pipe: legminus1_apply → Leg 0 → Leg 2+3+4
+    Pipe-->>Sam: .final.vm template + SnapshotPlugin.java
+    Sam->>Pipe: Deploy (hot-swap, no JAR rebuild)
+
+    Note over Priya,Sam: ③ SEE IT WORK
+    Pipe-->>Priya: A letter that fills itself for every customer
+```
+
+### Journey flow — the author's path, start to finish
+
+The same three touchpoints as a straight line. Orange = *you do something*; grey =
+*pipeline runs, nothing for you to do*; green = *you receive something*.
+
+```mermaid
+flowchart LR
+    classDef do fill:#fff3e0,stroke:#e65100,color:#bf360c,stroke-width:2px;
+    classDef get fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20,stroke-width:2px;
+    classDef wait fill:#eceff1,stroke:#607d8b,color:#37474f,stroke-dasharray:4 3;
+
+    A["✍️ ① Write the letter in Word<br/>drop in the 4 markers"]:::do
+    B["📨 Hand the .docx over"]:::do
+    W1["⏳ pipeline runs intake"]:::wait
+    C["📋 ② Get 2 fill-in files back"]:::get
+    D["✅ Confirm field names<br/>path-review.md"]:::do
+    E["✅ Fill conditions & versions<br/>variants.csv"]:::do
+    F["📨 Send the 2 files back"]:::do
+    W2["⏳ pipeline finalises + deploy"]:::wait
+    G["🎉 ③ A self-filling template<br/>one letter, every customer"]:::get
+
+    A --> B --> W1 --> C --> D --> E --> F --> W2 --> G
+```
+
+**The four markers the author writes** (full cheat-sheet in [demo-story.md](demo-story.md)):
+
+| Marker | Means |
+|--------|-------|
+| `{field}` | drop a real value in here (`{$field}`/`{+field}`/`{*field}` = optional / one-or-more / zero-or-more) |
+| `[[ text ]]` | show this only when a condition holds |
+| `[Name]…[/Name]` | repeat this region once per item in a list |
+| `[[$token]]` | pick one of several versions (fill them in the CSV) |
+
+**The two forms the author fills** (both land in `workspace/action-needed/`):
+- `<stem>.path-review.md` — one block per `{field}`; confirm or fix the suggested accessor on the `Final:` line.
+- `<stem>.variants.csv` — one file for **all** conditional text: write the `when` for each `[[…]]` block (its text is pre-filled), and the version rows for each `[[$token]]`.
+
+> The author only ever touches the Word doc and these two files. Everything in the next two
+> sections is what the operator and the pipeline handle on their behalf.
+
+---
+
+## Full artifact flow (every intermediate file)
+
 ```mermaid
 flowchart LR
   %% ── Inputs ──────────────────────────────────────────
@@ -9,6 +102,7 @@ flowchart LR
   HTML[".html mockup"]
 
   %% ── Pipeline legs ───────────────────────────────────
+  LegM1["Leg -1\nlegminus1_resolve_paths.py"]
   Leg0["Leg 0\nleg0_ingest.py"]
   Leg1["Leg 1\nconvert.py"]
   Leg2["Leg 2\nleg2_fill_mapping.py"]
@@ -18,12 +112,19 @@ flowchart LR
   %% ── Registry (shared input to Leg 2) ────────────────
   REGISTRY[("registry/\npath-registry.yaml\n+ sdk-schema-index.yaml")]
 
+  %% ── Leg -1 artifacts (optional pre-stage) ───────────
+  PREVIEW[/".path-review.md\nedit Final: lines"/]
+  PATHMAP[".path-map.yaml\nleaf → accessor"]
+  PATHCHANGES[/".path-changes.md\nbefore/after audit"/]
+  RESOLVED[".resolved doc\naccessors baked in"]
+
   %% ── Leg 0 artifacts ─────────────────────────────────
   RAW[".raw.html\n(extracted, unmodified)"]
   ANN[".annotated.html\n(fields + conditionals tagged)"]
   L0MAP[".mapping.yaml\n(TBD placeholders)"]
-  FORM[/".conditional-form.md\nsend to customer"/]
-  CONDREG[".conditional-registry.yaml\n(parsed from filled form)"]
+  VARCSV[/".variants.csv\nALL conditional text\nfill in Excel"/]
+  CONDBLK[".conditional-blocks.yaml\nmachine sidecar"]
+  CONDREG[".conditional-registry.yaml\n(parsed from filled CSV)"]
 
   %% ── Leg 1 artifact ───────────────────────────────────
   L1MAP[".mapping.yaml\n(TBD placeholders)"]
@@ -45,12 +146,29 @@ flowchart LR
 
   %% ── Flow ─────────────────────────────────────────────
 
+  DOC -.->|"legminus1\n(optional, bare {leaf})"| LegM1
+  HTML -.->|"legminus1\n(optional)"| LegM1
+  LegM1 --> PREVIEW
+  PREVIEW -->|"legminus1_apply\nafter human edits Final:"| PATHMAP
+  PREVIEW --> PATHCHANGES
+  PREVIEW --> RESOLVED
+  PATHMAP -.->|"--path-map"| Leg0
+  RESOLVED -.->|"or ingest directly"| Leg0
+
+  %% ── Leg 0 scan (front-loaded human-fill file only) ──
+  Scan["Leg 0 --scan\n(intake: shares _parse_document)"]
+  DOC -.->|"leg0_scan / intake\n(CSV up front)"| Scan
+  Scan --> VARCSV
+  Scan -.->|"machine sidecar"| CONDBLK
+
   DOC -->|"leg0"| Leg0
   Leg0 --> RAW
   Leg0 --> ANN
   Leg0 --> L0MAP
-  Leg0 --> FORM
-  FORM -->|"parse-conditional-form\nafter customer fills"| CONDREG
+  Leg0 --> VARCSV
+  Leg0 --> CONDBLK
+  VARCSV -->|"parse-variants-csv\nafter customer fills\n(legacy: parse-conditional-form)"| CONDREG
+  CONDBLK -.->|"read alongside CSV\nat parse time"| CONDREG
 
   HTML -->|"leg1"| Leg1
   Leg1 --> L1MAP
@@ -84,18 +202,124 @@ flowchart LR
 
 ---
 
+## Human-in-the-loop view
+
+The same pipeline, emphasising **where a person acts**. Most legs are fully automated
+(blue); the value of the pipeline is that it isolates the few moments a human is actually
+needed — confirming accessor paths, answering conditional questions, QA-ing the output, and
+deploying.
+
+```mermaid
+flowchart TD
+  classDef machine fill:#e3f2fd,stroke:#1976d2,color:#0d47a1;
+  classDef human fill:#fff3e0,stroke:#e65100,color:#bf360c,stroke-width:3px;
+  classDef review fill:#fffde7,stroke:#f9a825,color:#f57f17,stroke-width:1px,stroke-dasharray:5 3;
+  classDef deploy fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20,stroke-width:3px;
+
+  IN(["📄 Author's source doc\n(Word / PDF / HTML)"]):::machine
+
+  INTAKE["INTAKE (one front door)\nLeg -1 suggest + Leg 0 --scan"]:::machine
+  LM1["Leg -1\nresolve bare {leaf} → accessor"]:::machine
+  H1["🙋 EDIT .path-review.md\nconfirm / fix each Final: accessor"]:::human
+
+  L0["Leg 0\ningest doc → HTML + mapping"]:::machine
+  L1["Leg 1\nconvert HTML mockup → mapping"]:::machine
+  H2["🙋 FILL .variants.csv\nALL conditional text\n(one file, every block kind)"]:::human
+  PARSE["Leg 0 --parse-variants-csv\n→ conditional-registry.yaml"]:::machine
+
+  L2["Leg 2\nsuggest + grade accessor paths"]:::machine
+  R1["👀 REVIEW .review.md\nresolve low / medium confidence"]:::review
+
+  L3["Leg 3\nwrite .final.vm template"]:::machine
+  R2["👀 CHECK .leg3-report.md\nany unresolved $TBD_* ?"]:::review
+
+  L4["Leg 4\ngenerate SnapshotPlugin .java"]:::machine
+  R3["👀 CHECK .plugin-report.md\npaths validated + compiles ?"]:::review
+
+  DEP["🚀 MANUALLY DEPLOY\n.final.vm + .java → socotra-config/"]:::deploy
+
+  IN -.->|"optional, bare {leaf}"| LM1
+  LM1 --> H1
+  IN -.->|"intake (bundle both\nhand-fill files up front)"| INTAKE
+  INTAKE --> H1
+  INTAKE --> H2
+  H1 -.->|"legminus1_apply"| L0
+  IN --> L0
+  IN --> L1
+  L0 --> H2
+  H2 -.->|"parse"| PARSE
+  PARSE --> L2
+  L1 --> L2
+  L2 --> R1
+  R1 --> L3
+  L2 --> L4
+  L3 --> R2
+  L4 --> R3
+  R2 --> DEP
+  R3 --> DEP
+```
+
+**Legend:**
+- 🙋 **orange, bold** — a *required* human edit; the pipeline cannot continue correctly until it's done
+- 👀 *yellow, dashed* — an *optional but recommended* review / QA gate (proceed once it's clean)
+- 🚀 **green** — the final manual action: deploy the two generated files (hot-swap, no JAR rebuild)
+- ▢ blue — a fully automated leg (no human needed)
+
+The two **required** human moments are filling the variants CSV (`.variants.csv` — the
+single file for ALL conditional text) and — only when the author wrote bare leaves —
+confirming accessors in `.path-review.md`. Everything else is automated or advisory.
+
+**Intake** (`RUN_PIPELINE intake`, or `leg0_scan` on its own) bundles these required edits
+into one up-front handoff: it runs Leg -1 *suggest* + Leg 0 `--scan` to emit both
+hand-fill files (`.path-review.md`, `.variants.csv`) at once, deferring the machine
+artifacts to the later full ingest. This collapses the two otherwise separate interruptions
+(path-review after Leg -1, the conditional text after Leg 0) into a single moment.
+
+---
+
 ## Walk-through
+
+### Optional first step: resolving bare field names (Leg -1 path)
+
+When the author wrote bare leaves (`{firstName}`) instead of full accessors, Leg -1
+(`legminus1_resolve_paths.py`) runs *before* Leg 0. **Suggest mode** reads the doc
+(`.docx`/`.pdf`/`.html`) and emits `.path-review.md` — one block per leaf with a suggested
+accessor and editable `Final:` line — plus a machine `.path-map.yaml`. A human edits the
+`Final:` lines; **apply mode** (`legminus1_apply`) parses the corrected review into the final
+`.path-map.yaml`, a `.path-changes.md` before/after audit, and a `.resolved` doc copy with
+accessors baked in. Leg 0 then runs either with `--path-map <…>.path-map.yaml` (source doc
+unchanged) or directly on the `.resolved` doc. Leg -1 is **registry-only** — paths are
+registry-matched, not JAR-verified; Leg 2 still verifies them against the rendering root.
 
 ### Starting from a Word or PDF document (Leg 0 path)
 
-Leg 0 (`leg0_ingest.py`) converts a `.docx` or `.pdf` into four artifacts: `.raw.html` (the
+Leg 0 (`leg0_ingest.py`) converts a `.docx` or `.pdf` into five artifacts: `.raw.html` (the
 unmodified extracted HTML), `.annotated.html` (HTML with `{field}` placeholders replaced by
 `$TBD_field` tokens and conditional blocks tagged as `$doc.condN`), `.mapping.yaml` (the
-Leg 2 input, pre-populated with TBD placeholders), and `.conditional-form.md` (a
-Markdown questionnaire listing every detected conditional block, to be filled in by the
-customer or document owner). The form displays field placeholders in the author's
-`{field}` syntax; parsing converts them back to canonical `$TBD_field` tokens in the
-registry (both forms parse).
+Leg 2 input, pre-populated with TBD placeholders), `.variants.csv` (the **single human-fill
+file for ALL conditional text** — one row group per detected block, to be filled in by the
+customer or document owner), and `.conditional-blocks.yaml` (a machine sidecar carrying the
+per-block metadata the 3-column CSV can't: `id`, `key`, `placeholder`, `variant`, `render`,
+`source_text`, `top_level`, `parent_id`, `depth`). The CSV columns are always
+`placeholder,when,text`. Every block kind folds into the same CSV:
+
+- a **binary** `[[text]]` block → a conditioned row whose `text` is pre-filled from the
+  document, plus an empty-default row; the customer fills only the `when`.
+- a **template** (loop-inside-conditional, `render: template`) block → a single `when`-only
+  row, `text` blank because the section's wording stays in the document.
+- an **N-way** `[[$token]]` variant block → one row per condition + a default row.
+
+**Front-loading the customer handoff (`leg0 --scan`).** The human-fill file
+(`.variants.csv`) and its machine sidecar (`.conditional-blocks.yaml`) depend only on the
+document's *markup* (the `[[…]]` blocks and `[Name]` loops), not on the registry, path
+resolution, or the mapping. Scan mode runs the same document parse but writes *only* the
+CSV (plus the sidecar), deferring `.raw.html`/`.annotated.html`/`.mapping.yaml` to a later
+full ingest. This lets you hand the customer their CSV up front — ideally bundled with
+Leg -1's `.path-review.md` so both hand-fill files arrive in one package instead of two
+interruptions. The CSV scan writes is byte-identical to the full ingest's (shared parse);
+the later full ingest re-parses (deterministic, cheap) and re-emits it. Note: scan still
+requires the doc-to-text conversion, so it runs at the *front* of Leg 0, not before it —
+the block set can't be known without parsing the doc.
 
 A conditional block may contain `{field}` placeholders. Because the Leg 4 plugin owns
 conditional text (the template only outputs `${data.condN}`), those fields are resolved
@@ -106,11 +330,35 @@ overload, custom fields via the segment type). Leg 3 reports such tokens as
 a block has no `data_source` (run Leg 2 first); per-exposure, account, and
 DataFetcher-sourced fields are TODO-flagged in the plugin report instead of wired.
 
-When the conditional form is returned, run `leg0_ingest.py --parse-conditional-form` to
-produce `.conditional-registry.yaml`. Leg 2 reads this registry automatically if it exists
-alongside the mapping file. If the conditional form is skipped, Leg 2 still runs — the
-`$doc.condN` placeholders in the template will remain unresolved until the registry is
-provided.
+**N-way variant blocks (the 50-state feature).** Instead of a binary present/absent
+block, an author can write a single token — `[[$disclosureClause]]` — to mean "pick one of
+N text variants by data at render time" (e.g. a different disclosure per state). The token
+name becomes the block's stable join key end-to-end (`$doc.<token>` → `${data.<token>}` →
+`put("<token>", …)`), replacing the positional `condN` for that block. Each such token gets
+one row per condition + a default row in the same `.variants.csv` (`placeholder, when, text`
+— row order is priority, a blank/`*`/`else` `when` is the default row). The customer fills it
+in Excel ("Save As → CSV UTF-8"). At `--parse-variants-csv` time the CSV is read alongside
+its `.conditional-blocks.yaml` sidecar and normalised: each `when` is parsed by the condition
+DSL (`condition_dsl.parse_variants_csv`, using `present`/`absent` rather than `!= null`),
+bare leaf names resolve to full accessors against the registry, and the variants/default/scope
+merge into the block in `.conditional-registry.yaml`. Conditions are document-scoped — they
+reference quote/account/policy(segment) accessors, never per-exposure `item.*` (the DSL
+rejects per-exposure accessors at document scope). A validation error (bad condition, missing
+default, mixed scope, type mismatch) is reported and the registry is **not** written. Leg 4
+then emits an `if`/`else if`/`else` chain (first match wins, `Objects.equals`/`compareTo`,
+null-safe) selecting the variant text — field placeholders inside each variant are wired the
+same way as binary blocks.
+
+The one genuinely-unsupported edge: an N-way `[[$token]]` block whose variants each carry
+their **own** loop (different loop-bearing wording per condition) — loop bodies can't live in
+a CSV `text` cell, and `render: template` is binary show/hide, not N-way. Vanishingly unlikely.
+
+When the variants CSV is returned, run `leg0_ingest.py --parse-variants-csv` to produce
+`.conditional-registry.yaml`. (The legacy `--parse-conditional-form <form.md>` flag is
+retained only for reading in-flight `conditional-form.md` files.) Leg 2 reads this registry
+automatically if it exists alongside the mapping file. If the variants CSV is skipped, Leg 2
+still runs — the `$doc.condN` placeholders in the template will remain unresolved until the
+registry is provided.
 
 ### Starting from an HTML mockup (Leg 1 path)
 

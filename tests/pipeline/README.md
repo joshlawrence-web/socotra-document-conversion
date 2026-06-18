@@ -26,6 +26,7 @@ Output lands in `tests/pipeline/output/<stem>/`.
 | `--only "TestItemCert(segment)"` | Run just one fixture (stem match, partial match works) |
 | `--regen` | Regenerate DOCX fixtures before running |
 | `--no-leg4` | Skip Leg 4 plugin generation |
+| `--render-preview` | After Leg 2+3, render each `.final.vm` against a **live tenant** via the ad-hoc rendering endpoint (opt-in; see below) |
 
 ---
 
@@ -75,6 +76,52 @@ Each fixture run validates:
 The combined **Leg 4** run validates:
 - All successful mappings can be combined into a single `ZenCoverDocumentDataSnapshotPluginImpl.java`
 - Additive mode works when more than one mapping is processed
+
+---
+
+## Render preview (opt-in, live tenant)
+
+`--render-preview` POSTs each fixture's `.final.vm` to Socotra's ad-hoc rendering
+endpoint (`POST {API_URL}document/{tenantLocator}/documents/render`, Documents API)
+so the template renders against real tenant data without conducting any transaction.
+
+Everything travels as **multipart form-data**: `referenceType`, `referenceLocator`,
+`templateFormat=velocity`, `productName`, the template source itself (`template`),
+and an inline `documentConfig` JSON (a `DocumentConfigRef` — name/scope/format/
+rendering/trigger/portrait/pageSize). The inline JSON is self-sufficient: the named
+document config does **not** need to be deployed on the tenant.
+
+Prerequisites:
+1. **Deploy the generated `DocumentDataSnapshotPlugin` to the tenant first.** The
+   renderer executes it to build `$data` — conditionals included. Without it,
+   `$data.condN` references fail under Velocity strict rendering.
+   (Deploy automation is planned; for now deploy manually.)
+2. Copy `.env.ai-documents.example` → `.env.ai-documents` (repo root, gitignored)
+   and fill in `AI_DOCUMENTS_API_URL`, `AI_DOCUMENTS_TENANT_LOCATOR`,
+   `AI_DOCUMENTS_PAT` (JWT or PAT with the `documents` group's
+   `render-external` permission), and a live locator per reference type
+   (`AI_DOCUMENTS_REFERENCE_QUOTE`, `AI_DOCUMENTS_REFERENCE_SEGMENT`, ...).
+   Process env vars with the same names override the file.
+3. `python3 tests/pipeline/run_test_pipeline.py --auto --render-preview`
+
+Each fixture's reference type comes from its stem — `TestQuoteSummary(quote)`
+renders against `AI_DOCUMENTS_REFERENCE_QUOTE`, `TestItemCert(segment)` against
+`AI_DOCUMENTS_REFERENCE_SEGMENT`. Fixtures whose type is unset are SKIPped.
+A render passes if the endpoint returns 2xx with a non-empty body; text output
+must also contain no leftover `$TBD_` / `$doc.cond` tokens (PDF bytes can't be
+grepped). Output: `tests/pipeline/output/<stem>/<stem>.preview.pdf` (or `.html`).
+
+One-off previews outside the suite:
+
+```bash
+python3 -m velocity_converter.render_preview \
+  --template workspace/output/<stem>/<stem>.final.vm \
+  --reference-type quote --reference-locator <locator> \
+  --out workspace/output/<stem>/<stem>.preview.pdf
+```
+
+Use `--document-config <path.json>` to send a custom inline `DocumentConfigRef`
+instead of the built-in pdf/dynamic default.
 
 ---
 

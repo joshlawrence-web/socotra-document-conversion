@@ -14,9 +14,9 @@ This is an internal pipeline tool. If the user's message does **not** contain `R
 For demos and production runs, please use the pipeline-orchestrator skill.
 
 Quick start:
-  RUN_PIPELINE leg1 input=samples/input/your-file.html output=samples/output
+  RUN_PIPELINE leg1 input=workspace/inbox/your-file.html output=workspace/output
 
-  RUN_PIPELINE leg1+leg2 input=samples/input/your-file.html registry=registry/path-registry.yaml output=samples/output
+  RUN_PIPELINE leg1+leg2 input=workspace/inbox/your-file.html registry=registry/path-registry.yaml output=workspace/output
 
 See .cursor/skills/pipeline-orchestrator/SKILL.md for the full invocation format.
 ```
@@ -79,8 +79,8 @@ A single HTML file. Conventions the user is expected to follow in the source:
 
 ## Outputs
 
-All outputs are written to `samples/output/<stem>/` when using `--output-dir samples/output`
-(or the orchestrator's `output=samples/output`). Without `--output-dir`, outputs land next
+All outputs are written to `workspace/output/<stem>/` when using `--output-dir workspace/output`
+(or the orchestrator's `output=workspace/output`). Without `--output-dir`, outputs land next
 to the input file. The skill creates the subdirectory automatically if it does not exist.
 
 - `<stem>.vm` — the Velocity template
@@ -97,7 +97,7 @@ python3 -m velocity_converter.convert <path-to-input.html> [--output-dir <dir>] 
 
 ### CLI flags
 
-- `--output-dir <dir>` — write outputs to `<dir>/<stem>/`. The `/<stem>/` subfolder is appended automatically. Use `samples/output` to match the repo convention.
+- `--output-dir <dir>` — write outputs to `<dir>/<stem>/`. The `/<stem>/` subfolder is appended automatically. Use `workspace/output` to match the repo convention.
 - `--no-conditionals` — suppress `#if($TBD_*)` wrapping around variable-bearing blocks.
 - `--auto-detect-loops` — also convert sibling-repetition loops (off by default — Mustache-only is safer).
 - `--registry <path>` — explicit path to the registry YAML. Drives the `context.loop_hint` tagging described below. If omitted, the script walks the input file's directory and its ancestors looking for `registry/path-registry.yaml` then `path-registry.yaml`; if none is found, loop hints are not emitted (graceful degrade).
@@ -118,16 +118,16 @@ The script is self-contained — it does not need to be imported. Call it as a s
 
 ```bash
 python3 -m velocity_converter.convert \
-    --batch samples/input/*.html \
-    --output-dir samples/output \
+    --batch workspace/inbox/*.html \
+    --output-dir workspace/output \
     --registry registry/path-registry.yaml
 ```
 
-Each input file `<stem>.html` produces `samples/output/<stem>/<stem>.vm`, `<stem>.mapping.yaml`, and `<stem>.report.md`. The registry is read once for the entire batch. Terminal output prints one summary line per file, then a combined count:
+Each input file `<stem>.html` produces `workspace/output/<stem>/<stem>.vm`, `<stem>.mapping.yaml`, and `<stem>.report.md`. The registry is read once for the entire batch. Terminal output prints one summary line per file, then a combined count:
 
 ```
-✓ Simple-form           → samples/output/Simple-form/  (12 vars, 3 loops)
-✓ Additional-form       → samples/output/Additional-form/  (8 vars, 1 loop)
+✓ Simple-form           → workspace/output/Simple-form/  (12 vars, 3 loops)
+✓ Additional-form       → workspace/output/Additional-form/  (8 vars, 1 loop)
 Batch complete: 2 files, 20 vars, 4 loops
 ```
 
@@ -282,13 +282,13 @@ See `examples/sample-policy.html`, `examples/sample-policy.vm`, and `examples/sa
 After the conversion rules have been applied and before writing any file:
 
 1. **Derive `stem`** from the input filename by stripping the extension (e.g. `Simple-form.html` → `Simple-form`).
-2. **Create `samples/output/<stem>/`** (or `<output-dir>/<stem>/`) if it does not already exist.
+2. **Create `workspace/output/<stem>/`** (or `<output-dir>/<stem>/`) if it does not already exist.
 3. **Write `<stem>.vm`** and **`<stem>.mapping.yaml`** into that subfolder.
 4. **Write `README.md`** into that subfolder — but only if the file does not already exist there. The README content is fixed (see template below). Never overwrite an existing README on re-runs.
 
 ### README template
 
-The `README.md` written into `samples/output/<stem>/` must use the following content, substituting the actual `<stem>` value throughout:
+The `README.md` written into `workspace/output/<stem>/` must use the following content, substituting the actual `<stem>` value throughout:
 
 ```markdown
 # <stem> — pipeline outputs

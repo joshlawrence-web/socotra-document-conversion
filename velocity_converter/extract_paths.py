@@ -546,6 +546,38 @@ def extract_policy_charges(product_cfg: dict, config_dir: Path) -> list:
 # Registry builder
 # ---------------------------------------------------------------------------
 
+# Platform feature gates: field name → the feature_support flag that must be
+# ENABLED for the field to be populated at render time. The field exists in the
+# SDK JAR regardless, so without this tag a downstream leg would green-light a
+# path that evaluates to null when the feature is off. Emitting it as
+# ``requires_feature`` on the entry makes a regenerated registry self-describing.
+# Mirrors leg2_fill_mapping.FEATURE_AVAILABILITY_GATES (the runtime fallback for
+# legacy/untagged registries).
+FEATURE_GATED_FIELDS: dict[str, str] = {
+    "jurisdiction": "jurisdictional_scopes",
+}
+
+
+def _tag_feature_gates(registry: dict) -> None:
+    """Annotate every emitted path whose field is feature-gated with
+    ``requires_feature``, in place. Applied across all path categories so the
+    tag survives regeneration regardless of which scope a gated field lands in."""
+    def _tag(entry: dict) -> None:
+        flag = FEATURE_GATED_FIELDS.get(entry.get("field") or "")
+        if flag:
+            entry["requires_feature"] = flag
+
+    for key in ("system_paths", "account_paths", "policy_data", "policy_charges"):
+        for entry in registry.get(key) or []:
+            _tag(entry)
+    for exp in registry.get("exposures") or []:
+        for entry in exp.get("fields") or []:
+            _tag(entry)
+        for cov in exp.get("coverages") or []:
+            for entry in cov.get("fields") or []:
+                _tag(entry)
+
+
 def _unscoped_entry(field, display_name, type_, category, velocity) -> dict:
     return {
         "field":          field,
@@ -657,7 +689,7 @@ def build_registry(config_dir: Path) -> dict:
     feature_support = detect_features(config_dir, product_cfg)
     source_fp = _compute_source_config_sha256(config_dir)
 
-    return {
+    registry = {
         "schema_version": "1.1",
         "meta": {
             "config_dir":   _relative_display(config_dir),
@@ -690,6 +722,9 @@ def build_registry(config_dir: Path) -> dict:
         "policy_charges": policy_charges,
         "exposures":      exposures,
     }
+
+    _tag_feature_gates(registry)
+    return registry
 
 
 # ---------------------------------------------------------------------------

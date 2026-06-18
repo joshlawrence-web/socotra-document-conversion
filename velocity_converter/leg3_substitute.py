@@ -33,6 +33,7 @@ from velocity_converter.models import (
     ConditionalRegistry,
     ContractError,
     SuggestedDoc,
+    block_key,
     load_contract,
     validate_contract,
 )
@@ -99,11 +100,15 @@ def _condition_to_velocity(condition: str) -> str:
 
 
 def build_cond_map(cond_blocks: list[dict]) -> dict[str, str]:
-    """Map '$doc.condN' → '${data.condN}' — the plugin owns the conditional logic."""
+    """Map '$doc.<key>' → '${data.<key>}' — the plugin owns the conditional logic.
+
+    §1a: keyed by the block's named key (``cond<id>`` for binary blocks, the
+    author ``$token`` for variant blocks), so the join key is stable across edits.
+    """
     return {
-        f"$doc.cond{b['id']}": f"${{data.cond{b['id']}}}"
+        f"$doc.{block_key(b)}": f"${{data.{block_key(b)}}}"
         for b in cond_blocks
-        if b.get("id") is not None
+        if b.get("id") is not None or b.get("key")
     }
 
 
@@ -125,11 +130,11 @@ def apply_cond_substitutions(vm_text: str, cond_map: dict[str, str]) -> str:
          source_text that the annotator left un-bracketed).
     """
     # Phase 0: template-rendered conditional guards
-    vm_text = re.sub(r"#if\(\$doc\.cond(\d+)\)", r"#if($data.cond\1)", vm_text)
-    # Phase 1: peel [[...]]$doc.condN from innermost outward
+    vm_text = re.sub(r"#if\(\$doc\.([A-Za-z_]\w*)\)", r"#if($data.\1)", vm_text)
+    # Phase 1: peel [[...]]$doc.<key> from innermost outward
     for _ in range(10):
         new_text = _COND_BLOCK_RE.sub(
-            lambda m: f"${{data.cond{m.group(2)}}}",
+            lambda m: f"${{data.{m.group(2)}}}",
             vm_text,
         )
         if new_text == vm_text:
@@ -158,7 +163,7 @@ def _cond_block_spans(vm_text: str) -> list[tuple[int, int, str]]:
         elif two == "]]":
             if stack:
                 start = stack.pop()
-                m = re.match(r"\$doc\.cond(\d+)", vm_text[i + 2:])
+                m = re.match(r"\$doc\.([A-Za-z_]\w*)", vm_text[i + 2:])
                 end = i + 2 + (m.end() if m else 0)
                 spans.append((start, end, m.group(1) if m else ""))
             i += 2
@@ -205,7 +210,7 @@ def split_delegated(vm_text: str, entries: list[dict]) -> tuple[list[dict], list
             if innermost[2]:
                 cond_ids.add(innermost[2])
         if all_inside:
-            delegated.append({**v, "_cond_ids": sorted(cond_ids, key=int)})
+            delegated.append({**v, "_cond_ids": sorted(cond_ids)})
         else:
             kept.append(v)
     return kept, delegated
@@ -313,7 +318,7 @@ _FOREACH_LINE_RE = re.compile(r"^\s*#foreach\b")
 _BRACE_REF_RE = re.compile(r"\{\$([a-zA-Z_][a-zA-Z0-9_.]*)\}")
 # Matches [[content]]$doc.condN where content contains no nested brackets.
 # Used in multi-pass to resolve innermost conditional blocks first.
-_COND_BLOCK_RE = re.compile(r"\[\[([^\[\]]*)\]\]\$doc\.cond(\d+)", re.DOTALL)
+_COND_BLOCK_RE = re.compile(r"\[\[([^\[\]]*)\]\]\$doc\.([A-Za-z_]\w*)", re.DOTALL)
 
 
 def _substitute_tokens(line: str, smap: dict[str, str]) -> str:
@@ -513,14 +518,18 @@ def write_report(
         ]
         for blk in cond_blocks:
             bid = blk.get("id", "?")
+            key = block_key(blk)
             conds = blk.get("conditions") or []
-            vel_conds = [_condition_to_velocity(c) for c in conds]
-            joiner = " && " if blk.get("operator", "AND") == "AND" else " || "
-            cond_expr = joiner.join(vel_conds)
+            if blk.get("variant"):
+                cond_expr = f"{len(blk.get('variants') or [])} variants + default"
+            else:
+                vel_conds = [_condition_to_velocity(c) for c in conds]
+                joiner = " && " if blk.get("operator", "AND") == "AND" else " || "
+                cond_expr = joiner.join(vel_conds)
             preview = (blk.get("source_text") or "")[:60].replace("|", "\\|")
             if len(blk.get("source_text") or "") > 60:
                 preview += "…"
-            lines.append(f"| {bid} | `$doc.cond{bid}` | `{cond_expr}` | {preview} |")
+            lines.append(f"| {bid} | `$doc.{key}` | `{cond_expr}` | {preview} |")
         lines += ["", "---", ""]
 
     # ---- §1 Resolved ---------------------------------------------------------
@@ -566,7 +575,7 @@ def write_report(
         for v in delegated_vars:
             ph = v.get("placeholder") or ""
             ds = v.get("data_source") or ""
-            conds = ", ".join(f"cond{c}" for c in v.get("_cond_ids") or []) or "?"
+            conds = ", ".join(v.get("_cond_ids") or []) or "?"
             lines.append(f"| `{ph}` | `{ds}` | {conds} |")
         lines += ["", "---", ""]
 

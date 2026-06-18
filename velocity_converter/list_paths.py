@@ -4,7 +4,7 @@
 Usage:
     python3 -m velocity_converter.list_paths
     python3 -m velocity_converter.list_paths --registry registry/path-registry.yaml
-    python3 -m velocity_converter.list_paths --registry registry/path-registry.yaml --out samples/output/field-catalog.md
+    python3 -m velocity_converter.list_paths --registry registry/path-registry.yaml --out workspace/output/field-catalog.md
 """
 
 import argparse
@@ -258,8 +258,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--out",
-        default="samples/output/field-catalog.md",
-        help="Output file (default: samples/output/field-catalog.md)",
+        default="workspace/output/field-catalog.md",
+        help="Output file (default: workspace/output/field-catalog.md)",
     )
     args = parser.parse_args()
 

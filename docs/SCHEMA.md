@@ -662,7 +662,7 @@ the pipeline — the file that gets deployed to Socotra.
 ### Generation rules
 
 - Read from `<stem>.vm` (Leg 1) and `<stem>.suggested.yaml` (Leg 2).
-- Written to `samples/output/<stem>/<stem>.final.vm` (same directory as all
+- Written to `workspace/output/<stem>/<stem>.final.vm` (same directory as all
   other per-document artifacts). The Leg 1 `<stem>.vm` is **never overwritten**.
 - Every `$TBD_<NAME>` token where `data_source` is non-empty is replaced
   with the `data_source` value verbatim.
@@ -722,34 +722,63 @@ After editing, the reviewer copies the `data_source` value into the
 
 ## Artifact: `<stem>.conditional-registry.yaml`
 
-Produced by: `leg0_ingest.py --parse-conditional-form` (after the customer
-returns the filled conditional form). Consumed by: Leg 2 (automatically when
-present beside the mapping), Leg 3 (optional enrichment — warns and ignores
-an invalid file), Leg 4 (required when present — halts on an invalid file).
+Produced by: `leg0_ingest.py --parse-variants-csv` (after the customer returns
+the filled `<stem>.variants.csv`; the parse reads it back alongside the
+`<stem>.conditional-blocks.yaml` machine sidecar). The legacy
+`--parse-conditional-form <form.md>` flag is retained only for reading in-flight
+`conditional-form.md` files. Consumed by: Leg 2 (automatically when present
+beside the mapping), Leg 3 (optional enrichment — warns and ignores an invalid
+file), Leg 4 (required when present — halts on an invalid file).
 
 **Unversioned**: the document is a bare YAML list with no `schema_version`
 key. The contract is enforced by `velocity_converter/models.py`
-(`ConditionalBlock` / `ConditionalRegistry`).
+(`Variant` / `ConditionalBlock` / `ConditionalRegistry`).
 
 ### Block entry shape
 
+The **universal** representation is `key`/`placeholder`/`scope`/`render` plus the
+`variants`/`default` pair. Every block — binary, template, and N-way — now flows
+through the variants path (`condition_dsl.parse_variants_csv`), so each block's
+condition is the structured `when` AST inside `variants[]`. The `conditions` and
+`operator` keys are **legacy-only**: they are kept for back-compat so old
+registries (and any in-flight `conditional-form.md` parse) still load, but new
+documents do not emit them.
+
 | Key | Type | Required | Description |
 |---|---|---|---|
-| `id` | int | **yes** | Unique block id; `$doc.condN` markers reference it |
-| `source_text` | string | **yes** | The conditional text shown to the customer (with `{field}` tokens) |
-| `conditions` | list of string | no (default `[]`) | Condition expressions, e.g. `quoteNumber != null`; blank entries are dropped |
-| `operator` | string | no (default `AND`) | Combinator for multiple conditions; normalised to upper case |
+| `key` | string | **yes** (or `id`) | Join key used end-to-end (`${data.<key>}`, `put("<key>", …)`). For a tokenised `[[$token]]` block it is the `$token` name; for an untokenised binary block a stable auto-name (`cond<id>`). A block must carry at least one of `id`/`key`. |
+| `id` | int | no | Transitional positional alias; when `key` is absent it is derived as `cond<id>` |
+| `source_text` | string | **yes** | The conditional text (with `{field}` tokens) |
+| `placeholder` | string or null | no | The author `$token` for a variant block; null on plain binary blocks |
+| `scope` | string | no | `quote` or `policy` — computed once at parse time from the block's conditions |
+| `variants` | list of `Variant` or null | no | **Universal** — one ordered (first-match-wins) variant per row: `{when, text}` where `when` is the structured condition AST (`condition_dsl.ast_to_dict`) and `text` is the per-variant source text. Binary blocks fold into a single conditioned variant; absent only on legacy registries. |
+| `default` | string or null | no | The trailing `else` text (the default/empty-default row) |
+| `render` | enum | no (default `plugin`) | `plugin` — Leg 4 bakes the text into the plugin's conditional string; the template prints `${data.condN}`. `template` — the content stays in the `.vm` inside `#if($data.condN)`…`#end` and the plugin puts a Boolean. Set by Leg 0 when the block contains a `[Name]`…`[/Name]` loop section. |
 | `parent_id` | int or null | no | Enclosing block id for nested blocks |
 | `depth` | int | no (default 0) | Nesting depth |
-| `render` | enum | no (default `plugin`) | `plugin` — Leg 4 bakes the text into the plugin's conditional string; the template prints `${data.condN}`. `template` — the content stays in the `.vm` inside `#if($data.condN)`…`#end` and the plugin puts a Boolean. Set by Leg 0 when the block contains a `[Name]`…`[/Name]` loop section. |
+| `conditions` | list of string | no (default `[]`) | **Legacy** — condition expressions; kept for back-compat with old registries / `conditional-form.md` parse. Not emitted for new documents. |
+| `operator` | string | no (default `AND`) | **Legacy** — combinator for multiple legacy `conditions`; normalised to upper case. |
 
 ```yaml
 - id: 1
+  key: cond1
   source_text: Accidental Damage cover is included in your plan.
-  conditions:
-  - quoteNumber != null
-  operator: AND
+  scope: quote
+  variants:
+  - when: {path: quote.quoteNumber, op: present, raw: quoteNumber present}
+    text: Accidental Damage cover is included in your plan.
+  default: ""
 ```
+
+> **Companion artifacts (Leg 0 conditional pipeline).** The customer-facing
+> `<stem>.variants.csv` (the single human-fill file for ALL conditional text;
+> columns `placeholder,when,text`) and the machine sidecar
+> `<stem>.conditional-blocks.yaml` (per-block metadata the 3-column CSV can't
+> carry: `id`, `key`, `placeholder`, `variant`, `render`, `source_text`,
+> `top_level`, `parent_id`, `depth`) are Leg 0 outputs read back together by
+> `--parse-variants-csv` to produce this registry. Both are unversioned; the CSV
+> lives under `workspace/action-needed/`, the sidecar (gitignored) under
+> `workspace/output/<stem>/`.
 
 ## Change log
 

@@ -60,12 +60,12 @@ MAPPING_FILES = _collect("conformance/fixtures/*/mapping.yaml")
 
 SUGGESTED_FILES = (
     _collect("tests/regression/fixtures/*.suggested.yaml")
-    + _collect("samples/output/*/*.mapping.yaml")
+    + _collect("workspace/output/*/*.mapping.yaml")
     + _collect("tests/pipeline/output/*/*.mapping.yaml")
 )
 
 COND_REGISTRY_FILES = (
-    _collect("samples/output/*/*.conditional-registry.yaml")
+    _collect("workspace/output/*/*.conditional-registry.yaml")
     + _collect("tests/pipeline/output/*/*.conditional-registry.yaml")
 )
 

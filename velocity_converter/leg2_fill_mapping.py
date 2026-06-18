@@ -192,6 +192,22 @@ REFUSAL_FLAGS: frozenset[str] = frozenset({
 
 PARTIAL_FLAGS: frozenset[str] = frozenset({"array_data_extensions"})
 
+# Feature-availability gates — the *inverse* of REFUSAL_FLAGS. REFUSAL/PARTIAL
+# flags fire when a flag is TRUE ("config uses a shape the pipeline can't fully
+# handle"). These fire when a flag is FALSE: the named fields still exist as
+# methods in the SDK JAR, but the platform only populates them when the feature
+# is enabled, so a path resolving to one would evaluate to null at render time.
+# "Method exists in the JAR" is therefore NOT sufficient to green-light them.
+#
+# Keyed by feature_support flag → bare field names. This encodes platform
+# semantics (not config-specific values), so it stays correct when the JARs /
+# config are regenerated. A registry entry's own ``requires_feature`` tag (see
+# extract_paths.FEATURE_GATED_FIELDS) takes precedence over this fallback, so a
+# freshly regenerated, self-describing registry needs no entry here.
+FEATURE_AVAILABILITY_GATES: dict[str, frozenset[str]] = {
+    "jurisdictional_scopes": frozenset({"jurisdiction"}),
+}
+
 # ---------------------------------------------------------------------------
 # Registry index
 # ---------------------------------------------------------------------------
@@ -789,6 +805,75 @@ def _datafetcher_verdict(candidate: dict, rid: str, classpath: str) -> dict:
     }
 
 
+def _gated_entry(field: str, path: str, idx: dict) -> dict | None:
+    """Registry entry for a candidate's field, preferring the one whose velocity
+    matches the candidate path (disambiguates same-named fields across scopes)."""
+    cands = [
+        e for e in idx.get("by_field", {}).get(field.lower(), [])
+        if (e.get("field") or "").lower() == field.lower()
+    ]
+    if not cands:
+        return None
+    if path:
+        for e in cands:
+            if e.get("velocity") == path:
+                return e
+    return cands[0]
+
+
+def feature_gate_violation(candidate: dict, idx: dict) -> str | None:
+    """Return the *disabled* feature_support flag that gates this candidate's
+    field, or None. Prefers the matched registry entry's ``requires_feature``
+    tag (authoritative, regeneration-safe); falls back to the platform
+    ``FEATURE_AVAILABILITY_GATES`` map for legacy/untagged registries.
+
+    A path is only gated when the flag is explicitly ``False`` — an absent or
+    truthy flag is not a violation (the JAR is the authority once the feature
+    is on)."""
+    feature_support = idx.get("feature_support") or {}
+    field = (candidate.get("registry_field") or "").strip()
+    if not field:
+        return None
+
+    entry = _gated_entry(field, candidate.get("path") or "", idx)
+    if entry is not None:
+        req = entry.get("requires_feature")
+        if isinstance(req, str) and req:
+            return req if feature_support.get(req) is False else None
+
+    for flag, fields in FEATURE_AVAILABILITY_GATES.items():
+        if field.lower() in fields and feature_support.get(flag) is False:
+            return flag
+    return None
+
+
+def apply_feature_gate(verdicts: dict, candidate: dict, idx: dict) -> str | None:
+    """Demote every verdict that auto-filled a path gated by a disabled feature.
+
+    The feature flags are document-scoped, so a violation demotes the candidate
+    across all rendering roots. ``data_source`` is cleared (not merely flagged):
+    leaving it set would let Leg 3 substitute a path that renders null. The
+    placeholder instead falls through to Leg 3's unresolved-token handling so a
+    human decides — supply from the plugin, or drop it from the template."""
+    flag = feature_gate_violation(candidate, idx)
+    if not flag:
+        return None
+    for verdict in verdicts.values():
+        gated_path = (verdict.get("data_source") or "").strip()
+        if not gated_path:
+            continue  # nothing was auto-filled on this root — nothing to demote
+        verdict["sdk_status"] = "feature_gated"
+        verdict["confidence"] = "low"
+        verdict["feature_gate"] = flag
+        verdict["data_source"] = ""
+        verdict["reasoning"] = (
+            f"DEMOTED (feature-gated): `{gated_path}` resolves to an SDK method that "
+            f"exists but is only populated when feature_support.{flag} is enabled "
+            f"(currently disabled) — not auto-filled. next-action: confirm-assumption"
+        )
+    return flag
+
+
 def variable_verdict_for_root(candidate: dict, root: dict, classpath: str) -> dict:
     """Build one ``(variable × root)`` verdict from a candidate + the root's
     compiled Java type (plan §6.2/§6.3). SDK truth can only demote (D8)."""
@@ -1258,6 +1343,7 @@ def annotate_mapping(
         v["verdicts"] = {
             r["id"]: variable_verdict_for_root(cand, r, classpath) for r in roots
         }
+        apply_feature_gate(v["verdicts"], cand, idx)
 
     elem_cache: dict = {}
     for loop in out.get("loops") or []:

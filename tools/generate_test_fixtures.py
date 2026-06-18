@@ -72,7 +72,6 @@ def _build_quote_summary(doc):
     _table_row(tbl, "Quote Reference", "{quote.quoteNumber}")
     _table_row(tbl, "Cover Start Date", "{quote.startTime}")
     _table_row(tbl, "Cover End Date", "{quote.endTime}")
-    _table_row(tbl, "Jurisdiction", "{quote.jurisdiction}")
     _para(doc, "")
 
     _heading(doc, "Coverage", level=2)
@@ -268,6 +267,131 @@ def _build_gift_schedule(doc):
 
 
 # ---------------------------------------------------------------------------
+# Document 6: TestStateDisclosure(segment) — N-way variant block ([[$token]])
+# ---------------------------------------------------------------------------
+
+def _build_state_disclosure(doc):
+    """Exercises the multi-variant conditional feature (the 50-state pattern).
+
+    A single [[$disclosureClause]] variant block selects one of several texts by
+    the policy's discountType. Its rows are seeded from condition_seeds.yaml (the
+    harness builds the filled variants.csv); the variant texts embed a policy
+    *system* field ({policy.policyNumber}) and a policy *custom* field
+    ({policy.data.discountAmount}) — both supported wiring categories — so the
+    generated if/else-if chain concatenates real accessors and compiles against
+    customer-config.jar.
+    """
+    _heading(doc, "Policy Disclosure Notice")
+
+    _para(doc, "Dear {account.data.firstName} {account.data.lastName},")
+    _para(doc, "")
+    _para(doc, "Please review the disclosure that applies to your policy below.")
+    _para(doc, "")
+
+    _heading(doc, "Policy Details", level=2)
+    tbl = doc.add_table(rows=1, cols=2)
+    tbl.rows[0].cells[0].text = "Field"
+    tbl.rows[0].cells[1].text = "Value"
+    _table_row(tbl, "Policy Number", "{policy.policyNumber}")
+    _table_row(tbl, "Discount Type", "{policy.data.discountType}")
+    _para(doc, "")
+
+    _heading(doc, "Applicable Disclosure", level=2)
+    # The variant block: one bare $token, filled from the companion variants.csv.
+    _para(doc, "[[$disclosureClause]]")
+    _para(doc, "")
+
+    _para(doc, "Thank you for choosing ZenCover.")
+    _para(doc, "")
+    _para(doc, "ZenCover Customer Services")
+
+
+# ---------------------------------------------------------------------------
+# Document 7: TestVariantThenBinary(segment) — regression for the variant-then-
+# binary conditional-form parse bug (fixed 2026-06-16)
+# ---------------------------------------------------------------------------
+
+def _build_variant_then_binary(doc):
+    """Regression fixture: a [[$token]] variant block placed BEFORE a binary block.
+
+    The old conditional-form parser's binary-block regex used a DOTALL non-greedy
+    body capture that ran *past* the variant block (which carries no Condition:
+    line) and stole the following binary block's condition — producing two
+    `id: 1` entries and dropping the binary block. Order is load-bearing: the
+    variant MUST precede the binary to reproduce it. Keep both blocks here so the
+    suite fails if that parse ever regresses.
+    """
+    _heading(doc, "Variant Then Binary Notice")
+
+    _para(doc, "Dear {account.data.firstName} {account.data.lastName},")
+    _para(doc, "")
+    _para(doc, "Please review the disclosure that applies to your policy below.")
+    _para(doc, "")
+
+    _heading(doc, "Policy Details", level=2)
+    tbl = doc.add_table(rows=1, cols=2)
+    tbl.rows[0].cells[0].text = "Field"
+    tbl.rows[0].cells[1].text = "Value"
+    _table_row(tbl, "Policy Number", "{policy.policyNumber}")
+    _table_row(tbl, "Discount Type", "{policy.data.discountType}")
+    _para(doc, "")
+
+    _heading(doc, "Applicable Disclosure", level=2)
+    # Variant block FIRST (Block 1) …
+    _para(doc, "[[$disclosureClause]]")
+    _para(doc, "")
+    # … binary block SECOND (Block 2) — its condition was the one the old parser
+    # stole into the phantom block.
+    _para(doc,
+          "[[A cooling-off period applies to this policy. "
+          "You have the right to cancel within the cooling-off window.]]")
+    _para(doc, "")
+
+    _para(doc, "Thank you for choosing ZenCover.")
+    _para(doc, "")
+    _para(doc, "ZenCover Customer Services")
+
+
+# ---------------------------------------------------------------------------
+# Document 8: TestVariantBareLeaf(segment) — Decision B (bare leaf in variant text)
+# ---------------------------------------------------------------------------
+
+def _build_variant_bare_leaf(doc):
+    """Regression fixture for Decision B (variants-only plan §2.4/§2.6).
+
+    A single [[$bareLeafClause]] variant block whose seed variant text embeds a
+    **bare leaf** ({discountAmount}) rather than the full accessor. The bare leaf
+    was never seen by Leg -1's pass-1 scan (the source doc holds only the
+    [[$token]] marker), so Leg 4's variant-text resolver must resolve it to a
+    single registry accessor (policy.data.discountAmount) and wire a real Java
+    accessor — not silently degrade it to a // TODO. Order/shape mirrors
+    TestStateDisclosure; only the seed CSV's leaf form differs.
+    """
+    _heading(doc, "Bare-Leaf Variant Notice")
+
+    _para(doc, "Dear {account.data.firstName} {account.data.lastName},")
+    _para(doc, "")
+    _para(doc, "Please review the disclosure that applies to your policy below.")
+    _para(doc, "")
+
+    _heading(doc, "Policy Details", level=2)
+    tbl = doc.add_table(rows=1, cols=2)
+    tbl.rows[0].cells[0].text = "Field"
+    tbl.rows[0].cells[1].text = "Value"
+    _table_row(tbl, "Policy Number", "{policy.policyNumber}")
+    _table_row(tbl, "Discount Type", "{policy.data.discountType}")
+    _para(doc, "")
+
+    _heading(doc, "Applicable Disclosure", level=2)
+    _para(doc, "[[$bareLeafClause]]")
+    _para(doc, "")
+
+    _para(doc, "Thank you for choosing ZenCover.")
+    _para(doc, "")
+    _para(doc, "ZenCover Customer Services")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -277,6 +401,9 @@ FIXTURES = [
     ("TestRenewalNotice(segment).docx", _build_renewal_notice),
     ("TestItemsSchedule(segment).docx", _build_items_schedule),
     ("TestGiftSchedule(segment).docx", _build_gift_schedule),
+    ("TestStateDisclosure(segment).docx", _build_state_disclosure),
+    ("TestVariantThenBinary(segment).docx", _build_variant_then_binary),
+    ("TestVariantBareLeaf(segment).docx", _build_variant_bare_leaf),
 ]
 
 

@@ -24,9 +24,9 @@ Instead print:
 For demos and production runs, please use the pipeline-orchestrator skill.
 
 Quick start:
-  RUN_PIPELINE leg3 suggested=samples/output/<stem>/<stem>.suggested.yaml
+  RUN_PIPELINE leg3 suggested=workspace/output/<stem>/<stem>.suggested.yaml
 
-  RUN_PIPELINE leg1+leg2+leg3 input=samples/input/<file>.html registry=registry/path-registry.yaml
+  RUN_PIPELINE leg1+leg2+leg3 input=workspace/inbox/<file>.html registry=registry/path-registry.yaml
 
 See .cursor/skills/pipeline-orchestrator/SKILL.md for the full invocation format.
 ```
@@ -48,7 +48,7 @@ Leg 3 of the HTML → Velocity pipeline. Takes the two upstream artifacts:
    Contains the reviewed `data_source` paths for each placeholder, plus
    `confidence` and `reasoning`.
 
-Outputs (all written to `samples/output/<stem>/`):
+Outputs (all written to `workspace/output/<stem>/`):
 
 - **`<stem>.final.vm`** — the production-ready Velocity template.
   Resolved `$TBD_*` tokens replaced with real paths. `#if($TBD_*)...#end`
@@ -80,13 +80,13 @@ Leg 3 is always run via `velocity_converter/agent.py`. Do **not** call
 ### Leg 3 only (finalise an existing .suggested.yaml)
 
 ```
-RUN_PIPELINE leg3 suggested=samples/output/<stem>/<stem>.suggested.yaml
+RUN_PIPELINE leg3 suggested=workspace/output/<stem>/<stem>.suggested.yaml
 ```
 
 ### Full end-to-end (HTML → final .vm in one shot)
 
 ```
-RUN_PIPELINE leg1+leg2+leg3 input=samples/input/<file>.html registry=registry/path-registry.yaml
+RUN_PIPELINE leg1+leg2+leg3 input=workspace/inbox/<file>.html registry=registry/path-registry.yaml
 ```
 
 ---

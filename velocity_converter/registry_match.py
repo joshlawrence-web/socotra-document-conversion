@@ -68,9 +68,17 @@ def build_candidate_index(reg: dict, roots: list[str] | None = None) -> list[dic
     When ``roots`` contains ``"quote"``, policy custom-data fields additionally
     yield a ``quote.data.<field>`` candidate (ranked ahead of the policy form on
     quote documents), matching ``build_velocity_lookup``'s quote-data aliases.
+    On a **quote-only** document (``quote`` declared, no policy-side ``segment``
+    root) the ``policy.data.<field>`` form is suppressed entirely: there is no
+    policy at quote time in the policy lifecycle, so emitting it would manufacture
+    a false ambiguity between the quote and policy accessors of the same field.
     """
     roots = roots or []
     quote_root = "quote" in roots
+    # The policy.data.* accessor only exists once a policy/segment exists. On a
+    # quote-only document the policy doesn't exist yet, so suppress that form and
+    # keep only the quote alias (avoids a bogus quote-vs-policy ambiguity).
+    quote_only = quote_root and "segment" not in roots
     out: list[dict] = []
 
     def _add(entry: dict, exposure: str | None, *, accessor: str | None = None,
@@ -116,9 +124,15 @@ def build_candidate_index(reg: dict, roots: list[str] | None = None) -> list[dic
         if not isinstance(e, dict):
             continue
         vel = str(e.get("velocity") or "")
-        if quote_root and vel.startswith("$data.data."):
+        has_quote_alias = quote_root and vel.startswith("$data.data.")
+        if has_quote_alias:
             _add(e, None, accessor="quote." + vel[len("$data."):],
                  velocity="$data.quote." + vel[len("$data."):])
+        # On a quote-only doc, skip the policy form once we've emitted the quote
+        # alias — the field is still offered (as the quote accessor), just not
+        # duplicated as a non-existent policy accessor.
+        if has_quote_alias and quote_only:
+            continue
         _add(e, None)
 
     # Policy charges have name/velocity_amount, not field/velocity — bridge them.

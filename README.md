@@ -10,6 +10,9 @@ Update a Socotra document template without redeploying your product config — a
 flowchart LR
   DOC["Word / PDF\n(.docx / .pdf)"]
   HTML[".html mockup"]
+  LegM1["Leg -1\nlegminus1_resolve_paths.py"]
+  PREVIEW[/".path-review.md\nedit Final: lines"/]
+  PATHMAP[".path-map.yaml\nleaf → accessor"]
   Leg0["Leg 0\nleg0_ingest.py"]
   Leg1["Leg 1\nconvert.py"]
   Leg2["Leg 2\nleg2_fill_mapping.py"]
@@ -19,7 +22,8 @@ flowchart LR
   RAW[".raw.html"]
   ANN[".annotated.html"]
   L0MAP[".mapping.yaml\n(TBD placeholders)"]
-  FORM[/".conditional-form.md\nsend to customer"/]
+  VARCSV[/".variants.csv\nsend to customer\n(all conditional text)"/]
+  CONDBLK[".conditional-blocks.yaml\n(machine sidecar)"]
   CONDREG[".conditional-registry.yaml"]
   L1MAP[".mapping.yaml\n(TBD placeholders)"]
   ENRICHED[".mapping.yaml\n(path suggestions)"]
@@ -30,9 +34,15 @@ flowchart LR
   L4RPT[/".plugin-report.md\nvalidate paths"/]
   DEPLOY[("socotra-config/\nhot-swap deploy")]
 
+  DOC -.->|"legminus1 (optional,\nbare {leaf})"| LegM1
+  LegM1 --> PREVIEW
+  PREVIEW -->|"legminus1_apply"| PATHMAP
+  PATHMAP -.->|"--path-map"| Leg0
+
   DOC -->|"leg0"| Leg0
-  Leg0 --> RAW & ANN & L0MAP & FORM
-  FORM -->|"parse-conditional-form\nafter customer fills"| CONDREG
+  Leg0 --> RAW & ANN & L0MAP & VARCSV & CONDBLK
+  VARCSV -->|"parse-variants-csv\nafter customer fills"| CONDREG
+  CONDBLK -.->|"read at parse time"| CONDREG
 
   HTML -->|"leg1"| Leg1
   Leg1 --> L1MAP
@@ -58,7 +68,7 @@ flowchart LR
 
 This is a **five-leg pipeline (Leg 0–4)**:
 
-**Leg 0** (`leg0_ingest.py`) ingests a Word/PDF doc; extracts HTML + a conditional-form for the customer to fill in.
+**Leg 0** (`leg0_ingest.py`) ingests a Word/PDF doc; extracts HTML + a single `.variants.csv` for the customer to fill in (the one human-fill file for ALL conditional text), plus a machine `.conditional-blocks.yaml` sidecar read back at parse time.
 
 **Leg 1** (`convert.py`) converts an HTML mockup — annotated with `{{variable_name}}` placeholders and `*loop_name*` markers — into a Velocity `.vm` template and a `.mapping.yaml` file whose `data_source` fields are populated with `$TBD_*` placeholders.
 
@@ -123,7 +133,7 @@ ingest my Word document at /path/to/policy-form.docx
 list what Velocity paths I can use in my template
 ```
 ```
-generate the snapshot plugin from samples/output/ZenCover/ZenCover.mapping.yaml
+generate the snapshot plugin from workspace/output/ZenCover/ZenCover.mapping.yaml
 ```
 
 Claude figures out which tool to call. You never need to know the tool names or command syntax.
@@ -184,21 +194,21 @@ If you say *"only fill the high confidence fields"*, the server substitutes only
 
    ```bash
    # Full pipeline — HTML → .final.vm (most common)
-   python3 -m velocity_converter.agent "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml output=samples/output"
+   python3 -m velocity_converter.agent "RUN_PIPELINE leg1+leg2+leg3 input=workspace/inbox/Simple-form.html registry=registry/path-registry.yaml output=workspace/output"
 
    # Leg 1 only (HTML → .vm + .mapping.yaml)
-   python3 -m velocity_converter.agent "RUN_PIPELINE leg1 input=samples/input/Simple-form.html output=samples/output"
+   python3 -m velocity_converter.agent "RUN_PIPELINE leg1 input=workspace/inbox/Simple-form.html output=workspace/output"
 
    # Leg 2 only (suggest paths for an existing .mapping.yaml)
-   python3 -m velocity_converter.agent "RUN_PIPELINE leg2 mapping=samples/output/Simple-form/Simple-form.mapping.yaml"
+   python3 -m velocity_converter.agent "RUN_PIPELINE leg2 mapping=workspace/output/Simple-form/Simple-form.mapping.yaml"
 
    # Leg 3 only (write final .vm from a reviewed .mapping.yaml)
-   python3 -m velocity_converter.agent "RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.mapping.yaml"
+   python3 -m velocity_converter.agent "RUN_PIPELINE leg3 suggested=workspace/output/Simple-form/Simple-form.mapping.yaml"
    ```
 
    The orchestrator shows a preflight summary and requires you to type `PROCEED` before running. Add `--yes` to skip confirmation in CI/headless use.
 
-3. **Review the report** — open `<stem>.leg3-report.md` in `samples/output/<stem>/` to see what resolved and what remains as `$TBD_*`. The `.final.vm` is the production template.
+3. **Review the report** — open `<stem>.leg3-report.md` in `workspace/output/<stem>/` to see what resolved and what remains as `$TBD_*`. The `.final.vm` is the production template.
 
 > **Note:** You can also invoke Leg 1 and Leg 2 directly (see their `SKILL.md` files under `.cursor/skills/`), but the orchestrator is the recommended entry point.
 
@@ -224,8 +234,9 @@ If you say *"only fill the high confidence fields"*, the server substitutes only
 | `velocity_converter/` | Installable pipeline package (`agent.py`, `leg2_fill_mapping.py`, `leg3_substitute.py`, …) |
 | `tools/` | Dev tooling (`generate_test_fixtures.py`) |
 | `.cursor/skills/` | Leg 1 and Leg 2 agent runbooks (docs only — code lives in the package) |
-| `samples/input/` | Sample HTML mockups (`Simple-form`, `Additional-form`, `Policy-summary`) |
-| `samples/output/` | Generated pipeline outputs (gitignored — run the pipeline to populate) |
+| `workspace/inbox/` | Source docs you feed the pipeline (`.docx`/`.pdf`/`.html`) |
+| `workspace/action-needed/` | Human-fill files awaiting a person — variant CSVs (all conditional text), path reviews (gitignored) |
+| `workspace/output/` | Per-stem generated pipeline outputs (gitignored — run the pipeline to populate) |
 | `registry/` | Pre-generated path registry plus Leg 2 config (`terminology.yaml`, `skill-lessons.yaml`) |
 | `socotra-config/` | Bundled sample Socotra config — drives the demo registry |
 | `conformance/` | Adversarial conformance fixture suite + runner |
@@ -237,6 +248,9 @@ If you say *"only fill the high confidence fields"*, the server substitutes only
 - [PIPELINE_EVOLUTION_PLAN.md](.cursor/plans/pipeline-improvements/CompletedPlans/alpha-beta-plan/PIPELINE_EVOLUTION_PLAN.md) — session-by-session runbook and hard constraints
 - [PIPELINE_IMPROVEMENTS_PLAN.md](.cursor/plans/pipeline-improvements/CompletedPlans/alpha-beta-plan/PIPELINE_IMPROVEMENTS_PLAN.md) — phased improvement roadmap
 - [GENERALISATION_AUDIT.md](.cursor/plans/pipeline-improvements/CompletedPlans/alpha-beta-plan/GENERALISATION_AUDIT.md) — CommercialAuto coupling risk report
+- [CODEMAP.md](docs/CODEMAP.md) — per-module symbol index (function → line); read this to jump straight to code instead of scanning whole modules
+- [leg-internals.md](docs/leg-internals.md) — control-flow diagram + invariants for each leg's internals
+- [pipeline-dataflow.md](docs/pipeline-dataflow.md) — end-to-end artifact flow between legs
 - [SCHEMA.md](docs/SCHEMA.md) — artifact schema reference
 - [CONFIG_COVERAGE.md](docs/CONFIG_COVERAGE.md) — Socotra config feature coverage matrix
 

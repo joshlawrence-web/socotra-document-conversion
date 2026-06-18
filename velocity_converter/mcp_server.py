@@ -233,16 +233,58 @@ def write_final_template(
 
 
 @mcp.tool()
+def scan_document(
+    input_path: str,
+    output_dir: str = "workspace/output",
+) -> str:
+    """Scan a Word (.docx) or PDF for its conditional blocks and emit ONLY the
+    customer-facing hand-fill files — no machine artifacts.
+
+    Runs Leg 0 in --scan mode: it parses the document and writes the single
+    variants.csv (covering every conditional block — binary, template, and
+    `[[$token]]` variant), deferring the raw/annotated HTML and mapping to a later
+    full ingest. Use this to front-load the customer handoff — hand them the CSV
+    to fill while the rest of the pipeline waits. The CSV is byte-identical to a
+    full ingest's.
+
+    Use when the user says: "send the customer the conditional form", "what does
+    the customer need to fill in", "prep the intake package", "just give me the
+    forms", "run leg 0 scan".
+
+    Args:
+        input_path: Path to the .docx or .pdf file (absolute, or relative to CWD).
+        output_dir: Directory for output files. Default: workspace/output/
+    """
+    inp = _resolve(input_path)
+    out = _resolve(output_dir)
+    stem = inp.stem
+
+    ok, msg = _run([sys.executable, "-m", _LEG0, "--input", str(inp), "--output-dir", str(out), "--scan"])
+    if not ok:
+        return f"ERROR: Leg 0 scan failed:\n{msg}"
+
+    from velocity_converter.workspace import action_needed_dir
+    action = action_needed_dir(out)
+    lines = [f"Leg 0 scan complete. Hand this to the customer to fill:"]
+    for name in (f"{stem}.variants.csv",):
+        if (action / name).exists():
+            lines.append(f"  {action}/{name}")
+    lines.append(f"\nAfter they return the CSV, run ingest_document on {inp} for the full conversion.")
+    return "\n".join(lines)
+
+
+@mcp.tool()
 def ingest_document(
     input_path: str,
-    output_dir: str = "samples/output",
+    output_dir: str = "workspace/output",
 ) -> str:
-    """Ingest a Word (.docx) or PDF document into raw HTML and a conditional form.
+    """Ingest a Word (.docx) or PDF document into raw HTML and a variants CSV.
 
     Runs Leg 0 of the pipeline:
       - Converts .docx or .pdf to raw HTML
       - Annotates {field} tokens as $TBD_* placeholders
-      - Extracts conditional blocks into a customer-facing form
+      - Extracts conditional blocks into a customer-facing variants.csv (+ a
+        machine conditional-blocks.yaml sidecar)
       - Writes .mapping.yaml for Leg 2 input
 
     Use when the user says: "convert my Word document", "ingest this PDF",
@@ -250,7 +292,7 @@ def ingest_document(
 
     Args:
         input_path: Path to the .docx or .pdf file (absolute, or relative to CWD).
-        output_dir: Directory for all output files. Default: samples/output/
+        output_dir: Directory for all output files. Default: workspace/output/
     """
     inp = _resolve(input_path)
     out = _resolve(output_dir)
@@ -260,17 +302,20 @@ def ingest_document(
     if not ok:
         return f"ERROR: Leg 0 failed:\n{msg}"
 
-    artifact_names = [
-        f"{stem}.raw.html",
-        f"{stem}.annotated.html",
-        f"{stem}.mapping.yaml",
-        f"{stem}.conditional-form.md",
+    from velocity_converter.workspace import action_needed_dir
+    action = action_needed_dir(out)
+    artifact_locs = [
+        (out, f"{stem}.raw.html"),
+        (out, f"{stem}.annotated.html"),
+        (out, f"{stem}.mapping.yaml"),
+        (out, f"{stem}.conditional-blocks.yaml"),
+        (action, f"{stem}.variants.csv"),
     ]
     lines = [f"Leg 0 complete. Output: {out}"]
-    for name in artifact_names:
-        if (out / name).exists():
+    for d, name in artifact_locs:
+        if (d / name).exists():
             lines.append(f"  {name}")
-    lines.append(f"\nSend {stem}.conditional-form.md to the customer for conditional logic review.")
+    lines.append(f"\nFill {stem}.variants.csv (in {action}/) for conditional logic review.")
     lines.append(f"Then run suggest_velocity_paths on {out}/{stem}.mapping.yaml to continue.")
     return "\n".join(lines)
 

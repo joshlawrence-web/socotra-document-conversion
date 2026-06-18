@@ -5,13 +5,13 @@ Parses a structured RUN_PIPELINE invocation, validates inputs, shows a preflight
 summary, requires PROCEED confirmation, then dispatches to Leg 1 / Leg 2 / Leg 3 / Leg 4 scripts.
 
 Usage:
-    python3 -m velocity_converter.agent "RUN_PIPELINE leg1 input=samples/input/Simple-form.html"
-    python3 -m velocity_converter.agent "RUN_PIPELINE leg1+leg2 input=samples/input/Simple-form.html"
-    python3 -m velocity_converter.agent "RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.mapping.yaml"
-    python3 -m velocity_converter.agent "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml"
-    python3 -m velocity_converter.agent "RUN_PIPELINE leg4 suggested=samples/output/Simple-form/Simple-form.mapping.yaml"
-    python3 -m velocity_converter.agent "RUN_PIPELINE leg1+leg2+leg3+leg4 input=samples/input/Simple-form.html registry=registry/path-registry.yaml"
-    python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg1+leg2+leg3+leg4 input=samples/input/Simple-form.html"
+    python3 -m velocity_converter.agent "RUN_PIPELINE leg1 input=workspace/inbox/Simple-form.html"
+    python3 -m velocity_converter.agent "RUN_PIPELINE leg1+leg2 input=workspace/inbox/Simple-form.html"
+    python3 -m velocity_converter.agent "RUN_PIPELINE leg3 suggested=workspace/output/Simple-form/Simple-form.mapping.yaml"
+    python3 -m velocity_converter.agent "RUN_PIPELINE leg1+leg2+leg3 input=workspace/inbox/Simple-form.html registry=registry/path-registry.yaml"
+    python3 -m velocity_converter.agent "RUN_PIPELINE leg4 suggested=workspace/output/Simple-form/Simple-form.mapping.yaml"
+    python3 -m velocity_converter.agent "RUN_PIPELINE leg1+leg2+leg3+leg4 input=workspace/inbox/Simple-form.html registry=registry/path-registry.yaml"
+    python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg1+leg2+leg3+leg4 input=workspace/inbox/Simple-form.html"
     python3 -m velocity_converter.agent          # interactive stdin mode
 """
 
@@ -25,6 +25,7 @@ from velocity_converter.agent_tools import (
     get_intermediate_paths,
     list_candidates,
     run_leg0,
+    run_leg0_scan,
     run_leg1,
     run_leg2,
     run_leg3,
@@ -38,22 +39,26 @@ from velocity_converter.agent_tools import (
 REFUSAL = """\
 This agent requires an explicit invocation token. Examples:
 
-  RUN_PIPELINE leg0 input=samples/input/policy-form.docx output=samples/output
-  RUN_PIPELINE leg0+leg2+leg3 input=samples/input/policy-form.docx registry=registry/path-registry.yaml output=samples/output
-  RUN_PIPELINE leg1 input=samples/input/Simple-form.html output=samples/output
-  RUN_PIPELINE leg2 mapping=samples/output/Simple-form/Simple-form.mapping.yaml
-  RUN_PIPELINE leg2+leg3 mapping=samples/output/Simple-form/Simple-form.mapping.yaml registry=registry/path-registry.yaml
-  RUN_PIPELINE leg1+leg2 input=samples/input/Simple-form.html registry=registry/path-registry.yaml
-  RUN_PIPELINE leg3 suggested=samples/output/Simple-form/Simple-form.mapping.yaml
-  RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml
-  RUN_PIPELINE leg4 suggested=samples/output/Simple-form/Simple-form.mapping.yaml
-  RUN_PIPELINE leg1+leg2+leg3+leg4 input=samples/input/Simple-form.html registry=registry/path-registry.yaml
+  RUN_PIPELINE intake input=workspace/inbox/policy-form.docx registry=registry/path-registry.yaml output=workspace/output
+  RUN_PIPELINE leg0_scan input=workspace/inbox/policy-form.docx output=workspace/output
+  RUN_PIPELINE leg0 input=workspace/inbox/policy-form.docx output=workspace/output
+  RUN_PIPELINE leg0+leg2+leg3 input=workspace/inbox/policy-form.docx registry=registry/path-registry.yaml output=workspace/output
+  RUN_PIPELINE leg1 input=workspace/inbox/Simple-form.html output=workspace/output
+  RUN_PIPELINE leg2 mapping=workspace/output/Simple-form/Simple-form.mapping.yaml
+  RUN_PIPELINE leg2+leg3 mapping=workspace/output/Simple-form/Simple-form.mapping.yaml registry=registry/path-registry.yaml
+  RUN_PIPELINE leg1+leg2 input=workspace/inbox/Simple-form.html registry=registry/path-registry.yaml
+  RUN_PIPELINE leg3 suggested=workspace/output/Simple-form/Simple-form.mapping.yaml
+  RUN_PIPELINE leg1+leg2+leg3 input=workspace/inbox/Simple-form.html registry=registry/path-registry.yaml
+  RUN_PIPELINE leg4 suggested=workspace/output/Simple-form/Simple-form.mapping.yaml
+  RUN_PIPELINE leg1+leg2+leg3+leg4 input=workspace/inbox/Simple-form.html registry=registry/path-registry.yaml
   RUN_PIPELINE list_paths registry=registry/path-registry.yaml
-  RUN_PIPELINE list_paths registry=registry/path-registry.yaml out=samples/output/field-catalog.md
+  RUN_PIPELINE list_paths registry=registry/path-registry.yaml out=workspace/output/field-catalog.md
 
 Required per operation:
+  intake             : input=<file.docx|file.pdf>  (Leg -1 suggest + Leg 0 scan — all hand-fill files)
   legminus1          : input=<file.docx|file.pdf|file.html>
   legminus1_apply    : review=<file.path-review.md>
+  leg0_scan          : input=<file.docx|file.pdf>  (human-fill files only)
   leg0               : input=<file.docx|file.pdf>
   leg0+leg2+leg3     : input=<file.docx|file.pdf>
   leg1               : input=<file.html>
@@ -70,7 +75,7 @@ Optional for all:           output=<dir>  registry=<path>  terminology=<path>
 Optional for leg4 variants: compile_check=false  (skip javac after generating plugin)
 """
 
-VALID_OPS = {"legminus1", "legminus1_apply", "leg0", "leg0+leg2+leg3", "leg1", "leg2", "leg2+leg3", "leg1+leg2", "leg3", "leg1+leg2+leg3", "leg4", "leg1+leg2+leg3+leg4", "list_paths"}
+VALID_OPS = {"intake", "legminus1", "legminus1_apply", "leg0_scan", "leg0", "leg0+leg2+leg3", "leg1", "leg2", "leg2+leg3", "leg1+leg2", "leg3", "leg1+leg2+leg3", "leg4", "leg1+leg2+leg3+leg4", "list_paths"}
 
 
 def parse_invocation(text: str) -> dict | None:
@@ -84,7 +89,7 @@ def parse_invocation(text: str) -> dict | None:
     # Strip the token and leading operation from the string
     # Match: RUN_PIPELINE <operation> [key=value ...]
     m = re.search(
-        r"run_pipeline\s+(list_paths|legminus1_apply|legminus1|leg0\+leg2\+leg3|leg1\+leg2\+leg3\+leg4|leg1\+leg2\+leg3|leg1\+leg2|leg0|leg1|leg2\+leg3|leg3|leg2|leg4)(.*)",
+        r"run_pipeline\s+(intake|list_paths|legminus1_apply|legminus1|leg0_scan|leg0\+leg2\+leg3|leg1\+leg2\+leg3\+leg4|leg1\+leg2\+leg3|leg1\+leg2|leg0|leg1|leg2\+leg3|leg3|leg2|leg4)(.*)",
         text,
         re.IGNORECASE,
     )
@@ -167,7 +172,7 @@ def run(invocation: str, auto_yes: bool) -> int:
     input_html = parsed.get("input") or parsed.get("input_html")
     mapping = parsed.get("mapping")
     registry = parsed.get("registry") or "registry/path-registry.yaml"
-    output = parsed.get("output") or "samples/output"
+    output = parsed.get("output") or "workspace/output"
     terminology = parsed.get("terminology")
     suggested = parsed.get("suggested")
     compile_check_raw = parsed.get("compile_check", "true")
@@ -190,6 +195,45 @@ def run(invocation: str, auto_yes: bool) -> int:
             print(f"  {a}")
         return 0
 
+    # --- Intake fast-path: Leg -1 suggest + Leg 0 scan → all hand-fill files at once ---
+    if operation == "intake":
+        from pathlib import Path as _Path
+        if not input_html:
+            print("Missing required field: input=<doc.docx|.pdf>", file=sys.stderr)
+            return 1
+        if _Path(input_html).suffix.lower() not in (".docx", ".pdf"):
+            print(
+                f"intake requires a .docx or .pdf (Leg 0 scan needs the document), "
+                f"got: {_Path(input_html).name!r}",
+                file=sys.stderr,
+            )
+            return 1
+        stem = _Path(input_html).stem
+
+        # Step 1 — Leg -1 suggest: bare {leaf} → accessor review (registry-only).
+        print("\nIntake step 1/2 — Leg -1 (resolve bare field names)…")
+        from velocity_converter.agent_tools import run_legminus1
+        r1 = run_legminus1(input_path=input_html, registry=registry, output_dir=output)
+        if not r1["ok"]:
+            print(f"Leg -1 failed (rc={r1['returncode']}):\n{r1['stderr']}", file=sys.stderr)
+            return 1
+        print(r1.get("stdout", ""))
+
+        # Step 2 — Leg 0 scan: emit the single variants.csv (every conditional
+        # block). Runs WITHOUT a path-map — path-review isn't filled yet, and the
+        # CSV shows the author's bare {field} syntax regardless, so it's harmless.
+        print("Intake step 2/2 — Leg 0 scan (variants.csv)…")
+        r2 = run_leg0_scan(input_path=input_html, output_dir=f"{output}/{stem}")
+        if not r2["ok"]:
+            print(f"Leg 0 scan failed (rc={r2['returncode']}):\n{r2['stderr']}", file=sys.stderr)
+            return 1
+        print(r2.get("stdout", ""))
+
+        print("\nIntake complete — hand these to the customer to fill (one package):")
+        for a in r1.get("artifacts", []) + r2.get("artifacts", []):
+            print(f"  {a}")
+        return 0
+
     if operation == "legminus1_apply":
         from velocity_converter.agent_tools import run_legminus1_apply
         review = parsed.get("review")
@@ -208,7 +252,7 @@ def run(invocation: str, auto_yes: bool) -> int:
 
     # --- list_paths fast-path (no preflight / PROCEED needed) ---
     if operation == "list_paths":
-        out_path = parsed.get("out") or "samples/output/field-catalog.md"
+        out_path = parsed.get("out") or "workspace/output/field-catalog.md"
         try:
             run_list_paths(registry_path=registry, out_path=out_path)
         except Exception as exc:
@@ -269,6 +313,20 @@ def run(invocation: str, auto_yes: bool) -> int:
     repo_root = _find_repo_root()
 
     leg0_mapping_path: str | None = None
+
+    if operation == "leg0_scan":
+        print("\nRunning Leg 0 (scan — human-fill files only)…")
+        from pathlib import Path as _Path
+        stem = _Path(input_html).stem
+        r = run_leg0_scan(input_path=input_html, output_dir=f"{output}/{stem}")
+        if not r["ok"]:
+            print(f"Leg 0 scan failed (rc={r['returncode']}):\n{r['stderr']}", file=sys.stderr)
+            return 1
+        print(r.get("stdout", ""))
+        print("Leg 0 scan artifacts (hand these to the customer to fill):")
+        for a in r.get("artifacts", []):
+            print(f"  {a}")
+        return 0
 
     if operation in ("leg0", "leg0+leg2+leg3"):
         print("\nRunning Leg 0…")
@@ -496,7 +554,7 @@ def guided_mode() -> str:
 
     # Input HTML (leg1 / leg1+leg2 / combos)
     if operation in ("leg1", "leg1+leg2", "leg1+leg2+leg3", "leg1+leg2+leg3+leg4"):
-        candidates = sorted((repo_root / "samples" / "input").glob("*.html"))
+        candidates = sorted((repo_root / "workspace" / "inbox").glob("*.html"))
         if candidates:
             print("\nAvailable input files:")
             for i, c in enumerate(candidates, 1):
@@ -512,7 +570,7 @@ def guided_mode() -> str:
 
     # Mapping (leg2 / leg2+leg3)
     if operation in ("leg2", "leg2+leg3"):
-        candidates = sorted((repo_root / "samples" / "output").rglob("*.mapping.yaml"))
+        candidates = sorted((repo_root / "workspace" / "output").rglob("*.mapping.yaml"))
         if candidates:
             print("\nAvailable mapping files:")
             for i, c in enumerate(candidates, 1):
@@ -529,8 +587,8 @@ def guided_mode() -> str:
     # Suggested (leg3 / leg4 standalone only)
     if operation in ("leg3", "leg4"):
         candidates = sorted(
-            list((repo_root / "samples" / "output").rglob("*.mapping.yaml")) +
-            list((repo_root / "samples" / "output").rglob("*.suggested.yaml"))
+            list((repo_root / "workspace" / "output").rglob("*.mapping.yaml")) +
+            list((repo_root / "workspace" / "output").rglob("*.suggested.yaml"))
         )
         if candidates:
             print("\nAvailable mapping files:")
@@ -554,8 +612,8 @@ def guided_mode() -> str:
             parts.append("compile_check=false")
 
     # Optional overrides
-    output = _ask("\nOutput directory", default="samples/output")
-    if output != "samples/output":
+    output = _ask("\nOutput directory", default="workspace/output")
+    if output != "workspace/output":
         parts.append(f"output={output}")
 
     registry = _ask("Registry path", default="registry/path-registry.yaml")

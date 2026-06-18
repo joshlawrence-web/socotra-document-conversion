@@ -14,10 +14,16 @@ __pycache__/
 conformance/fixtures/*/actual/
 
 # Generated pipeline output — not source, don't track
-samples/output/
+workspace/output/
+# Human-fill files (conditional forms, variant CSVs, path reviews) — generated, don't track
+workspace/action-needed/
 
 # Test pipeline runtime output — not source, don't track
 tests/pipeline/output/
+tests/pipeline/action-needed/
+
+# Live-tenant render-preview credentials — example is committed
+.env.ai-documents
 
 # Build artifacts
 build/

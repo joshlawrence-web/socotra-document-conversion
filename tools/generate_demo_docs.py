@@ -3,7 +3,7 @@
 Generate the two extra demo DOCX inputs for the multi-ingest scenario.
 
 Usage:
-    python3 tools/generate_demo_docs.py [--out-dir samples/input]
+    python3 tools/generate_demo_docs.py [--out-dir workspace/inbox]
 
 Together with the existing ZenCoverTest(quote).docx and
 ZenCoverPolicySummary(segment).docx these give the 4-document demo set
@@ -123,7 +123,7 @@ DOCS = [
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Generate multi-ingest demo DOCX inputs")
-    ap.add_argument("--out-dir", default="samples/input")
+    ap.add_argument("--out-dir", default="workspace/inbox")
     args = ap.parse_args()
 
     Document = _require_docx()

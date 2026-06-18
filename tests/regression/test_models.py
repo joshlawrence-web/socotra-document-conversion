@@ -90,16 +90,25 @@ def test_suggested_accepts_v1_shape():
 # ---------------------------------------------------------------------------
 
 
-def test_conditional_block_requires_id_and_source_text():
+def test_conditional_block_requires_source_text():
     with pytest.raises(ContractError) as exc:
         validate_contract(
             [{"conditions": ["x != null"]}],
             ConditionalRegistry,
             artifact="conditional-registry.yaml",
         )
-    msg = str(exc.value)
-    assert "id: Field required" in msg
-    assert "source_text: Field required" in msg
+    assert "source_text: Field required" in str(exc.value)
+
+
+def test_conditional_block_requires_id_or_key():
+    # source_text present, but neither id nor key → the §1a key derivation fails.
+    with pytest.raises(ContractError) as exc:
+        validate_contract(
+            [{"source_text": "t"}],
+            ConditionalRegistry,
+            artifact="conditional-registry.yaml",
+        )
+    assert "id or a key" in str(exc.value)
 
 
 def test_conditional_block_normalises():
@@ -109,6 +118,21 @@ def test_conditional_block_normalises():
     assert block.id == 3
     assert block.operator == "AND"
     assert block.conditions == ["a"]
+
+
+def test_conditional_block_key_derived_from_id():
+    # Legacy positional registries (id only) get a stable cond<id> key.
+    block = ConditionalBlock.model_validate({"id": 2, "source_text": "t"})
+    assert block.key == "cond2"
+
+
+def test_conditional_block_named_key_no_id():
+    # New named variant block: key, no positional id.
+    block = ConditionalBlock.model_validate(
+        {"key": "stateClause", "source_text": "[[$stateClause]]", "placeholder": "stateClause"}
+    )
+    assert block.key == "stateClause"
+    assert block.id is None
 
 
 # ---------------------------------------------------------------------------

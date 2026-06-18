@@ -39,19 +39,19 @@ Outputs (written to `--output-dir`, default = directory of the suggested file):
 ```bash
 # Minimal (from repo root)
 python3 -m velocity_converter.leg4_generate_plugin \
-  --suggested samples/output/<stem>/<stem>.suggested.yaml \
+  --suggested workspace/output/<stem>/<stem>.suggested.yaml \
   --customer-jar build/customer-config.jar
 
 # With compile check (recommended)
 python3 -m velocity_converter.leg4_generate_plugin \
-  --suggested samples/output/Simple-form/Simple-form.suggested.yaml \
+  --suggested workspace/output/Simple-form/Simple-form.suggested.yaml \
   --customer-jar build/customer-config.jar \
   --datamodel-jar build/core-datamodel-v1.7.61.jar \
   --compile-check
 
 # Custom output directory
 python3 -m velocity_converter.leg4_generate_plugin \
-  --suggested samples/output/<stem>/<stem>.suggested.yaml \
+  --suggested workspace/output/<stem>/<stem>.suggested.yaml \
   --customer-jar build/customer-config.jar \
   --output-dir /path/to/socotra-config/plugins/java
 ```
@@ -77,7 +77,7 @@ python3 -m velocity_converter.leg4_generate_plugin \
 | D2 | One plugin per product | All document templates for a product share one implementation |
 | D3 | `renderingData` = full platform object | Velocity navigates (`$data.policyNumber`); no per-field extraction needed |
 | D5 | High-confidence paths only | Medium/low are ignored; lower bar to ship something correct |
-| D6 | Output to `samples/output/<stem>/` | No automatic copy to `socotra-config/` — human deploy step |
+| D6 | Output to `workspace/output/<stem>/` | No automatic copy to `socotra-config/` — human deploy step |
 | D10 | Missing segment → fail loud | `orElseThrow` + SLF4J ERROR so operators see the failure immediately |
 
 ---
@@ -115,7 +115,7 @@ Sections:
 
 ## After generation
 
-The generated `.java` file lives in `samples/output/<stem>/` (or `--output-dir`).
+The generated `.java` file lives in `workspace/output/<stem>/` (or `--output-dir`).
 **Manual deploy:** copy it to `socotra-config/plugins/java/` and upload config.
 Pipeline integration (`RUN_PIPELINE leg4`) is planned for Phase 3 — see
 `.cursor/plans/pipeline-improvements/Leg4-document-snapshot-plugin/00-plan.md`.

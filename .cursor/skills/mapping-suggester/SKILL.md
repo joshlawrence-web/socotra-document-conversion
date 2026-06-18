@@ -26,9 +26,9 @@ This is an internal pipeline tool. If the user's message does **not** contain `R
 For demos and production runs, please use the pipeline-orchestrator skill.
 
 Quick start:
-  RUN_PIPELINE leg2 mode=terse mapping=samples/output/<stem>/<stem>.mapping.yaml registry=registry/path-registry.yaml
+  RUN_PIPELINE leg2 mode=terse mapping=workspace/output/<stem>/<stem>.mapping.yaml registry=registry/path-registry.yaml
 
-  RUN_PIPELINE leg2 mode=batch mapping=[samples/output/a/a.mapping.yaml, samples/output/b/b.mapping.yaml] registry=registry/path-registry.yaml
+  RUN_PIPELINE leg2 mode=batch mapping=[workspace/output/a/a.mapping.yaml, workspace/output/b/b.mapping.yaml] registry=registry/path-registry.yaml
 
 See .cursor/skills/pipeline-orchestrator/SKILL.md for the full invocation format.
 ```
@@ -243,9 +243,9 @@ python3 -m velocity_converter.leg2_fill_mapping \
     --registry registry/path-registry.yaml \
     --customer-jar build/customer-config.jar \
     --datamodel-jar build/core-datamodel-v1.7.61.jar \
-    --out samples/output/<stem>/<stem>.suggested.yaml \
-    --review-out samples/output/<stem>/<stem>.review.md \
-    --telemetry-log samples/output/<stem>/<stem>.suggester-log.jsonl \
+    --out workspace/output/<stem>/<stem>.suggested.yaml \
+    --review-out workspace/output/<stem>/<stem>.review.md \
+    --telemetry-log workspace/output/<stem>/<stem>.suggester-log.jsonl \
     --mode <mode> \
     [--terminology terminology.yaml]
 ```
@@ -304,9 +304,9 @@ new `observed` rows for unmatched patterns.  Never flip `status`, author
 ### Step 4 — Print the terminal summary
 
 ```
-Suggested mapping written: samples/output/<stem>/<stem>.suggested.yaml
-Review report written:     samples/output/<stem>/<stem>.review.md
-Telemetry appended:        samples/output/<stem>/<stem>.suggester-log.jsonl (run_id <uuid>)
+Suggested mapping written: workspace/output/<stem>/<stem>.suggested.yaml
+Review report written:     workspace/output/<stem>/<stem>.review.md
+Telemetry appended:        workspace/output/<stem>/<stem>.suggester-log.jsonl (run_id <uuid>)
 Lessons updated:           skill-lessons.yaml (<N> bumped, <M> new) | (absent — skipped)
 Terminology layer:         terminology.yaml (tenant <tenant>, <S> synonyms, <T> matched) | (absent — skipped)
 
@@ -317,7 +317,7 @@ Blockers requiring review: <count>
 Assumptions to confirm:    <count>
 Scope violations:          <count>
 
->>> Open samples/output/<stem>/<stem>.review.md to resolve the blockers before running Leg 3. <<<
+>>> Open workspace/output/<stem>/<stem>.review.md to resolve the blockers before running Leg 3. <<<
 ```
 
 Counts come from the script-generated review.md Summary table.
@@ -401,7 +401,7 @@ definitions, Step 4d write procedure): see
 ## File output location
 
 Save all three output files (`<stem>.suggested.yaml`, `<stem>.review.md`,
-`<stem>.suggester-log.jsonl`) inside `samples/output/<stem>/` — the same
+`<stem>.suggester-log.jsonl`) inside `workspace/output/<stem>/` — the same
 per-document subfolder that Leg 1 created. Create the subfolder if absent
 (Leg 1 normally creates it, but Leg 2 must handle the case where it was
 deleted or skipped). If the user has a different project output folder
@@ -413,9 +413,9 @@ confirm with the user.
 ## After output
 
 Tell the user:
-1. The paths to `samples/output/<stem>/<stem>.suggested.yaml`,
-   `samples/output/<stem>/<stem>.review.md`, and
-   `samples/output/<stem>/<stem>.suggester-log.jsonl` (plus the `run_id`
+1. The paths to `workspace/output/<stem>/<stem>.suggested.yaml`,
+   `workspace/output/<stem>/<stem>.review.md`, and
+   `workspace/output/<stem>/<stem>.suggester-log.jsonl` (plus the `run_id`
    of this run — useful if they want to `grep` the log for just this
    invocation).
 2. How many were high / medium / low confidence.

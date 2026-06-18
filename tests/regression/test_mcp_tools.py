@@ -1,10 +1,10 @@
-"""Smoke test — verify all 7 MCP tools are discoverable at startup."""
+"""Smoke test — verify all 8 MCP tools are discoverable at startup."""
 import velocity_converter.mcp_server as mcp_server
 
 
 def test_tool_count():
     tools = mcp_server.mcp._tool_manager._tools
-    assert len(tools) == 7, f"Expected 7 tools, got {len(tools)}: {sorted(tools)}"
+    assert len(tools) == 8, f"Expected 8 tools, got {len(tools)}: {sorted(tools)}"
 
 
 def test_expected_tool_names():
@@ -14,6 +14,7 @@ def test_expected_tool_names():
         "extract_velocity_tokens",
         "suggest_velocity_paths",
         "write_final_template",
+        "scan_document",
         "ingest_document",
         "generate_snapshot_plugin",
         "list_velocity_paths",

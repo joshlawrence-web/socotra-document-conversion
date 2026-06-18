@@ -9,17 +9,30 @@ and writes all pipeline-ready artifacts. Loop section names must exactly match
 a registry iterable name (e.g. [Item] ... [/Item]); fields inside become the
 loop's fields in the mapping and the markers become a #foreach scaffold.
 
+Conditional text (binary, template, and N-way variant blocks) is handled by a
+single human-fill file — {stem}.variants.csv — paired with a machine sidecar
+{stem}.conditional-blocks.yaml that carries the per-block metadata the CSV can't
+(id, render flag, source_text, nesting). The legacy conditional-form.md flow is
+retained only behind --parse-conditional-form for in-flight forms.
+
 Usage:
     python3 -m velocity_converter.leg0_ingest --input <path.docx|path.pdf> [--output-dir <dir>]
-    python3 -m velocity_converter.leg0_ingest --parse-conditional-form <filled-form.md> --output-dir <dir>
+    python3 -m velocity_converter.leg0_ingest --input <path.docx|path.pdf> --scan [--output-dir <dir>]
+    python3 -m velocity_converter.leg0_ingest --parse-variants-csv <filled.variants.csv> --output-dir <dir>
+    python3 -m velocity_converter.leg0_ingest --parse-conditional-form <filled-form.md> --output-dir <dir>  # legacy
 
 Outputs (normal mode):
-    {stem}.raw.html           — raw converted HTML (pre-annotation)
-    {stem}.annotated.html     — HTML with {field} → $TBD_field, [[cond]] → $doc.condN
-    {stem}.mapping.yaml       — leg2-compatible mapping (pipeline input; enriched in-place by Leg 2)
-    {stem}.conditional-form.md — customer-facing conditional form
+    {stem}.raw.html                  — raw converted HTML (pre-annotation)
+    {stem}.annotated.html            — HTML with {field} → $TBD_field, [[cond]] → $doc.condN
+    {stem}.mapping.yaml              — leg2-compatible mapping (pipeline input; enriched in-place by Leg 2)
+    {stem}.conditional-blocks.yaml   — machine sidecar (block metadata) for the parse step
+    {stem}.variants.csv              — customer-facing fill file (every conditional block)
 
-Output (--parse-conditional-form mode):
+Outputs (--scan mode — front-loads the customer handoff):
+    {stem}.variants.csv        — customer-facing fill file (only)
+    (no machine artifacts — the full ingest writes those, incl. the sidecar, later)
+
+Output (--parse-variants-csv / legacy --parse-conditional-form mode):
     {stem}.conditional-registry.yaml — parsed conditional registry for Leg 4
 
 Exit codes:
@@ -31,11 +44,13 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
 
-from velocity_converter.models import ConditionalRegistry, MappingDoc, validate_contract
+from velocity_converter.models import ConditionalRegistry, MappingDoc, block_key, validate_contract
+from velocity_converter.workspace import action_needed_file, machine_dir_for_action_file
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -400,14 +415,48 @@ def _find_top_level_brackets(text: str) -> list[tuple[int, int, str]]:
     return results
 
 
+# A *variant* block tokenises its content with a single bare $identifier:
+# [[$stateClause]] (the 50-state feature). The leading $ + single-token (no
+# spaces/punctuation) discriminates it from a binary [[literal text]] block.
+_VARIANT_TOKEN_RE = re.compile(r"^\$([A-Za-z_]\w*)$")
+
+
+def _variant_placeholder(source_text: str) -> str | None:
+    """Return the placeholder name if ``source_text`` is a variant token.
+
+    ``[[$stateClause]]`` → ``stateClause``. Content that starts with ``$`` but
+    is not a single clean identifier (``$state clause``) warns and is treated as
+    a binary literal block (returns None).
+    """
+    s = (source_text or "").strip()
+    m = _VARIANT_TOKEN_RE.match(s)
+    if m:
+        return m.group(1)
+    # Starts like a token attempt (one leading $word) but isn't a clean
+    # identifier — warn and fall through to literal-binary treatment.
+    if re.match(r"^\$\S", s) and not s.startswith("$TBD_"):
+        print(
+            f"WARNING: [[{s}]] starts with '$' but is not a single bare "
+            "identifier — treated as literal text, not a variant placeholder",
+            file=sys.stderr,
+        )
+    return None
+
+
 def extract_conditionals(html: str) -> list[dict]:
     """Extract [[conditional text]] blocks including nested ones.
 
     Nested [[...]] inside a block become child blocks with their own IDs.
-    Parent source_text references children via $doc.condN.
+    Parent source_text references children via $doc.<key>.
     IDs are pre-order (parent lower than children); list is sorted at return.
     Each block carries top_level=True/False so annotate_conditionals can
     restrict HTML replacement to top-level blocks only.
+
+    §1a named keys: every block carries a string ``key`` — the author ``$token``
+    for a variant block (``variant=True``, ``placeholder`` set), else a stable
+    auto-name ``cond<id>`` for a binary block. The key is the join key used by
+    annotation, Leg 3, and Leg 4 (binary keys stay ``cond<id>`` → byte-identical
+    to the old positional behaviour).
     """
     try:
         from bs4 import BeautifulSoup
@@ -417,6 +466,18 @@ def extract_conditionals(html: str) -> list[dict]:
 
     blocks: list[dict] = []
     next_id = [1]
+
+    def _make_block(block_id: int, source: str, raw: str, top_level: bool) -> dict:
+        ph = _variant_placeholder(source)
+        return {
+            "id": block_id,
+            "key": ph if ph else f"cond{block_id}",
+            "placeholder": ph,
+            "variant": bool(ph),
+            "source_text": source,
+            "raw_text": raw,
+            "top_level": top_level,
+        }
 
     def _process_children(content: str) -> str:
         nested = _find_top_level_brackets(content)
@@ -428,8 +489,9 @@ def extract_conditionals(html: str) -> list[dict]:
             child_id = next_id[0]
             next_id[0] += 1
             child_source = _process_children(inner)
-            blocks.append({"id": child_id, "source_text": child_source, "raw_text": inner, "top_level": False})
-            ref = f"$doc.cond{child_id}"
+            child = _make_block(child_id, child_source, inner, top_level=False)
+            blocks.append(child)
+            ref = f"$doc.{child['key']}"
             result = result[: start + offset] + ref + result[end + offset :]
             offset += len(ref) - (end - start)
         return result.strip()
@@ -438,18 +500,43 @@ def extract_conditionals(html: str) -> list[dict]:
         outer_id = next_id[0]
         next_id[0] += 1
         source = _process_children(content)
-        blocks.append({"id": outer_id, "source_text": source, "raw_text": content, "top_level": True})
+        blocks.append(_make_block(outer_id, source, content, top_level=True))
 
     blocks.sort(key=lambda b: b["id"])
+    _dedupe_block_keys(blocks)
     return blocks
 
 
+def _dedupe_block_keys(blocks: list[dict]) -> None:
+    """Enforce unique join keys (§1a). A colliding variant token warns and falls
+    back to its positional ``cond<id>`` so the registry never has two blocks
+    fighting over one key."""
+    seen: dict[str, int] = {}
+    for b in blocks:
+        key = b["key"]
+        if key in seen:
+            fallback = f"cond{b['id']}"
+            print(
+                f"WARNING: duplicate conditional key '{key}' "
+                f"(blocks {seen[key]} and {b['id']}) — block {b['id']} falls back to '{fallback}'",
+                file=sys.stderr,
+            )
+            b["key"] = fallback
+            b["variant"] = False
+            b["placeholder"] = None
+            seen[fallback] = b["id"]
+        else:
+            seen[key] = b["id"]
+
+
 def annotate_conditionals(html: str, blocks: list[dict]) -> str:
-    """Replace [[...]] → [[...]]$doc.condN for all blocks (top-level and nested).
+    """Replace [[...]] → [[...]]$doc.<key> for all blocks (top-level and nested).
 
     Top-level blocks are matched by character position (right-to-left).
     Child blocks are matched by a naive string replace on their raw_text;
-    this works as long as the child content contains no HTML tags.
+    this works as long as the child content contains no HTML tags. Binary blocks
+    keep key ``cond<id>`` so their annotation is byte-identical to the previous
+    positional behaviour (§1a); variant blocks emit ``$doc.<token>``.
     """
     regions = _find_top_level_brackets(html)
     top_level = [b for b in blocks if b.get("top_level", True)]
@@ -458,18 +545,18 @@ def annotate_conditionals(html: str, blocks: list[dict]) -> str:
         result = html
         for b in top_level:
             original = "[[" + b.get("raw_text", b["source_text"]) + "]]"
-            result = result.replace(original, f"{original}$doc.cond{b['id']}")
+            result = result.replace(original, f"{original}$doc.{b['key']}")
     else:
         result = html
         for (start, end, content), b in zip(reversed(regions), reversed(top_level)):
             label = f"[[{content}]]"
-            result = result[:start] + f"{label}$doc.cond{b['id']}" + result[end:]
+            result = result[:start] + f"{label}$doc.{b['key']}" + result[end:]
 
     # Second pass: annotate nested child blocks within the already-annotated HTML.
     for b in [b for b in blocks if not b.get("top_level", True)]:
         raw = b.get("raw_text", b["source_text"])
         original = f"[[{raw}]]"
-        result = result.replace(original, f"{original}$doc.cond{b['id']}")
+        result = result.replace(original, f"{original}$doc.{b['key']}")
 
     return result
 
@@ -745,61 +832,144 @@ def _braces_to_tbd(text: str) -> str:
     return _FIELD_RE.sub(lambda m: "$TBD_" + m.group(2), text)
 
 
-def write_conditional_form(blocks: list[dict], stem: str, output_path: Path) -> None:
-    """Write {stem}.conditional-form.md — customer-facing conditional form."""
-    lines = [
-        f"# Conditional Text Review — {stem}",
-        "",
-        "For each block below, fill in the condition that controls when this text appears.",
-        "Use accessor path format — dot notation without `$` or `()` syntax:",
-        "",
-        "| Root | Example accessor | Meaning |",
-        "|------|-----------------|---------|",
-        "| `quote` | `quote.quoteNumber` | Quote-level system fields |",
-        "| `quote` | `quote.data.coolingOffPeriod` | Quote custom fields |",
-        "| `account` | `account.data.firstName` | Policyholder fields |",
-        "| `policy` | `policy.data.riderType` | Custom policy fields |",
-        "| `item` | `item.data.vin` | Per-exposure fields (within a loop) |",
-        "",
-        "Comparison examples: `quote.quoteNumber != null` · `quote.data.coolingOffPeriod != null` · `account.data.state == \"CA\"`",
-        "",
-        "Run `python3 -m velocity_converter.list_paths` to see all available accessors.",
-        "Return this file to your implementation contact when complete.",
-        "",
+def write_variants_csv(blocks: list[dict], stem: str, output_path: Path) -> None:
+    """Write ``{stem}.variants.csv`` — the single human-fill file for *all*
+    conditional blocks (variants-only plan §2.1).
+
+    One row group per block, keyed by the block's join ``key`` (pre-filled — the
+    customer never renames it). Block kind drives the stub:
+
+    - **variant** (``[[$token]]``): one example conditioned row + one default
+      row; the customer fills/adds rows. ``text`` carries the wording.
+    - **binary** (``[[text]]``): a 2-row fold — one conditioned row whose
+      ``text`` is pre-filled from the document, plus an empty-default row. The
+      text shows when ``when`` matches, nothing otherwise; the customer fills
+      only ``when``.
+    - **template** (``render: template`` — a loop inside a conditional): a single
+      ``when``-only row, ``text`` left blank because the section's wording stays
+      in the document. The customer fills only ``when``.
+
+    Block metadata that the three columns can't carry (id, ``render`` flag,
+    ``source_text``, nesting) travels in the machine sidecar
+    ``{stem}.conditional-blocks.yaml`` (see :func:`write_conditional_blocks`),
+    which the parse step reads back alongside this CSV.
+
+    One genuinely-unsupported edge (documented, not handled): an N-way block
+    whose variants each carry their *own* loop — loop bodies can't live in a CSV
+    ``text`` cell and ``render: template`` is binary show/hide, not N-way.
+    """
+    import csv  # noqa: PLC0415
+    import io  # noqa: PLC0415
+    if not blocks:
+        return
+    header = [
+        "# Conditional text — one row group per block, keyed by `placeholder`.",
+        "#   placeholder : the block key from the document (pre-filled — do not rename).",
+        "#   when        : a condition, e.g.  state == \"CA\"   ·   premium > 500",
+        "#                 (first matching row wins — drag rows to reorder priority).",
+        "#                 leave blank (or write * / else) for the DEFAULT row used",
+        "#                 when nothing else matches — exactly one per variant block.",
+        "#   text        : the text shown when `when` matches (may contain {field}).",
+        "#",
+        "# Block kinds:",
+        "#   - variant ([[$token]]) : fill/add conditioned rows + the default row.",
+        "#   - binary  ([[text]])   : `text` is pre-filled; fill only `when` (the",
+        "#                            empty-default row hides it when nothing matches).",
+        "#   - template (loop block): fill only `when` — the section wording stays in",
+        "#                            the document; leave `text` blank.",
+        "# Unsupported: an N-way block whose variants each carry their own loop.",
     ]
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["placeholder", "when", "text"])
     for b in blocks:
-        lines += [
-            "---",
-            "",
-            f"## Block {b['id']}",
-            "",
-            f"> {_tbd_to_braces(b['source_text'])}",
-            "",
-        ]
+        key = block_key(b)
         if b.get("render") == "template":
-            lines += [
-                "Rendering: template (contains a repeating section — the text stays in "
-                "the template and the condition switches it on/off as a whole)",
-                "",
-            ]
-        lines += [
-            "Condition: ",
-            "",
-        ]
-    output_path.write_text("\n".join(lines), encoding="utf-8")
+            w.writerow([key, 'policy.data.field != null', ""])
+        elif b.get("variant"):
+            w.writerow([key, 'state == "CA"', "Example text for California — edit me."])
+            w.writerow([key, "", "Default text used when no condition matches — edit me."])
+        else:  # binary block folds into a one-real-row + empty-default variant.
+            w.writerow([key, 'quote.quoteNumber != null', _tbd_to_braces(b.get("source_text", ""))])
+            w.writerow([key, "", ""])
+    output_path.write_text("\n".join(header) + "\n" + buf.getvalue(), encoding="utf-8")
+
+
+# Fields persisted in the machine sidecar (everything the 3-column CSV can't carry).
+def write_conditional_blocks(blocks: list[dict], output_path: Path) -> None:
+    """Write ``{stem}.conditional-blocks.yaml`` — the machine sidecar that
+    carries per-block metadata the human ``variants.csv`` cannot (variants-only
+    plan §2.1, machine-sidecar design). The parse step reads it back alongside
+    the filled CSV to rebuild ``conditional-registry.yaml`` now that
+    ``conditional-form.md`` is retired.
+    """
+    payload = [
+        {
+            "id": b.get("id"),
+            "key": block_key(b),
+            "placeholder": b.get("placeholder"),
+            "variant": bool(b.get("variant")),
+            "render": b.get("render", "plugin"),
+            "source_text": b.get("source_text", ""),
+            "top_level": b.get("top_level", True),
+            "parent_id": b.get("parent_id"),
+            "depth": b.get("depth", 0),
+        }
+        for b in blocks
+    ]
+    output_path.write_text(
+        yaml.dump(payload, default_flow_style=False, allow_unicode=True), encoding="utf-8"
+    )
+
+
+def load_conditional_blocks(path: Path) -> list[dict]:
+    """Read the machine sidecar written by :func:`write_conditional_blocks`."""
+    data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or []
+    return data if isinstance(data, list) else []
 
 
 # ---------------------------------------------------------------------------
 # Parse filled conditional form → conditional-registry.yaml (E-T5)
 # ---------------------------------------------------------------------------
 
-def parse_conditional_form(md_path: Path) -> list[dict]:
-    """Parse a customer-filled conditional form. Returns list of block dicts."""
+# A variant pointer block in the form carries "Variant placeholder: `$token`"
+# instead of a Condition: line (its rows live in the sibling .variants.csv).
+_VARIANT_FORM_RE = re.compile(
+    r"##\s+Block\s+(\d+)\s*\n+>\s+(.+?)\s*\n+Variant placeholder:\s*`\$([A-Za-z_]\w*)`",
+    re.DOTALL,
+)
+
+
+def parse_conditional_form(
+    md_path: Path,
+    *,
+    variants_csv: Path | None = None,
+    registry: dict | None = None,
+    classpath: str | None = None,
+    product: str | None = None,
+) -> list[dict]:
+    """Parse a customer-filled conditional form. Returns list of block dicts.
+
+    Binary and template blocks parse from their ``Condition:`` line as before.
+    Variant blocks (``Variant placeholder: `$token```) carry no condition here —
+    their rows come from the sibling ``<stem>.variants.csv`` (or ``variants_csv``
+    override), normalised via :func:`condition_dsl.parse_variants_csv` and merged
+    in by placeholder. Any CSV/DSL validation error raises :class:`ValueError`
+    so the caller never writes a half-valid registry (§1a / Phase 3).
+    """
+    from velocity_converter.condition_dsl import parse_variants_csv  # noqa: PLC0415
+
     text = md_path.read_text(encoding="utf-8")
     blocks = []
 
+    # The body capture is *tempered* so it cannot run past the next "## Block"
+    # header or a "Variant placeholder:" line — without this, a variant block
+    # (which has no Condition: line) would let the binary match swallow the
+    # following binary block and steal its condition (duplicate-id collision).
     block_re = re.compile(
-        r"##\s+Block\s+(\d+)\s*\n+>\s+(.+?)\s*\n+(Rendering:\s*template[^\n]*\n+)?Condition:\s*([^\n]*)",
+        r"##\s+Block\s+(\d+)\s*\n+>\s+"
+        r"((?:(?!\n##\s+Block\s+\d+|\nVariant placeholder:).)+?)\s*\n+"
+        r"(Rendering:\s*template[^\n]*\n+)?Condition:\s*([^\n]*)",
         re.DOTALL,
     )
     for m in block_re.finditer(text):
@@ -819,7 +989,141 @@ def parse_conditional_form(md_path: Path) -> list[dict]:
             block["render"] = "template"
         blocks.append(block)
 
+    # Variant pointer blocks (no Condition: line — filled via the CSV).
+    variant_blocks: dict[str, dict] = {}
+    for m in _VARIANT_FORM_RE.finditer(text):
+        block_id = int(m.group(1))
+        placeholder = m.group(3)
+        block = {
+            "id": block_id,
+            "key": placeholder,
+            "placeholder": placeholder,
+            "variant": True,
+            "source_text": _braces_to_tbd(m.group(2).strip()),
+        }
+        blocks.append(block)
+        variant_blocks[placeholder] = block
+
+    blocks.sort(key=lambda b: b["id"])
+
+    # Merge the sibling variants.csv into the variant blocks.
+    csv_path = variants_csv
+    if csv_path is None:
+        stem = md_path.name
+        if stem.endswith(".conditional-form.md"):
+            stem = stem[: -len(".conditional-form.md")]
+        sibling = md_path.parent / f"{stem}.variants.csv"
+        if sibling.is_file():
+            csv_path = sibling
+
+    if variant_blocks and csv_path is None:
+        raise ValueError(
+            f"the form declares variant block(s) {sorted(variant_blocks)} but no "
+            f"variants CSV was found next to {md_path.name} — provide --variants-csv"
+        )
+
+    if csv_path is not None:
+        result = parse_variants_csv(csv_path, registry, classpath=classpath, product=product)
+        errors = list(result.errors)
+        for ph, data in result.placeholders.items():
+            b = variant_blocks.get(ph)
+            if b is None:
+                errors.append(
+                    f"variants CSV placeholder '{ph}' has no matching [[${ph}]] block in the form"
+                )
+                continue
+            b["variants"] = data["variants"]
+            b["default"] = data["default"]
+            b["scope"] = data["scope"]
+        for ph, b in variant_blocks.items():
+            if ph not in result.placeholders:
+                errors.append(f"variant block [[${ph}]] has no rows in the variants CSV")
+        if errors:
+            raise ValueError(
+                "variant CSV validation failed (registry NOT written):\n  - "
+                + "\n  - ".join(errors)
+            )
+
     return blocks
+
+
+def parse_variants_csv_to_blocks(
+    csv_path: Path,
+    blocks_meta: list[dict],
+    registry: dict | None = None,
+    *,
+    classpath: str | None = None,
+    product: str | None = None,
+) -> list[dict]:
+    """Merge a filled ``<stem>.variants.csv`` with its machine sidecar
+    (``blocks_meta`` from :func:`load_conditional_blocks`) into the block list
+    written to ``conditional-registry.yaml`` (variants-only plan §2.3).
+
+    This is the single parse path — every block kind flows through one CSV:
+      - **variant** / **binary** → ``variants`` + ``default`` + ``scope`` (binary
+        is the one-real-row + empty-default fold; its ``placeholder`` stays None
+        so ``block_key`` falls back to ``cond<id>``).
+      - **template** (``render: template``) → a Boolean: the single ``when`` is
+        carried as a one-entry ``variants`` payload (text blank) and evaluated by
+        Leg 4 through the same DSL→Java path as N-way blocks.
+
+    Block metadata (id, ``render``, ``source_text``, nesting) comes from the
+    sidecar; the human CSV only supplies ``when``/``text``. Any CSV/DSL/scope
+    validation error raises :class:`ValueError` so a half-valid registry is never
+    written.
+    """
+    from velocity_converter.condition_dsl import parse_variants_csv  # noqa: PLC0415
+
+    template_phs = {block_key(b) for b in blocks_meta if b.get("render") == "template"}
+    by_key = {block_key(b): b for b in blocks_meta}
+    result = parse_variants_csv(
+        csv_path, registry, classpath=classpath, product=product,
+        template_placeholders=template_phs,
+    )
+    errors = list(result.errors)
+
+    out_blocks: list[dict] = []
+    for b in blocks_meta:
+        key = block_key(b)
+        block: dict = {
+            "id": b.get("id"),
+            "key": key,
+            "source_text": b.get("source_text", ""),
+            "parent_id": b.get("parent_id"),
+            "depth": b.get("depth", 0),
+        }
+        data = result.placeholders.get(key)
+        if data is None:
+            errors.append(f"block '{key}' has no rows in the variants CSV")
+            out_blocks.append(block)
+            continue
+        if b.get("render") == "template":
+            block["render"] = "template"
+            block["scope"] = data["scope"]
+            # The single `when` rides in a one-entry variants payload (text blank);
+            # Leg 4's template branch reads variants[0].when and emits a Boolean.
+            block["variants"] = data["variants"]
+            block["default"] = None
+        else:
+            block["placeholder"] = b.get("placeholder")
+            block["scope"] = data["scope"]
+            block["variants"] = data["variants"]
+            block["default"] = data["default"]
+        out_blocks.append(block)
+
+    for ph in result.placeholders:
+        if ph not in by_key:
+            errors.append(
+                f"variants CSV placeholder '{ph}' has no matching block in the sidecar "
+                "(was it renamed?)"
+            )
+
+    if errors:
+        raise ValueError(
+            "variant CSV validation failed (registry NOT written):\n  - "
+            + "\n  - ".join(errors)
+        )
+    return out_blocks
 
 
 def write_conditional_registry(blocks: list[dict], output_path: Path) -> None:
@@ -846,8 +1150,108 @@ def write_output(html: str, input_path: Path, output_dir: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# Document parse (shared by full ingest and --scan)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ParseResult:
+    """Everything a document parse yields, before any artifact is written.
+
+    Both the full ingest and the lightweight ``--scan`` mode call
+    :func:`_parse_document` and then choose which of these to persist: full
+    ingest writes the machine artifacts (raw/annotated HTML + mapping) plus the
+    human-fill files; ``--scan`` writes *only* the human-fill files
+    (conditional-form + variants.csv) so the customer can start filling them
+    while the rest of the pipeline is deferred.
+    """
+
+    stem: str
+    raw_html: str
+    annotated: str
+    fields: list[dict] = field(default_factory=list)
+    loops: list[dict] = field(default_factory=list)
+    blocks: list[dict] = field(default_factory=list)
+
+
+def _parse_document(
+    input_path: Path,
+    *,
+    path_map: Path | None = None,
+    registry_path: Path | None = None,
+) -> ParseResult:
+    """Convert + extract a .docx/.pdf into a :class:`ParseResult`, writing nothing.
+
+    This is the full Leg 0 markup parse — convert → fields → conditionals →
+    loops — factored out so the full ingest and ``--scan`` share one code path
+    (a re-parse across two separate invocations is deterministic and cheap, so
+    nothing is cached). The source document is never modified; an optional
+    Leg -1 ``path_map`` is applied to the working HTML before extraction.
+    """
+    suffix = input_path.suffix.lower()
+    raw_html = convert_docx(input_path) if suffix == ".docx" else convert_pdf(input_path)
+
+    # Apply a Leg -1 path-map (bare {leaf} → full accessor) if supplied, so the
+    # author's friendly leaves resolve before extraction.
+    if path_map is not None:
+        raw_html = apply_path_map(raw_html, path_map)
+
+    # Extract + annotate fields, then conditionals.
+    fields = extract_fields(raw_html, registry_path=registry_path)
+    annotated = annotate_fields(raw_html, fields)
+    blocks = extract_conditionals(annotated)
+    annotated = annotate_conditionals(annotated, blocks)
+
+    # Extract [Name]...[/Name] loop sections (after field annotation so loop
+    # membership is decided on $TBD_* token positions). Blocks containing a
+    # loop flip to render: template — this is the only place the conditional
+    # form's `render:` note is set, so --scan must run it too.
+    annotated, fields, loops = extract_loops(annotated, fields, cond_blocks=blocks)
+
+    return ParseResult(
+        stem=input_path.stem,
+        raw_html=raw_html,
+        annotated=annotated,
+        fields=fields,
+        loops=loops,
+        blocks=blocks,
+    )
+
+
+def _write_human_fill_files(blocks: list[dict], stem: str, output_dir: Path) -> list[Path]:
+    """Write the single customer-facing hand-fill file for a parse's conditional
+    blocks (variants-only plan §2.1): ``{stem}.variants.csv`` in the flat
+    ``action-needed/`` space, covering *every* block kind (binary/template/
+    variant). The machine sidecar that pairs with it is written separately by
+    the full ingest (see :func:`write_conditional_blocks`). Returns the paths
+    written (empty when there are no conditional blocks).
+    """
+    if not blocks:
+        print("No [[conditional]] blocks found — skipping variants CSV.")
+        return []
+    csv_path = action_needed_file(output_dir, f"{stem}.variants.csv")
+    write_variants_csv(blocks, stem, csv_path)
+    print(f"Wrote {csv_path}")
+    return [csv_path]
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
+def _discover_registry(start: Path) -> Path | None:
+    """Walk up from ``start`` looking for a path-registry.yaml (shared by the
+    convert and parse-conditional-form modes)."""
+    cur = start.resolve()
+    for _ in range(8):
+        for rel in ("registry/path-registry.yaml", "path-registry.yaml"):
+            candidate = cur / rel
+            if candidate.is_file():
+                return candidate
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+    return None
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -856,18 +1260,92 @@ def main() -> int:
     parser.add_argument("--input", default=None, help="Path to .docx or .pdf file")
     parser.add_argument("--output-dir", default=None, help="Output directory (default: input's parent)")
     parser.add_argument(
+        "--scan",
+        action="store_true",
+        help="Scan mode: parse the document and emit ONLY the human-fill file "
+        "(variants.csv), no machine artifacts — front-loads the customer handoff "
+        "before the full ingest runs.",
+    )
+    parser.add_argument(
         "--path-map",
         default=None,
         metavar="PATH_MAP.yaml",
         help="Apply a Leg -1 path-map (bare {leaf} → full accessor) before extraction",
     )
     parser.add_argument(
+        "--parse-variants-csv",
+        default=None,
+        metavar="FILLED.variants.csv",
+        help="Parse a filled variants.csv (+ its machine sidecar "
+        "<stem>.conditional-blocks.yaml) → conditional-registry.yaml. The single "
+        "parse path in the variants-only flow.",
+    )
+    parser.add_argument(
         "--parse-conditional-form",
         default=None,
         metavar="FILLED_FORM.md",
-        help="Parse a filled-in conditional form → conditional-registry.yaml",
+        help="LEGACY: parse an old filled conditional-form.md (+ sibling "
+        "variants.csv) → conditional-registry.yaml. Retained for in-flight forms; "
+        "new documents use --parse-variants-csv.",
+    )
+    parser.add_argument(
+        "--blocks-sidecar",
+        default=None,
+        metavar="BLOCKS.yaml",
+        help="Override the conditional-blocks.yaml sidecar location "
+        "(default: <machine-dir>/<stem>.conditional-blocks.yaml)",
+    )
+    parser.add_argument(
+        "--variants-csv",
+        default=None,
+        metavar="VARIANTS.csv",
+        help="Override the variants CSV location (legacy form parse: default is the "
+        "sibling <stem>.variants.csv)",
     )
     args = parser.parse_args()
+
+    # --- Mode: parse filled variants.csv (+ sidecar) → conditional-registry ---
+    if args.parse_variants_csv:
+        csv_path = Path(args.parse_variants_csv)
+        if not csv_path.exists():
+            print(f"Error: file not found: {csv_path}", file=sys.stderr)
+            return 1
+        name = csv_path.name
+        stem = name[: -len(".variants.csv")] if name.endswith(".variants.csv") else csv_path.stem
+        # Machine artifacts (sidecar + registry) live in the per-stem machine dir,
+        # not next to the human CSV in action-needed/.
+        machine_dir = (
+            Path(args.output_dir) if args.output_dir
+            else machine_dir_for_action_file(csv_path) or csv_path.parent
+        )
+        machine_dir.mkdir(parents=True, exist_ok=True)
+        blocks_path = (
+            Path(args.blocks_sidecar) if args.blocks_sidecar
+            else machine_dir / f"{stem}.conditional-blocks.yaml"
+        )
+        if not blocks_path.exists():
+            print(
+                f"Error: machine sidecar not found: {blocks_path}\n"
+                "  Run the full Leg 0 ingest first (it writes the sidecar that pairs "
+                "with the variants CSV).",
+                file=sys.stderr,
+            )
+            return 1
+
+        from velocity_converter.condition_dsl import load_registry_dict  # noqa: PLC0415
+
+        reg_path = _discover_registry(csv_path.parent) or _discover_registry(machine_dir)
+        registry = load_registry_dict(reg_path) if reg_path else None
+        try:
+            blocks_meta = load_conditional_blocks(blocks_path)
+            blocks = parse_variants_csv_to_blocks(csv_path, blocks_meta, registry=registry)
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        registry_path = machine_dir / f"{stem}.conditional-registry.yaml"
+        write_conditional_registry(blocks, registry_path)
+        print(f"Wrote {registry_path}")
+        return 0
 
     # --- Mode: parse filled conditional form ---
     if args.parse_conditional_form:
@@ -882,7 +1360,19 @@ def main() -> int:
         if stem.endswith(".conditional-form"):
             stem = stem[: -len(".conditional-form")]
 
-        blocks = parse_conditional_form(form_path)
+        from velocity_converter.condition_dsl import load_registry_dict  # noqa: PLC0415
+
+        reg_path = _discover_registry(form_path.parent)
+        registry = load_registry_dict(reg_path) if reg_path else None
+        try:
+            blocks = parse_conditional_form(
+                form_path,
+                variants_csv=Path(args.variants_csv) if args.variants_csv else None,
+                registry=registry,
+            )
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
         registry_path = output_dir / f"{stem}.conditional-registry.yaml"
         write_conditional_registry(blocks, registry_path)
         print(f"Wrote {registry_path}")
@@ -890,7 +1380,8 @@ def main() -> int:
 
     # --- Mode: convert document ---
     if not args.input:
-        print("Error: --input is required (unless using --parse-conditional-form)", file=sys.stderr)
+        print("Error: --input is required (unless using --parse-variants-csv or "
+              "--parse-conditional-form)", file=sys.stderr)
         return 1
 
     input_path = Path(args.input)
@@ -921,70 +1412,47 @@ def main() -> int:
     stem = input_path.stem
 
     # Find registry for explicit path resolution (walk up from input dir)
-    registry_path = None
-    cur = input_path.parent.resolve()
-    for _ in range(8):
-        for rel in ("registry/path-registry.yaml", "path-registry.yaml"):
-            candidate = cur / rel
-            if candidate.is_file():
-                registry_path = candidate
-                break
-        if registry_path:
-            break
-        if cur.parent == cur:
-            break
-        cur = cur.parent
+    registry_path = _discover_registry(input_path.parent)
 
-    # Convert to raw HTML
-    if suffix == ".docx":
-        raw_html = convert_docx(input_path)
-    else:
-        raw_html = convert_pdf(input_path)
-
-    # Apply a Leg -1 path-map (bare {leaf} → full accessor) if supplied, so the
-    # author's friendly leaves resolve before extraction. Source doc is untouched.
+    # Validate the optional Leg -1 path-map before parsing. Source doc is untouched.
+    path_map: Path | None = None
     if args.path_map:
-        pm = Path(args.path_map)
-        if not pm.exists():
-            print(f"Error: path-map not found: {pm}", file=sys.stderr)
+        path_map = Path(args.path_map)
+        if not path_map.exists():
+            print(f"Error: path-map not found: {path_map}", file=sys.stderr)
             return 1
-        raw_html = apply_path_map(raw_html, pm)
+
+    # Single document parse — shared by --scan and full ingest.
+    pr = _parse_document(input_path, path_map=path_map, registry_path=registry_path)
+
+    # --- Sub-mode: scan — emit ONLY the human-fill files, defer machine artifacts.
+    if args.scan:
+        _write_human_fill_files(pr.blocks, stem, output_dir)
+        return 0
 
     # Write raw HTML
     raw_path = output_dir / f"{stem}.raw.html"
-    raw_path.write_text(raw_html, encoding="utf-8")
+    raw_path.write_text(pr.raw_html, encoding="utf-8")
     print(f"Wrote {raw_path}")
-
-    # Extract + annotate fields
-    fields = extract_fields(raw_html, registry_path=registry_path)
-    annotated = annotate_fields(raw_html, fields)
-
-    # Extract + annotate conditionals
-    blocks = extract_conditionals(annotated)
-    annotated = annotate_conditionals(annotated, blocks)
-
-    # Extract [Name]...[/Name] loop sections (after field annotation so loop
-    # membership is decided on $TBD_* token positions). Blocks containing a
-    # loop flip to render: template (#if guard stays in the template).
-    annotated, fields, loops = extract_loops(annotated, fields, cond_blocks=blocks)
 
     # Write annotated HTML (pipeline input for Leg 1 / Leg 3)
     annotated_path = output_dir / f"{stem}.annotated.html"
-    annotated_path.write_text(annotated, encoding="utf-8")
+    annotated_path.write_text(pr.annotated, encoding="utf-8")
     print(f"Wrote {annotated_path}")
 
     # Write leg2-compatible mapping
     mapping_path = output_dir / f"{stem}.mapping.yaml"
-    write_leg2_mapping(fields, f"{stem}.annotated.html", mapping_path, loops=loops)
+    write_leg2_mapping(pr.fields, f"{stem}.annotated.html", mapping_path, loops=pr.loops)
     print(f"Wrote {mapping_path}")
 
-    # Write conditional form (only if there are conditionals)
-    if blocks:
-        form_path = output_dir / f"{stem}.conditional-form.md"
-        write_conditional_form(blocks, stem, form_path)
-        print(f"Wrote {form_path}")
-    else:
-        print("No [[conditional]] blocks found — skipping conditional form.")
+    # Write the machine sidecar (block metadata) that pairs with the human CSV.
+    if pr.blocks:
+        blocks_path = output_dir / f"{stem}.conditional-blocks.yaml"
+        write_conditional_blocks(pr.blocks, blocks_path)
+        print(f"Wrote {blocks_path}")
+
+    # Write the single human-fill file (variants.csv — all conditional blocks).
+    _write_human_fill_files(pr.blocks, stem, output_dir)
 
     return 0
 

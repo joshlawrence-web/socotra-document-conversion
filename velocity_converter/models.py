@@ -26,7 +26,15 @@ from pathlib import Path
 from typing import Literal, TypeVar
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, RootModel, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    RootModel,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 M = TypeVar("M", bound=BaseModel)
 
@@ -86,6 +94,10 @@ class Verdict(_ContractModel):
     sdk_status: str = ""
     sibling_hint: str | None = None
     reasoning: str = ""
+    # Set when a verified path was demoted because it depends on a disabled
+    # feature_support flag (the SDK method exists but is never populated at
+    # render time). Names the disabled flag. See leg2_fill_mapping.
+    feature_gate: str | None = None
 
 
 Occurrence = Literal["required", "optional", "one_or_more", "zero_or_more"]
@@ -197,6 +209,10 @@ class RegistryEntry(_ContractModel):
     requires_scope: list[ScopeRequirement] = Field(default_factory=list)
     options: list | None = None
     custom_type_ref: str | None = None
+    # Names a feature_support flag that must be enabled for this field to be
+    # populated at render time. When that flag is false the field exists in the
+    # SDK JAR but evaluates to null, so Leg 2 demotes any path resolving here.
+    requires_feature: str | None = None
     # DataFetcher entries (source: datafetcher) — structural only; semantic
     # checks stay in leg2_fill_mapping._validate_datafetcher_entry.
     source: str | None = None
@@ -296,6 +312,19 @@ class PathRegistry(_ContractModel):
 # ---------------------------------------------------------------------------
 
 
+class Variant(_ContractModel):
+    """One ordered (first-match-wins) text variant of an N-way block.
+
+    ``when`` is the structured condition AST (see condition_dsl.ast_to_dict):
+    the flat ``{path, op, value, raw}`` form for a single comparison, or
+    ``{join, comparisons:[...], raw}`` for an and/or chain. ``text`` is the
+    variant's source text (field placeholders allowed, baked per variant).
+    """
+
+    when: dict = Field(default_factory=dict)
+    text: str = ""
+
+
 class ConditionalBlock(_ContractModel):
     """One customer-confirmed conditional block.
 
@@ -304,15 +333,34 @@ class ConditionalBlock(_ContractModel):
     prints ``${data.condN}``. ``template`` — the content stays in the template
     inside ``#if($data.condN)``…``#end`` and the plugin puts a Boolean; used
     when the block contains a [Name]…[/Name] loop section.
+
+    Keys (§1a named-key migration): ``key`` is the join key used end-to-end
+    (template ``${data.<key>}``, plugin ``put("<key>", …)``). For an
+    author-tokenised variant block it is the ``$token`` name; for an untokenised
+    binary block it is a stable auto-name (``cond<id>``). ``id`` is retained only
+    as a transitional positional alias — when ``key`` is absent it is derived as
+    ``cond<id>``. A block must carry at least one of ``id``/``key``.
+
+    Variants (N-way blocks): ``variants`` present → Leg 4 emits an if/else-if
+    chain selecting one ``text`` by data; ``default`` is the trailing else.
+    ``placeholder`` is the author ``$token``; ``scope`` (quote|policy) is
+    computed once at parse time. A block without ``variants`` is today's binary
+    block (full back-compat — old registries load unchanged).
     """
 
-    id: int
+    id: int | None = None
+    key: str = ""
     source_text: str
     operator: str = "AND"
     conditions: list[str] = Field(default_factory=list)
     parent_id: int | None = None
     depth: int = 0
     render: Literal["plugin", "template"] = "plugin"
+    # N-way variant blocks (§1a / §2b). Absent → binary block.
+    placeholder: str | None = None
+    scope: str = ""
+    variants: list[Variant] | None = None
+    default: str | None = None
 
     @field_validator("operator")
     @classmethod
@@ -326,9 +374,30 @@ class ConditionalBlock(_ContractModel):
             return []
         return [str(c).strip() for c in v if c is not None and str(c).strip()]
 
+    @model_validator(mode="after")
+    def _require_and_derive_key(self) -> "ConditionalBlock":
+        if not self.key:
+            if self.id is None:
+                raise ValueError("a conditional block needs an id or a key")
+            self.key = f"cond{self.id}"
+        return self
+
+
+def block_key(block: dict) -> str:
+    """The join key for a conditional-registry block dict (§1a).
+
+    ``key`` wins; falls back to ``cond<id>`` so legacy positional registries
+    (and any code still keyed on ``id``) keep working through the migration.
+    """
+    k = str(block.get("key") or "").strip()
+    if k:
+        return k
+    return f"cond{block.get('id')}"
+
 
 class ConditionalRegistry(RootModel[list[ConditionalBlock]]):
-    """List-of-blocks document written by leg0 --parse-conditional-form."""
+    """List-of-blocks document written by leg0 --parse-variants-csv (or the
+    legacy --parse-conditional-form)."""
 
 
 # ---------------------------------------------------------------------------

@@ -29,25 +29,25 @@ The agent enforces the `RUN_PIPELINE` gate, shows a preflight summary, requires
 
 ```bash
 # Leg 1 only
-python3 -m velocity_converter.agent "RUN_PIPELINE leg1 input=samples/input/Simple-form.html output=samples/output"
+python3 -m velocity_converter.agent "RUN_PIPELINE leg1 input=workspace/inbox/Simple-form.html output=workspace/output"
 
 # Leg 2 only
-python3 -m velocity_converter.agent "RUN_PIPELINE leg2 mode=terse mapping=samples/output/Simple-form/Simple-form.mapping.yaml"
+python3 -m velocity_converter.agent "RUN_PIPELINE leg2 mode=terse mapping=workspace/output/Simple-form/Simple-form.mapping.yaml"
 
 # End-to-end Leg 1 + Leg 2 (mode defaults to terse)
-python3 -m velocity_converter.agent "RUN_PIPELINE leg1+leg2 input=samples/input/Simple-form.html registry=registry/path-registry.yaml output=samples/output"
+python3 -m velocity_converter.agent "RUN_PIPELINE leg1+leg2 input=workspace/inbox/Simple-form.html registry=registry/path-registry.yaml output=workspace/output"
 
 # Full pipeline through Leg 3
-python3 -m velocity_converter.agent "RUN_PIPELINE leg1+leg2+leg3 input=samples/input/Simple-form.html registry=registry/path-registry.yaml output=samples/output"
+python3 -m velocity_converter.agent "RUN_PIPELINE leg1+leg2+leg3 input=workspace/inbox/Simple-form.html registry=registry/path-registry.yaml output=workspace/output"
 
 # Leg 4 only — generate DocumentDataSnapshotPlugin from existing .suggested.yaml
-python3 -m velocity_converter.agent "RUN_PIPELINE leg4 suggested=samples/output/Simple-form/Simple-form.suggested.yaml"
+python3 -m velocity_converter.agent "RUN_PIPELINE leg4 suggested=workspace/output/Simple-form/Simple-form.suggested.yaml"
 
 # Full pipeline including Leg 4 (HTML → .vm + plugin)
-python3 -m velocity_converter.agent "RUN_PIPELINE leg1+leg2+leg3+leg4 input=samples/input/Simple-form.html registry=registry/path-registry.yaml output=samples/output"
+python3 -m velocity_converter.agent "RUN_PIPELINE leg1+leg2+leg3+leg4 input=workspace/inbox/Simple-form.html registry=registry/path-registry.yaml output=workspace/output"
 
 # Batch Leg 2
-python3 -m velocity_converter.agent "RUN_PIPELINE leg2 mode=batch mapping=[samples/output/Simple-form/Simple-form.mapping.yaml, samples/output/Additional-form/Additional-form.mapping.yaml]"
+python3 -m velocity_converter.agent "RUN_PIPELINE leg2 mode=batch mapping=[workspace/output/Simple-form/Simple-form.mapping.yaml, workspace/output/Additional-form/Additional-form.mapping.yaml]"
 ```
 
 ---
@@ -65,7 +65,7 @@ RUN_PIPELINE <operation> [key=value ...]
 | `mapping` | leg2 | — |
 | `suggested` | leg3, leg4 | — |
 | `registry` | all (optional) | `registry/path-registry.yaml` |
-| `output` | all (optional) | `samples/output` |
+| `output` | all (optional) | `workspace/output` |
 | `terminology` | leg2 (optional) | — |
 | `high_only` | leg3, leg1+leg2+leg3, leg1+leg2+leg3+leg4 (optional) | `false` |
 | `compile_check` | leg4, leg1+leg2+leg3+leg4 (optional) | `true` |
