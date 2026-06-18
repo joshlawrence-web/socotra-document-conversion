@@ -1,10 +1,11 @@
 """Regression tests — Leg 0 ``--scan`` mode (front-loaded customer handoff).
 
-Covers the invariant that scan mode emits ONLY the human-fill files
-(conditional-form.md + variants.csv) and no machine artifacts, and that those
-files are byte-identical to what a full ingest of the same document produces.
-The scan reuses the same ``_parse_document`` as the full ingest, so the forms
-must not drift.
+Covers the invariant that scan mode emits ONLY the single human-fill file
+(``{stem}.variants.csv``) and no machine artifacts, and that this file is
+byte-identical to what a full ingest of the same document produces. Under the
+variants-only flow ``conditional-form.md`` is retired — every conditional block
+(binary/template/variant) folds into the one CSV. The scan reuses the same
+``_parse_document`` as the full ingest, so the CSV must not drift.
 """
 
 from __future__ import annotations
@@ -17,9 +18,9 @@ from velocity_converter import leg0_ingest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = REPO_ROOT / "tests" / "pipeline" / "fixtures"
-# A fixture carrying a [[$token]] variant block (→ variants.csv) and a binary block.
+# A fixture carrying a [[$token]] variant block and a binary block.
 VARIANT_FIXTURE = FIXTURES / "TestStateDisclosure(segment).docx"
-# A fixture with conditionals but no variant block (→ no variants.csv).
+# A fixture with conditionals but no variant block — still folds into one CSV.
 BINARY_FIXTURE = FIXTURES / "TestItemCert(segment).docx"
 
 
@@ -36,8 +37,9 @@ class TestScanMode(unittest.TestCase):
         stem = VARIANT_FIXTURE.stem
         with tempfile.TemporaryDirectory() as td:
             names = _scan(VARIANT_FIXTURE, Path(td))
-        self.assertIn(f"{stem}.conditional-form.md", names)
         self.assertIn(f"{stem}.variants.csv", names)
+        # conditional-form.md is retired under variants-only.
+        self.assertNotIn(f"{stem}.conditional-form.md", names)
         # No machine artifacts.
         for forbidden in (".raw.html", ".annotated.html", ".mapping.yaml"):
             self.assertFalse(
@@ -45,15 +47,18 @@ class TestScanMode(unittest.TestCase):
                 f"scan should not write {forbidden}: {names}",
             )
 
-    def test_binary_only_fixture_has_no_variants_csv(self):
+    def test_binary_only_fixture_still_gets_variants_csv(self):
+        # Under variants-only a binary-only fixture DOES get a variants.csv
+        # (binary blocks fold into the same CSV as a one-real-row + empty-default
+        # pair). No conditional-form.md is written.
         stem = BINARY_FIXTURE.stem
         with tempfile.TemporaryDirectory() as td:
             names = _scan(BINARY_FIXTURE, Path(td))
-        self.assertIn(f"{stem}.conditional-form.md", names)
-        self.assertNotIn(f"{stem}.variants.csv", names)
+        self.assertIn(f"{stem}.variants.csv", names)
+        self.assertNotIn(f"{stem}.conditional-form.md", names)
 
-    def test_scan_forms_match_full_ingest(self):
-        """The form + variants.csv from scan are byte-identical to a full ingest."""
+    def test_scan_csv_matches_full_ingest(self):
+        """The variants.csv from scan is byte-identical to a full ingest."""
         stem = VARIANT_FIXTURE.stem
         pr = leg0_ingest._parse_document(VARIANT_FIXTURE, path_map=None, registry_path=None)
         with tempfile.TemporaryDirectory() as td_scan, tempfile.TemporaryDirectory() as td_full:
@@ -68,14 +73,14 @@ class TestScanMode(unittest.TestCase):
             )
             leg0_ingest._write_human_fill_files(pr.blocks, stem, full_dir)
 
-            for name in (f"{stem}.conditional-form.md", f"{stem}.variants.csv"):
-                scan_p = next(scan_dir.rglob(name))
-                full_p = next(full_dir.rglob(name))
-                self.assertEqual(
-                    scan_p.read_text(encoding="utf-8"),
-                    full_p.read_text(encoding="utf-8"),
-                    f"{name} drifted between scan and full ingest",
-                )
+            name = f"{stem}.variants.csv"
+            scan_p = next(scan_dir.rglob(name))
+            full_p = next(full_dir.rglob(name))
+            self.assertEqual(
+                scan_p.read_text(encoding="utf-8"),
+                full_p.read_text(encoding="utf-8"),
+                f"{name} drifted between scan and full ingest",
+            )
 
 
 if __name__ == "__main__":

@@ -1,7 +1,8 @@
 """Regression tests — field tokens inside conditional blocks (plan 10).
 
-Covers: leg4 accessor concat + scope split + unsupported flagging, leg0 form
-display round-trip, leg3 delegated-to-plugin split. No JARs required.
+Covers: leg4 accessor concat + scope split + unsupported flagging, leg0
+variants.csv round-trip (with a legacy conditional-form guard), leg3
+delegated-to-plugin split. No JARs required.
 """
 
 from __future__ import annotations
@@ -17,8 +18,11 @@ REPO = Path(__file__).resolve().parent.parent.parent
 from velocity_converter.leg0_ingest import (  # noqa: E402
     _braces_to_tbd,
     _tbd_to_braces,
-    parse_conditional_form,
-    write_conditional_form,
+    load_conditional_blocks,
+    parse_conditional_form,  # legacy form guard only (see TestLeg0FormRoundTrip)
+    parse_variants_csv_to_blocks,
+    write_conditional_blocks,
+    write_variants_csv,
 )
 from velocity_converter.leg3_substitute import split_delegated  # noqa: E402
 from velocity_converter.leg4_generate_plugin import (  # noqa: E402
@@ -337,27 +341,51 @@ class TestLeg0FormRoundTrip(unittest.TestCase):
     def test_braces_to_tbd_noop_on_tbd_form(self):
         self.assertEqual(_braces_to_tbd("a $TBD_policy.data.x b"), "a $TBD_policy.data.x b")
 
-    def test_form_shows_braces_and_parse_restores_tbd(self):
+    def test_csv_shows_braces_and_parse_restores_tbd(self):
+        # Variants-only: the binary block's text cell shows author-friendly braces
+        # in the CSV; the machine sidecar carries the raw $TBD_ source_text, which
+        # the parse step restores. The customer fills only `when`.
         import tempfile
         blocks = [{"id": 1,
                    "source_text": "A discount of $TBD_policy.data.discountAmount applies."}]
+        registry = {
+            "policy_data": [
+                {"velocity": "$data.data.discountAmount", "category": "policy_data",
+                 "base_type": "decimal"},
+            ],
+        }
         with tempfile.TemporaryDirectory() as td:
-            form = Path(td) / "x.conditional-form.md"
-            write_conditional_form(blocks, "x", form)
-            text = form.read_text(encoding="utf-8")
+            csv_path = Path(td) / "x.variants.csv"
+            write_variants_csv(blocks, "x", csv_path)
+            text = csv_path.read_text(encoding="utf-8")
+            # The text cell shows the author-friendly brace form, never $TBD_.
             self.assertIn("{policy.data.discountAmount}", text)
             self.assertNotIn("$TBD_", text)
 
-            text = text.replace("Condition: ", "Condition: policy.data.discountAmount != null")
-            form.write_text(text, encoding="utf-8")
-            parsed = parse_conditional_form(form)
+            # Fill the binary block's `when` (first data row). Use the DSL's
+            # present/absent for null checks (not != null).
+            text = text.replace(
+                'cond1,quote.quoteNumber != null,',
+                'cond1,policy.data.discountAmount present,',
+            )
+            csv_path.write_text(text, encoding="utf-8")
+
+            sidecar = Path(td) / "x.conditional-blocks.yaml"
+            write_conditional_blocks(blocks, sidecar)
+            meta = load_conditional_blocks(sidecar)
+            parsed = parse_variants_csv_to_blocks(csv_path, meta, registry=registry)
+            # source_text restored from the sidecar in raw $TBD_ form.
             self.assertEqual(
                 parsed[0]["source_text"],
                 "A discount of $TBD_policy.data.discountAmount applies.",
             )
-            self.assertEqual(parsed[0]["conditions"], ["policy.data.discountAmount != null"])
+            # The filled condition rides as a one-entry variants payload.
+            self.assertEqual(parsed[0]["variants"][0]["when"]["path"], "policy.data.discountAmount")
 
     def test_old_tbd_format_form_still_parses(self):
+        # Deliberate LEGACY-PATH guard: conditional-form.md is retired for new
+        # documents (variants-only), but parse_conditional_form is kept so an
+        # in-flight legacy form still parses. Do not migrate this one.
         import tempfile
         old_form = (
             "# Conditional Text Review — x\n\n---\n\n## Block 1\n\n"

@@ -18,27 +18,27 @@ flowchart TD
   A["main()<br/>CLI entry"] -->|"--parse-variants-csv<br/>(legacy: --parse-conditional-form)"| B["parse_variants_csv_to_blocks() — 1050<br/>+ load_conditional_blocks() — 925"]
   A -->|"--input .docx/.pdf (ingest or --scan)"| P["_parse_document()<br/>(writes nothing → ParseResult)"]
 
-  subgraph PD["_parse_document()"]
+  subgraph PD["_parse_document() — 1176"]
     C["detect suffix"]
-    C -->|.docx| D["convert_docx() — 74"]
-    C -->|.pdf| E["convert_pdf() — 137"]
-    D --> F["apply_path_map() — 325"]
+    C -->|.docx| D["convert_docx() — 88"]
+    C -->|.pdf| E["convert_pdf() — 151"]
+    D --> F["apply_path_map() — 339"]
     E --> F
-    F --> G["extract_fields() — 225"]
-    G --> H["annotate_fields() — 359"]
-    H --> I["extract_conditionals() — 432"]
-    I --> J["annotate_conditionals() — 518"]
-    J --> K["extract_loops() — 596<br/>(sets render: template)"]
+    F --> G["extract_fields() — 239"]
+    G --> H["annotate_fields() — 373"]
+    H --> I["extract_conditionals() — 446"]
+    I --> J["annotate_conditionals() — 532"]
+    J --> K["extract_loops() — 610<br/>(sets render: template)"]
   end
 
   P --> PD
   PD --> Q{--scan?}
-  Q -->|"yes (scan / intake)"| W["_write_human_fill_files()"]
-  Q -->|"no (full ingest)"| L["write raw + annotated +<br/>write_leg2_mapping() — 779"]
+  Q -->|"yes (scan / intake)"| W["_write_human_fill_files() — 1220"]
+  Q -->|"no (full ingest)"| L["write raw + annotated +<br/>write_leg2_mapping() — 793"]
   L --> W
   W --> M["write_variants_csv() — 835<br/>(all conditional text, one file)"]
   M --> N["write_conditional_blocks() — 899<br/>(machine sidecar)"]
-  B --> O["write_conditional_registry() — 1024"]
+  B --> O["write_conditional_registry() — 1129"]
 ```
 
 **Entry:** `main()` — three modes: (1) default ingest (`--input <.docx|.pdf>`) extracts
@@ -62,14 +62,14 @@ conditional text), `.conditional-blocks.yaml` (machine sidecar); or filled `.var
 + `.conditional-blocks.yaml` → `.conditional-registry.yaml`.
 
 **Key internal stages:**
-- `convert_docx()` (74) / `convert_pdf()` (137) — parse paragraphs/tables/text → raw HTML.
-- `extract_fields()` (225) — regex-extract `{field}` tokens with occurrence symbols (`$ + *`), dedupe, optionally resolve dotted names via registry.
-- `extract_conditionals()` (432) — recursive `[[…]]` matching; detect variant tokens `[[$placeholder]]`, assign stable block IDs, nest children, dedupe keys.
-- `extract_loops()` (596) — match `[Name]…[/Name]`; move enclosed fields to loop scope; flip a containing conditional block to `render: template`; emit `#foreach`/`#end`.
+- `convert_docx()` (88) / `convert_pdf()` (151) — parse paragraphs/tables/text → raw HTML.
+- `extract_fields()` (239) — regex-extract `{field}` tokens with occurrence symbols (`$ + *`), dedupe, optionally resolve dotted names via registry.
+- `extract_conditionals()` (446) — recursive `[[…]]` matching; detect variant tokens `[[$placeholder]]`, assign stable block IDs, nest children, dedupe keys.
+- `extract_loops()` (610) — match `[Name]…[/Name]`; move enclosed fields to loop scope; flip a containing conditional block to `render: template`; emit `#foreach`/`#end`.
 - `write_variants_csv()` (835) — emit `.variants.csv`, the single human-fill file for ALL conditional text (binary blocks fold to a conditioned row + empty-default row; template blocks to a `when`-only row; N-way blocks to one row per condition + a default).
 - `write_conditional_blocks()` (899) — emit the `.conditional-blocks.yaml` machine sidecar (id/key/placeholder/variant/render/source_text/top_level/parent_id/depth) the 3-column CSV can't carry.
 - `load_conditional_blocks()` (925) / `parse_variants_csv_to_blocks()` (1050) — read the sidecar + filled CSV → block list with conditions resolved through the DSL.
-- `write_leg2_mapping()` (779) — emit `.mapping.yaml` in Leg 2 contract (variables + loops, top-level/loop field split).
+- `write_leg2_mapping()` (793) — emit `.mapping.yaml` in Leg 2 contract (variables + loops, top-level/loop field split).
 
 **Invariants / gotchas:**
 - **Field token format:** `{field}` + occurrence symbol → deduped, normalized to `$TBD_field` (symbol never appears in output); name conflicts keep the first symbol seen and warn on stderr.
@@ -228,49 +228,49 @@ Leg 1 `.vm` → `.final.vm` + `.leg3-report.md`.
 
 ```mermaid
 flowchart TD
-  A["main() — 1691<br/>(loop over --suggested forms)"] --> C["_process_form() — 1729"]
+  A["main() — 1740<br/>(loop over --suggested forms)"] --> C["_process_form() — 1778"]
   C --> D["load .mapping.yaml + extract product"]
   D --> F{java_path exists?}
-  F -->|no — fresh| I["_flatten_to_segment_root() — 582"]
-  I --> J["_collect_datafetcher_calls() — 975"]
-  J --> K["load_conditional_registry() — 1049"]
+  F -->|no — fresh| I["_flatten_to_segment_root() — 607"]
+  I --> J["_collect_datafetcher_calls() — 1000"]
+  J --> K["load_conditional_registry() — 1074"]
   K --> L["_build_cond_field_lookup() — 205<br/>_augment_field_lookup_for_variants() — 320"]
-  L --> M["_analyse_cond_fields() — 400"]
+  L --> M["_analyse_cond_fields() — 425"]
   M --> N{unresolved field?}
   N -->|yes| O["❌ hard-fail (run Leg 2)"]
-  N -->|no| P["render_java() — 1383"]
-  F -->|yes — additive| Q["parse_plugin_keys() — 749"]
-  Q --> R["_required_keys() — 840"]
-  R --> S["_diff_keys() — 873 (offset cond ids)"]
-  S --> T["_append_to_plugin() — 898"]
+  N -->|no| P["render_java() — 1432"]
+  F -->|yes — additive| Q["parse_plugin_keys() — 774"]
+  Q --> R["_required_keys() — 865"]
+  R --> S["_diff_keys() — 898 (offset cond ids)"]
+  S --> T["_append_to_plugin() — 923"]
   P --> V["render_conditional_puts() — 1324"]
   T --> V
-  V --> W["render_occurrence_guards() — 482"]
+  V --> W["render_occurrence_guards() — 507"]
   W --> X["write .java"]
   X --> Y["validate_path() per resolved var"]
   Y --> Z{--compile-check?}
-  Z -->|yes| AA["compile_check() — 1666 (javac)"]
+  Z -->|yes| AA["compile_check() — 1715 (javac)"]
   Z -->|no| AC
-  AA --> AC["write_report() — 1428"]
+  AA --> AC["write_report() — 1477"]
 ```
 
-**Entry:** `main()` (1691) → `_process_form()` (1729), called once per `--suggested` form.
+**Entry:** `main()` (1740) → `_process_form()` (1778), called once per `--suggested` form.
 
 **Inputs → Outputs:** one `.mapping.yaml` (+ `.conditional-registry.yaml`) per form → one
 `{Product}DocumentDataSnapshotPluginImpl.java` (fresh or appended) + one `.plugin-report.md` per form.
 
 **Generation stages:**
-1. `_flatten_to_segment_root()` (582) — schema 2.0 per-root verdicts → segment root.
-2. `_collect_datafetcher_calls()` (975) — DataFetcher vars per scope (quote & policy).
-3. `load_conditional_registry()` (1049) → `_build_cond_field_lookup()` (205) + `_augment_field_lookup_for_variants()` (320) → `_analyse_cond_fields()` (400).
-4. `render_java()` (1383) or `_append_to_plugin()` (898) — assemble the `.java`.
+1. `_flatten_to_segment_root()` (607) — schema 2.0 per-root verdicts → segment root.
+2. `_collect_datafetcher_calls()` (1000) — DataFetcher vars per scope (quote & policy).
+3. `load_conditional_registry()` (1074) → `_build_cond_field_lookup()` (205) + `_augment_field_lookup_for_variants()` (320) → `_analyse_cond_fields()` (425).
+4. `render_java()` (1432) or `_append_to_plugin()` (923) — assemble the `.java`.
 5. `render_conditional_puts()` (1324) — binary + variant `if/else-if/else` chains (binary now routes through the variant generator); template blocks via `_render_template_put()` (1269).
-6. `render_occurrence_guards()` (482) — null/empty checks for required & one_or_more.
-7. `validate_path()` (javap-walk) → `compile_check()` (1666, optional) → `write_report()` (1428).
+6. `render_occurrence_guards()` (507) — null/empty checks for required & one_or_more.
+7. `validate_path()` (javap-walk) → `compile_check()` (1715, optional) → `write_report()` (1477).
 
 **Fresh vs additive vs multi-form:**
 - **Fresh** (no existing `.java`): `render_java()` writes a complete file.
-- **Additive** (`.java` exists): `parse_plugin_keys()` (749) reads existing keys + conditional high-water mark; `_diff_keys()` (873) computes missing keys and offsets conditional IDs past the high-water mark; `_append_to_plugin()` (898) inserts only the missing puts (a `.java.bak` is written first).
+- **Additive** (`.java` exists): `parse_plugin_keys()` (774) reads existing keys + conditional high-water mark; `_diff_keys()` (898) computes missing keys and offsets conditional IDs past the high-water mark; `_append_to_plugin()` (923) inserts only the missing puts (a `.java.bak` is written first).
 - **Multi-form:** each form runs `_process_form()` sequentially — first writes/appends, each subsequent merges additively into the same `.java`.
 - **Named variant blocks** merge by `block_key()` (name-based) — no positional renumber; a duplicate name is a logged conflict.
 

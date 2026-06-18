@@ -21,8 +21,9 @@ from velocity_converter.leg0_ingest import (
     extract_conditionals,
     extract_fields,
     extract_loops,
-    parse_conditional_form,
-    write_conditional_form,
+    load_conditional_blocks,
+    parse_variants_csv_to_blocks,
+    write_conditional_blocks,
 )
 from velocity_converter.leg3_substitute import apply_cond_substitutions
 from velocity_converter.leg4_generate_plugin import (
@@ -211,18 +212,25 @@ class TestLoopInsideConditional(unittest.TestCase):
         self.assertIn("[[per-item note]]$doc.cond1", out)
         self.assertNotIn("render", blocks[0])
 
-    def test_form_round_trip_carries_render_flag(self) -> None:
+    def test_csv_round_trip_carries_render_flag(self) -> None:
+        # Variants-only Decision A: the loop-in-conditional block (render:template)
+        # rides as a when-only CSV row; the sidecar carries the render flag.
         annotated, fields, blocks = _annotate_with_conds(COND_LOOP_HTML)
         extract_loops(annotated, fields, cond_blocks=blocks)
+        # blocks[0] → cond1 (template), blocks[1] → cond2 (binary).
+        csv_text = (
+            "placeholder,when,text\n"
+            "cond1,policy.data.discountAmount present,\n"      # template: when-only
+            "cond2,policy.data.discountAmount present,Theft cover is included.\n"
+            "cond2,,\n"                                         # binary empty-default row
+        )
         with tempfile.TemporaryDirectory() as td:
-            form = Path(td) / "x.conditional-form.md"
-            write_conditional_form(blocks, "x", form)
-            text = form.read_text(encoding="utf-8")
-            text = text.replace(
-                "Condition: ", "Condition: policy.data.discountAmount != null", 1
-            )
-            form.write_text(text, encoding="utf-8")
-            parsed = parse_conditional_form(form)
+            csv_path = Path(td) / "x.variants.csv"
+            csv_path.write_text(csv_text, encoding="utf-8")
+            sidecar = Path(td) / "x.conditional-blocks.yaml"
+            write_conditional_blocks(blocks, sidecar)
+            meta = load_conditional_blocks(sidecar)
+            parsed = parse_variants_csv_to_blocks(csv_path, meta)
         self.assertEqual(parsed[0].get("render"), "template")
         self.assertNotIn("render", parsed[1])
 

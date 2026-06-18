@@ -2,7 +2,9 @@
 
 Covers: if/else-if chain via the DSL, default else, named put key, per-variant
 field wiring (system + custom), unsupported field → TODO, default-row field
-wiring, scope-blocked empty put, and the render:template + variants hard error.
+wiring, scope-blocked empty put, and the render:template Boolean put (a template
+block carries its single `when` as a one-entry variants payload — no longer an
+error under variants-only).
 """
 
 from __future__ import annotations
@@ -91,11 +93,34 @@ class TestVariantCodegen(unittest.TestCase):
         self.assertIn('renderingData.put("stateClause", "");', java)
         self.assertNotIn("else if", java)
 
-    def test_template_plus_variants_hard_error(self):
-        b = _block()
+    def test_template_block_puts_boolean(self):
+        # Variants-only: a render:template block carries its single `when` as a
+        # one-entry variants payload. It is no longer an error — the block routes
+        # to _render_template_put, which emits a single Boolean put (no String/
+        # if-chain, no throw); the section wording stays in the template.
+        b = _block(variants=[
+            {"when": {"path": "policy.data.state", "op": "==", "value": "CA",
+                      "raw": 'state == "CA"'}, "text": ""},
+        ])
         b["render"] = "template"
-        with self.assertRaises(ValueError):
-            render_conditional_puts([b], scope="policy", field_lookup=FL)
+        java = render_conditional_puts([b], scope="policy", field_lookup=FL)
+        # Single Boolean put driven by the `when` AST (null-guarded accessor).
+        self.assertIn('renderingData.put("stateClause", Objects.equals(', java)
+        self.assertIn('segment.data().state()', java)
+        self.assertIn('"CA"));', java)
+        # No N-way String accumulator or if/else-if chain for a template block.
+        self.assertNotIn('String stateClause', java)
+        self.assertNotIn("} else if (", java)
+
+    def test_template_block_out_of_scope_puts_false(self):
+        # A policy-scoped template block in the quote overload puts false (never "").
+        b = _block(scope="policy", variants=[
+            {"when": {"path": "policy.data.state", "op": "==", "value": "CA",
+                      "raw": 'state == "CA"'}, "text": ""},
+        ])
+        b["render"] = "template"
+        java = render_conditional_puts([b], scope="quote", field_lookup=FL)
+        self.assertIn('renderingData.put("stateClause", false);', java)
 
 
 class TestBinaryFieldRegression(unittest.TestCase):
