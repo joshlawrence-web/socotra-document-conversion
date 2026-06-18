@@ -5,6 +5,96 @@ End-to-end view of every file artifact and human touchpoint in the Velocity Conv
 > This doc covers the flow *between* legs. For what happens *inside* a leg, see
 > [leg-internals.md](leg-internals.md); to jump to a specific function, see [CODEMAP.md](CODEMAP.md).
 
+This doc has **three views**, escalating from friendly to detailed:
+1. **Customer journey** (below) — what the *document author* sees and does. No files, no legs.
+2. **Full artifact flow** — every intermediate file the pipeline writes.
+3. **Human-in-the-loop view** — the same flow, colour-coded by who acts when.
+
+---
+
+## Customer journey — what the document author actually does
+
+The pipeline produces a lot of intermediate files (next section), but the **customer never
+sees them**. From the author's chair the whole job is: *write a letter, answer two forms, get
+a self-filling template back.* The narrative version (Priya & Sam) lives in
+[demo-story.md](demo-story.md); these diagrams are its shape.
+
+### Touchpoint flow — the handoffs over time
+
+Three customer touchpoints (numbered). Everything between them is the operator running the
+pipeline; the author waits.
+
+```mermaid
+sequenceDiagram
+    actor Priya as 🙋 Author
+    participant Sam as 🛠️ Operator
+    participant Pipe as ⚙️ Pipeline
+
+    Note over Priya: ① AUTHOR THE DOC
+    Priya->>Priya: Write the letter in Word with 4 markers:<br/>{field} · [[text]] · [Name]…[/Name] · [[$token]]
+    Priya->>Sam: Hand over the .docx
+
+    Sam->>Pipe: RUN_PIPELINE intake<br/>(Leg -1 suggest + Leg 0 scan)
+    Pipe-->>Sam: 2 fill-in files (path-review.md + variants.csv)
+
+    Note over Priya,Sam: ② ANSWER THE FORMS (no code)
+    Sam->>Priya: "Here are your 2 fill-in files"
+    Priya->>Priya: path-review.md — confirm each {field} → real path
+    Priya->>Priya: variants.csv — write the "when" for each block,<br/>+ version rows for each [[$token]]
+    Priya->>Sam: Return both files, filled
+
+    Sam->>Pipe: legminus1_apply → Leg 0 → Leg 2+3+4
+    Pipe-->>Sam: .final.vm template + SnapshotPlugin.java
+    Sam->>Pipe: Deploy (hot-swap, no JAR rebuild)
+
+    Note over Priya,Sam: ③ SEE IT WORK
+    Pipe-->>Priya: A letter that fills itself for every customer
+```
+
+### Journey flow — the author's path, start to finish
+
+The same three touchpoints as a straight line. Orange = *you do something*; grey =
+*pipeline runs, nothing for you to do*; green = *you receive something*.
+
+```mermaid
+flowchart LR
+    classDef do fill:#fff3e0,stroke:#e65100,color:#bf360c,stroke-width:2px;
+    classDef get fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20,stroke-width:2px;
+    classDef wait fill:#eceff1,stroke:#607d8b,color:#37474f,stroke-dasharray:4 3;
+
+    A["✍️ ① Write the letter in Word<br/>drop in the 4 markers"]:::do
+    B["📨 Hand the .docx over"]:::do
+    W1["⏳ pipeline runs intake"]:::wait
+    C["📋 ② Get 2 fill-in files back"]:::get
+    D["✅ Confirm field names<br/>path-review.md"]:::do
+    E["✅ Fill conditions & versions<br/>variants.csv"]:::do
+    F["📨 Send the 2 files back"]:::do
+    W2["⏳ pipeline finalises + deploy"]:::wait
+    G["🎉 ③ A self-filling template<br/>one letter, every customer"]:::get
+
+    A --> B --> W1 --> C --> D --> E --> F --> W2 --> G
+```
+
+**The four markers the author writes** (full cheat-sheet in [demo-story.md](demo-story.md)):
+
+| Marker | Means |
+|--------|-------|
+| `{field}` | drop a real value in here (`{$field}`/`{+field}`/`{*field}` = optional / one-or-more / zero-or-more) |
+| `[[ text ]]` | show this only when a condition holds |
+| `[Name]…[/Name]` | repeat this region once per item in a list |
+| `[[$token]]` | pick one of several versions (fill them in the CSV) |
+
+**The two forms the author fills** (both land in `workspace/action-needed/`):
+- `<stem>.path-review.md` — one block per `{field}`; confirm or fix the suggested accessor on the `Final:` line.
+- `<stem>.variants.csv` — one file for **all** conditional text: write the `when` for each `[[…]]` block (its text is pre-filled), and the version rows for each `[[$token]]`.
+
+> The author only ever touches the Word doc and these two files. Everything in the next two
+> sections is what the operator and the pipeline handle on their behalf.
+
+---
+
+## Full artifact flow (every intermediate file)
+
 ```mermaid
 flowchart LR
   %% ── Inputs ──────────────────────────────────────────
