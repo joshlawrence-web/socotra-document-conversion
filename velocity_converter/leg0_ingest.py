@@ -863,19 +863,19 @@ def write_variants_csv(blocks: list[dict], stem: str, output_path: Path) -> None
     if not blocks:
         return
     header = [
-        "# Conditional text — one row group per block, keyed by `placeholder`.",
-        "#   placeholder : the block key from the document (pre-filled — do not rename).",
-        "#   when        : a condition, e.g.  state == \"CA\"   ·   premium > 500",
-        "#                 (first matching row wins — drag rows to reorder priority).",
+        "# Conditional text -- one row group per block, keyed by `placeholder`.",
+        "#   placeholder : the block key from the document (pre-filled -- do not rename).",
+        "#   when        : a condition, e.g.  state == \"CA\"   |   premium > 500",
+        "#                 (first matching row wins -- drag rows to reorder priority).",
         "#                 leave blank (or write * / else) for the DEFAULT row used",
-        "#                 when nothing else matches — exactly one per variant block.",
+        "#                 when nothing else matches -- exactly one per variant block.",
         "#   text        : the text shown when `when` matches (may contain {field}).",
         "#",
         "# Block kinds:",
         "#   - variant ([[$token]]) : fill/add conditioned rows + the default row.",
         "#   - binary  ([[text]])   : `text` is pre-filled; fill only `when` (the",
         "#                            empty-default row hides it when nothing matches).",
-        "#   - template (loop block): fill only `when` — the section wording stays in",
+        "#   - template (loop block): fill only `when` -- the section wording stays in",
         "#                            the document; leave `text` blank.",
         "# Unsupported: an N-way block whose variants each carry their own loop.",
     ]
@@ -887,8 +887,8 @@ def write_variants_csv(blocks: list[dict], stem: str, output_path: Path) -> None
         if b.get("render") == "template":
             w.writerow([key, 'policy.data.field present', ""])
         elif b.get("variant"):
-            w.writerow([key, 'state == "CA"', "Example text for California — edit me."])
-            w.writerow([key, "", "Default text used when no condition matches — edit me."])
+            w.writerow([key, 'state == "CA"', "Example text for California -- edit me."])
+            w.writerow([key, "", "Default text used when no condition matches -- edit me."])
         else:  # binary block folds into a one-real-row + empty-default variant.
             w.writerow([key, 'quote.quoteNumber present', _tbd_to_braces(b.get("source_text", ""))])
             w.writerow([key, "", ""])
