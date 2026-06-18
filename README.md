@@ -66,7 +66,7 @@ flowchart LR
 
 > Full data-flow reference: [docs/pipeline-dataflow.md](docs/pipeline-dataflow.md)
 
-This is a **five-leg pipeline (Leg 0–4)**:
+This is a **six-leg pipeline (Leg -1 through Leg 4)**, where Leg -1 is the optional front-door that resolves bare `{leaf}` field names to accessor paths before ingest:
 
 **Leg 0** (`leg0_ingest.py`) ingests a Word/PDF doc; extracts HTML + a single `.variants.csv` for the customer to fill in (the one human-fill file for ALL conditional text), plus a machine `.conditional-blocks.yaml` sidecar read back at parse time.
 

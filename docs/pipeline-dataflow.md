@@ -218,13 +218,18 @@ flowchart TD
 
   IN(["📄 Author's source doc\n(Word / PDF / HTML)"]):::machine
 
-  INTAKE["INTAKE (one front door)\nLeg -1 suggest + Leg 0 --scan"]:::machine
-  LM1["Leg -1\nresolve bare {leaf} → accessor"]:::machine
-  H1["🙋 EDIT .path-review.md\nconfirm / fix each Final: accessor"]:::human
+  %% ── Route A: one command emits BOTH hand-fill files up front ──
+  INTAKE["ROUTE A — UPFRONT BUNDLE\nRUN_PIPELINE intake\n(Leg -1 suggest + Leg 0 --scan)\nemits BOTH files at once"]:::machine
 
-  L0["Leg 0\ningest doc → HTML + mapping"]:::machine
+  %% ── Route B: each leg emits its own file at its own stage ──
+  LM1["ROUTE B — Leg -1\nresolve bare {leaf} → accessor"]:::machine
+  L0["ROUTE B — Leg 0 (full ingest)\ndoc → HTML + mapping + .variants.csv"]:::machine
+
+  %% ── The two required hand-fill files (shared by both routes) ──
+  H1["🙋 .path-review.md\nconfirm / fix each Final: accessor\n(only if author wrote bare {leaf})"]:::human
+  H2["🙋 .variants.csv\nALL conditional text\n(one file, every block kind)"]:::human
+
   L1["Leg 1\nconvert HTML mockup → mapping"]:::machine
-  H2["🙋 FILL .variants.csv\nALL conditional text\n(one file, every block kind)"]:::human
   PARSE["Leg 0 --parse-variants-csv\n→ conditional-registry.yaml"]:::machine
 
   L2["Leg 2\nsuggest + grade accessor paths"]:::machine
@@ -238,17 +243,23 @@ flowchart TD
 
   DEP["🚀 MANUALLY DEPLOY\n.final.vm + .java → socotra-config/"]:::deploy
 
-  IN -.->|"optional, bare {leaf}"| LM1
-  LM1 --> H1
-  IN -.->|"intake (bundle both\nhand-fill files up front)"| INTAKE
-  INTAKE --> H1
-  INTAKE --> H2
-  H1 -.->|"legminus1_apply"| L0
-  IN --> L0
+  %% Route A — thick edges: one command, both files together, up front
+  IN ==>|"ROUTE A: intake (bundle both)"| INTAKE
+  INTAKE ==> H1
+  INTAKE ==> H2
+
+  %% Route B — dashed edges: per-leg, two separate interruptions
+  IN -.->|"ROUTE B: bare {leaf}"| LM1
+  LM1 -.-> H1
+  IN -.->|"ROUTE B: full ingest"| L0
+  L0 -.-> H2
+
+  %% Both routes converge — the filled files feed the machine pipeline
+  H1 -->|"legminus1_apply → path-map → Leg 0"| L0
   IN --> L1
-  L0 --> H2
-  H2 -.->|"parse"| PARSE
+  H2 -->|"parse"| PARSE
   PARSE --> L2
+  L0 --> L2
   L1 --> L2
   L2 --> R1
   R1 --> L3
@@ -264,16 +275,24 @@ flowchart TD
 - 👀 *yellow, dashed* — an *optional but recommended* review / QA gate (proceed once it's clean)
 - 🚀 **green** — the final manual action: deploy the two generated files (hot-swap, no JAR rebuild)
 - ▢ blue — a fully automated leg (no human needed)
+- **═ thick edges** — **Route A** (upfront intake bundle); **┄ dashed edges** — **Route B** (per-leg)
 
 The two **required** human moments are filling the variants CSV (`.variants.csv` — the
 single file for ALL conditional text) and — only when the author wrote bare leaves —
-confirming accessors in `.path-review.md`. Everything else is automated or advisory.
+confirming accessors in `.path-review.md`. Everything else is automated or advisory. There
+are **two routes to produce those same two files**:
 
-**Intake** (`RUN_PIPELINE intake`, or `leg0_scan` on its own) bundles these required edits
-into one up-front handoff: it runs Leg -1 *suggest* + Leg 0 `--scan` to emit both
-hand-fill files (`.path-review.md`, `.variants.csv`) at once, deferring the machine
-artifacts to the later full ingest. This collapses the two otherwise separate interruptions
-(path-review after Leg -1, the conditional text after Leg 0) into a single moment.
+- **Route A — upfront bundle (`RUN_PIPELINE intake`, or `leg0_scan` on its own).** One
+  command runs Leg -1 *suggest* + Leg 0 `--scan` and emits **both** hand-fill files
+  (`.path-review.md`, `.variants.csv`) **at once**, before any machine artifacts. The
+  customer fills both in a single handoff; the full ingest is deferred. This collapses what
+  would otherwise be two separate interruptions into one moment.
+- **Route B — per-leg.** Run Leg -1, fill `.path-review.md`, *then* run the full Leg 0
+  ingest, fill `.variants.csv`. Each file arrives at its own stage — two interruptions, but
+  no need to know about `intake`.
+
+Both routes converge on the same downstream pipeline: `legminus1_apply` feeds the path map
+into Leg 0, and `--parse-variants-csv` turns the filled CSV into the conditional registry.
 
 ---
 
