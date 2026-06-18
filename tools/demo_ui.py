@@ -746,6 +746,7 @@ PAGE = r"""<!doctype html>
 <title>Velocity Converter — Intake Console</title>
 <style>
   :root {
+    /* default = "Midnight" (the original navy/teal console look) */
     --navy-0: #050a18;
     --navy-1: #0a1228;
     --navy-2: #0f1c3d;
@@ -757,16 +758,141 @@ PAGE = r"""<!doctype html>
     --text-dim: #7f93b4;
     --danger: #ff5d7a;
     --radius: 14px;
+    /* surfaces + glows (themeable; default values reproduce the original) */
+    --glow-1: rgba(22, 224, 207, .10);
+    --glow-2: rgba(195, 245, 60, .06);
+    --surface-1: rgba(22, 38, 79, .75);
+    --surface-2: rgba(10, 18, 40, .92);
+    --card-1: rgba(15, 28, 61, .85);
+    --card-2: rgba(8, 14, 32, .95);
+    --card-border: rgba(127, 147, 180, .16);
+    --heading-fg: #eaf3ff;
+    --body-font: -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
   }
+
+  /* ============================ THEMES ============================ */
+  /* Light — clean daylight */
+  html[data-theme="light"] {
+    --navy-0: #ffffff; --navy-1: #f1f5fb; --navy-2: #e6edf7; --navy-3: #d8e2f0;
+    --teal: #0a8f86; --teal-dim: #57b3ac; --chartreuse: #7a9c1e;
+    --text: #1c2b44; --text-dim: #5a6b88; --danger: #c8324f;
+    --glow-1: rgba(10, 143, 134, .10); --glow-2: rgba(122, 156, 30, .08);
+    --surface-1: #ffffff; --surface-2: #eef3fb;
+    --card-1: #ffffff; --card-2: #f4f7fc;
+    --card-border: rgba(28, 43, 68, .14); --heading-fg: #102038;
+  }
+  /* Solarized Dark */
+  html[data-theme="solarized"] {
+    --navy-0: #002b36; --navy-1: #073642; --navy-2: #0a4350; --navy-3: #0e5263;
+    --teal: #2aa198; --teal-dim: #1f7a73; --chartreuse: #b58900;
+    --text: #eee8d5; --text-dim: #93a1a1; --danger: #dc322f;
+    --glow-1: rgba(42, 161, 152, .12); --glow-2: rgba(181, 137, 0, .10);
+    --surface-1: rgba(7, 54, 66, .85); --surface-2: rgba(0, 43, 54, .95);
+    --card-1: rgba(7, 54, 66, .9); --card-2: rgba(0, 43, 54, .96);
+    --card-border: rgba(147, 161, 161, .2); --heading-fg: #fdf6e3;
+  }
+  /* Nord */
+  html[data-theme="nord"] {
+    --navy-0: #2e3440; --navy-1: #3b4252; --navy-2: #434c5e; --navy-3: #4c566a;
+    --teal: #88c0d0; --teal-dim: #5e81ac; --chartreuse: #a3be8c;
+    --text: #eceff4; --text-dim: #aeb7c8; --danger: #bf616a;
+    --glow-1: rgba(136, 192, 208, .12); --glow-2: rgba(163, 190, 140, .10);
+    --surface-1: rgba(59, 66, 82, .85); --surface-2: rgba(46, 52, 64, .95);
+    --card-1: rgba(59, 66, 82, .9); --card-2: rgba(46, 52, 64, .96);
+    --card-border: rgba(174, 183, 200, .2); --heading-fg: #eceff4;
+  }
+  /* Dracula */
+  html[data-theme="dracula"] {
+    --navy-0: #21222c; --navy-1: #282a36; --navy-2: #343746; --navy-3: #44475a;
+    --teal: #8be9fd; --teal-dim: #6272a4; --chartreuse: #50fa7b;
+    --text: #f8f8f2; --text-dim: #a9acc4; --danger: #ff5555;
+    --glow-1: rgba(139, 233, 253, .12); --glow-2: rgba(80, 250, 123, .10);
+    --surface-1: rgba(40, 42, 54, .85); --surface-2: rgba(33, 34, 44, .95);
+    --card-1: rgba(40, 42, 54, .9); --card-2: rgba(33, 34, 44, .96);
+    --card-border: rgba(98, 114, 164, .35); --heading-fg: #f8f8f2;
+  }
+  /* Amber terminal */
+  html[data-theme="amber"] {
+    --navy-0: #0a0600; --navy-1: #140d02; --navy-2: #1e1404; --navy-3: #2a1c06;
+    --teal: #ffb000; --teal-dim: #b97c00; --chartreuse: #ffd166;
+    --text: #ffce7a; --text-dim: #b5853a; --danger: #ff5a2a;
+    --glow-1: rgba(255, 176, 0, .12); --glow-2: rgba(255, 209, 102, .08);
+    --surface-1: rgba(30, 20, 4, .85); --surface-2: rgba(10, 6, 0, .95);
+    --card-1: rgba(30, 20, 4, .9); --card-2: rgba(10, 6, 0, .96);
+    --card-border: rgba(255, 176, 0, .25); --heading-fg: #ffd98a;
+    --body-font: "SF Mono", ui-monospace, Menlo, monospace;
+  }
+  /* Rosé — soft pink */
+  html[data-theme="rose"] {
+    --navy-0: #191724; --navy-1: #1f1d2e; --navy-2: #26233a; --navy-3: #2f2b45;
+    --teal: #ebbcba; --teal-dim: #c4848a; --chartreuse: #f6c177;
+    --text: #e0def4; --text-dim: #a8a3c4; --danger: #eb6f92;
+    --glow-1: rgba(235, 188, 186, .12); --glow-2: rgba(246, 193, 119, .10);
+    --surface-1: rgba(31, 29, 46, .85); --surface-2: rgba(25, 23, 36, .95);
+    --card-1: rgba(38, 35, 58, .9); --card-2: rgba(25, 23, 36, .96);
+    --card-border: rgba(235, 188, 186, .22); --heading-fg: #f2eefb;
+  }
+  /* Ocean */
+  html[data-theme="ocean"] {
+    --navy-0: #04141f; --navy-1: #062430; --navy-2: #093646; --navy-3: #0c4a5e;
+    --teal: #34d6e8; --teal-dim: #1f8fa0; --chartreuse: #6fe3c2;
+    --text: #d4f0f6; --text-dim: #6fa3b3; --danger: #ff6b8a;
+    --glow-1: rgba(52, 214, 232, .12); --glow-2: rgba(111, 227, 194, .10);
+    --surface-1: rgba(6, 36, 48, .85); --surface-2: rgba(4, 20, 31, .95);
+    --card-1: rgba(9, 54, 70, .9); --card-2: rgba(4, 20, 31, .96);
+    --card-border: rgba(52, 214, 232, .2); --heading-fg: #e4f7fb;
+  }
+  /* Forest */
+  html[data-theme="forest"] {
+    --navy-0: #0a140d; --navy-1: #0f1f15; --navy-2: #15301f; --navy-3: #1c4129;
+    --teal: #7fd88a; --teal-dim: #4a9c5a; --chartreuse: #d4e157;
+    --text: #dcefdf; --text-dim: #8aab93; --danger: #e8736b;
+    --glow-1: rgba(127, 216, 138, .12); --glow-2: rgba(212, 225, 87, .10);
+    --surface-1: rgba(15, 31, 21, .85); --surface-2: rgba(10, 20, 13, .95);
+    --card-1: rgba(21, 48, 31, .9); --card-2: rgba(10, 20, 13, .96);
+    --card-border: rgba(127, 216, 138, .2); --heading-fg: #eaf7ec;
+  }
+  /* MySpace — rainbow, for 90-00s kids only */
+  html[data-theme="myspace"] {
+    --navy-0: #1a0033; --navy-1: #2a0a4a; --navy-2: #3a1060; --navy-3: #4a1878;
+    --teal: #00ffea; --teal-dim: #ff00d4; --chartreuse: #fff000;
+    --text: #ffffff; --text-dim: #ffb3f0; --danger: #ff0044;
+    --glow-1: rgba(255, 0, 212, .22); --glow-2: rgba(0, 255, 234, .18);
+    --surface-1: rgba(58, 16, 96, .82); --surface-2: rgba(26, 0, 51, .9);
+    --card-1: rgba(74, 24, 120, .85); --card-2: rgba(26, 0, 51, .94);
+    --card-border: #ff00d4; --heading-fg: #fff000;
+    --body-font: "Comic Sans MS", "Comic Sans", "Chalkboard SE", cursive;
+  }
+  html[data-theme="myspace"] body {
+    background:
+      repeating-linear-gradient(45deg,
+        rgba(255,0,212,.10) 0 22px, rgba(0,255,234,.10) 22px 44px),
+      linear-gradient(135deg, #ff0066, #fff000, #00ff66, #00ffea, #6a00ff, #ff00d4, #ff0066);
+    background-size: auto, 400% 400%;
+    animation: msrainbow 14s ease infinite;
+  }
+  @keyframes msrainbow {
+    0% { background-position: 0 0, 0% 50%; }
+    50% { background-position: 0 0, 100% 50%; }
+    100% { background-position: 0 0, 0% 50%; }
+  }
+  html[data-theme="myspace"] h1,
+  html[data-theme="myspace"] .card h3 {
+    text-shadow: 1px 1px 0 #ff00d4, -1px -1px 0 #00ffea;
+  }
+  html[data-theme="myspace"] .card,
+  html[data-theme="myspace"] .stage { border-width: 2px; box-shadow: 0 0 22px var(--glow-1); }
+  html[data-theme="myspace"] .stage-num,
+  html[data-theme="myspace"] .logo { animation: msrainbow 6s linear infinite; background-size: 300% 300%; }
   * { box-sizing: border-box; }
   html, body { margin: 0; min-height: 100%; }
   body {
     background:
-      radial-gradient(1100px 500px at 80% -10%, rgba(22, 224, 207, .10), transparent 60%),
-      radial-gradient(900px 500px at 5% 110%, rgba(195, 245, 60, .06), transparent 60%),
+      radial-gradient(1100px 500px at 80% -10%, var(--glow-1), transparent 60%),
+      radial-gradient(900px 500px at 5% 110%, var(--glow-2), transparent 60%),
       linear-gradient(180deg, var(--navy-0), var(--navy-1) 45%, var(--navy-0));
     color: var(--text);
-    font: 15px/1.5 -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    font: 15px/1.5 var(--body-font);
     padding: 32px 28px calc(34vh + 80px);
   }
   .mono { font-family: "SF Mono", ui-monospace, Menlo, monospace; }
@@ -786,7 +912,14 @@ PAGE = r"""<!doctype html>
     -webkit-background-clip: text; background-clip: text; color: transparent;
   }
   header .sub { color: var(--text-dim); letter-spacing: .26em; font-size: 11px; text-transform: uppercase; }
-  #gear { margin-left: auto; align-self: center; position: relative; font-size: 16px; }
+  #theme {
+    margin-left: auto; align-self: center; cursor: pointer;
+    background: var(--surface-1); color: var(--text);
+    border: 1px solid var(--card-border); border-radius: 999px;
+    padding: 6px 12px; font-size: 12px; font-family: inherit;
+  }
+  #theme:hover { border-color: var(--teal); }
+  #gear { align-self: center; position: relative; font-size: 16px; }
   #gear-dot {
     position: absolute; top: 3px; right: 3px; width: 8px; height: 8px; border-radius: 50%;
     background: var(--danger); box-shadow: 0 0 8px var(--danger);
@@ -806,7 +939,7 @@ PAGE = r"""<!doctype html>
   }
   .stage {
     position: relative; z-index: 1;
-    background: linear-gradient(165deg, rgba(22, 38, 79, .75), rgba(10, 18, 40, .92));
+    background: linear-gradient(165deg, var(--surface-1), var(--surface-2));
     border: 1px solid rgba(22, 224, 207, .18);
     border-radius: var(--radius);
     padding: 18px 16px 18px;
@@ -855,14 +988,14 @@ PAGE = r"""<!doctype html>
   /* ---- forms board ---- */
   .board { max-width: 1180px; margin: 26px auto 0; display: grid; grid-template-columns: 1fr; gap: 22px; }
   .card {
-    background: linear-gradient(170deg, rgba(15, 28, 61, .85), rgba(8, 14, 32, .95));
-    border: 1px solid rgba(127, 147, 180, .16);
+    background: linear-gradient(170deg, var(--card-1), var(--card-2));
+    border: 1px solid var(--card-border);
     border-radius: var(--radius); padding: 18px 18px 16px;
     box-shadow: 0 12px 34px rgba(2, 6, 18, .5);
   }
   .card.flash { animation: flash 1.2s ease; }
   @keyframes flash { 0% { border-color: var(--chartreuse); box-shadow: 0 0 30px rgba(195,245,60,.35); } 100% {} }
-  .card h3 { margin: 0 0 10px; font-size: 16px; font-weight: 650; color: #eaf3ff; word-break: break-all; }
+  .card h3 { margin: 0 0 10px; font-size: 16px; font-weight: 650; color: var(--heading-fg); word-break: break-all; }
   .pills { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-bottom: 12px; }
   .pill {
     font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; font-weight: 650;
@@ -1016,6 +1149,18 @@ PAGE = r"""<!doctype html>
   <div class="logo"></div>
   <h1>Velocity Converter</h1>
   <div class="sub">Socotra &middot; document intake console</div>
+  <select id="theme" title="Theme" aria-label="Theme">
+    <option value="midnight">🌌 Midnight</option>
+    <option value="light">☀️ Light</option>
+    <option value="solarized">🟤 Solarized</option>
+    <option value="nord">🧊 Nord</option>
+    <option value="dracula">🧛 Dracula</option>
+    <option value="amber">🟠 Amber Terminal</option>
+    <option value="rose">🌹 Rosé</option>
+    <option value="ocean">🌊 Ocean</option>
+    <option value="forest">🌲 Forest</option>
+    <option value="myspace">🌈 MySpace (90-00s kids only)</option>
+  </select>
   <button class="btn-ghost iconbtn" id="gear" title="System — Socotra config &amp; path registry">⚙<span id="gear-dot" hidden></span></button>
 </header>
 
@@ -1100,6 +1245,22 @@ PAGE = r"""<!doctype html>
 <div id="console"><div id="console-title" onclick="toggleConsole()"><span>Pipeline log</span><button id="console-toggle" type="button" aria-expanded="true">Hide ▾</button></div></div>
 
 <script>
+/* ---- theme picker (persisted in localStorage) ---- */
+(function () {
+  const sel = document.getElementById('theme');
+  const saved = localStorage.getItem('vc-theme') || 'midnight';
+  const apply = (t) => {
+    if (t === 'midnight') document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', t);
+  };
+  sel.value = saved;
+  apply(saved);
+  sel.addEventListener('change', () => {
+    localStorage.setItem('vc-theme', sel.value);
+    apply(sel.value);
+  });
+})();
+
 const board = document.getElementById('board');
 const consoleEl = document.getElementById('console');
 const drop = document.getElementById('drop');
