@@ -20,7 +20,11 @@ Usage:
     python3 -m velocity_converter.render_preview \
         --template workspace/output/<stem>/<stem>.final.vm \
         --reference-type quote --reference-locator <locator> \
-        [--out workspace/output/<stem>/<stem>.preview.pdf]
+        [--out workspace/output/<stem>/<stem>.preview.pdf] [--open] [--reveal]
+
+`--open` pops the saved PDF open in the OS viewer; `--reveal` selects it in
+Finder/Explorer. Both require `--out` (there must be a file on disk to show). The
+call prints a short progress trace to stderr so a demo can watch the API work.
 
 Credentials come from environment variables, with a gitignored `.env.ai-documents`
 at the repo root as the fallback (copy `.env.ai-documents.example`):
@@ -36,6 +40,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -213,6 +219,44 @@ def require_settings(env: dict[str, str]) -> tuple[str, str, str]:
     )
 
 
+def reveal_file(path: Path, *, reveal_in_folder: bool = False) -> bool:
+    """Pop the rendered file open in the OS viewer (or reveal it in the folder).
+
+    `reveal_in_folder=True` selects the file in Finder/Explorer instead of opening
+    it. Returns True if a launcher was found and invoked, False otherwise (so the
+    caller can fall back to just printing the path). Best-effort — never raises.
+    """
+    path = path.resolve()
+    try:
+        if sys.platform == "darwin":
+            cmd = ["open", "-R", str(path)] if reveal_in_folder else ["open", str(path)]
+        elif os.name == "nt":  # Windows
+            if reveal_in_folder:
+                cmd = ["explorer", "/select,", str(path)]
+            else:  # os.startfile is the reliable open on Windows
+                os.startfile(str(path))  # type: ignore[attr-defined]
+                return True
+        else:  # Linux / other — xdg-open has no "reveal", so open the parent dir
+            opener = shutil.which("xdg-open")
+            if not opener:
+                return False
+            target = path.parent if reveal_in_folder else path
+            cmd = [opener, str(target)]
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except OSError:
+        return False
+
+
+def _human_size(n: int) -> str:
+    size = float(n)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            return f"{int(size)} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} GB"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Render a Velocity template ad-hoc against a live Socotra tenant."
@@ -236,7 +280,21 @@ def main() -> None:
              "(default: built-in pdf/dynamic config)",
     )
     parser.add_argument("--out", help="Write rendered output here (default: stdout)")
+    parser.add_argument(
+        "--open", dest="open_after", action="store_true",
+        help="Pop the rendered file open in the OS viewer after writing (needs --out)",
+    )
+    parser.add_argument(
+        "--reveal", action="store_true",
+        help="Reveal the rendered file in the folder (Finder/Explorer) after writing "
+             "(needs --out)",
+    )
     args = parser.parse_args()
+
+    if (args.open_after or args.reveal) and not args.out:
+        print("ERROR: --open/--reveal require --out (nothing on disk to show)",
+              file=sys.stderr)
+        sys.exit(2)
 
     env = load_env()
     try:
@@ -252,6 +310,14 @@ def main() -> None:
         )
 
     template_text = Path(args.template).read_text(encoding="utf-8")
+
+    # A little theatre — show the call as it happens (stderr keeps stdout clean
+    # for the piped-PDF case). This is the "watch the API work" beat in a demo.
+    endpoint = f"{api_url.rstrip('/')}/document/{tenant_locator}/documents/render"
+    print(f"→ POST {endpoint}", file=sys.stderr)
+    print(f"  {args.reference_type}={args.reference_locator} · "
+          f"template={Path(args.template).name} ({_human_size(len(template_text.encode()))})",
+          file=sys.stderr)
     try:
         rendered, content_type = render_template(
             api_url=api_url,
@@ -264,16 +330,32 @@ def main() -> None:
             document_config=document_config,
         )
     except RenderPreviewError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+        print(f"✗ {exc}", file=sys.stderr)
         if exc.body:
             print(exc.body[:2000], file=sys.stderr)
         sys.exit(1)
+
+    # The render endpoint returns the PDF with an empty Content-Type header; sniff
+    # the magic bytes so the theatre line and write message read cleanly.
+    if not content_type and rendered[:5] == b"%PDF-":
+        content_type = "application/pdf (sniffed)"
+
+    print(f"← 200 OK · {content_type or 'unknown type'} · "
+          f"{_human_size(len(rendered))} received", file=sys.stderr)
 
     if args.out:
         out_path = Path(args.out)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_bytes(rendered)
-        print(f"Rendered preview ({content_type or 'unknown type'}) written to {out_path}")
+        print(f"✓ Rendered preview ({content_type or 'unknown type'}) written to {out_path}")
+        if args.reveal:
+            shown = reveal_file(out_path, reveal_in_folder=True)
+            print("  revealed in folder" if shown
+                  else "  (could not reveal — open it manually)", file=sys.stderr)
+        if args.open_after:
+            shown = reveal_file(out_path)
+            print("  opened in default viewer" if shown
+                  else "  (no OS opener found — open it manually)", file=sys.stderr)
     else:
         sys.stdout.buffer.write(rendered)
 
