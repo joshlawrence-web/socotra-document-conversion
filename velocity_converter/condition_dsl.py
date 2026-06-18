@@ -649,11 +649,20 @@ def ast_from_dict(d: dict) -> ConditionAST:
 # ---------------------------------------------------------------------------
 
 
-def _build_leaf_map(index: dict[str, dict]) -> dict[str, list[str]]:
-    """leaf name → [accessor, …] from a registry index (for bare-leaf resolution)."""
+def _build_leaf_map(
+    index: dict[str, dict], *, include_alias: bool = False
+) -> dict[str, list[str]]:
+    """leaf name → [accessor, …] from a registry index (for bare-leaf resolution).
+
+    By default the ``quote.data.<f>`` aliases (Gap 4) are full-accessor-only and
+    excluded, so a bare leaf stays single-candidate (``policy.data.<f>``). With
+    ``include_alias`` the aliases are included too — used when the document's
+    rendering root is known, so a bare leaf in a *quote* document resolves to the
+    quote accessor (the scope filter in :func:`_resolve_path` then disambiguates).
+    """
     leaf_map: dict[str, list[str]] = {}
     for acc, entry in index.items():
-        if entry.get("alias"):  # alias accessors are full-accessor-only (Gap 4)
+        if entry.get("alias") and not include_alias:  # full-accessor-only (Gap 4)
             continue
         leaf_map.setdefault(acc.split(".")[-1], []).append(acc)
     return leaf_map
@@ -723,6 +732,7 @@ def parse_variants_csv(
     classpath: str | None = None,
     product: str | None = None,
     template_placeholders: set[str] | None = None,
+    doc_scope: str | None = None,
 ) -> VariantParseResult:
     """Normalise a customer ``<stem>.variants.csv`` into structured variants.
 
@@ -737,6 +747,12 @@ def parse_variants_csv(
     ``when`` and **no** text/default (its wording stays in the document), so the
     default-row and N-way validations are skipped for it; >1 conditioned row is
     rejected (the unsupported per-variant-loop edge).
+
+    ``doc_scope`` is the document's rendering-root scope (``"quote"`` or
+    ``"policy"``). When given, bare leaves resolve to that scope — so a custom
+    field in a ``(quote)`` document resolves to ``quote.data.<f>`` rather than the
+    ``policy.data.<f>`` home, keeping the conditional in the quote overload. When
+    omitted, resolution stays scope-blind (single ``policy.data.<f>`` candidate).
     """
     template_placeholders = template_placeholders or set()
     result = VariantParseResult()
@@ -750,7 +766,9 @@ def parse_variants_csv(
         return result
 
     index = build_registry_index(registry) if registry else {}
-    leaf_map = _build_leaf_map(index)
+    # When the rendering root is known, include the quote.data.<f> aliases so a
+    # bare leaf resolves to the document's scope (the scope filter disambiguates).
+    leaf_map = _build_leaf_map(index, include_alias=bool(doc_scope))
 
     # Group rows by placeholder, preserving order.
     grouped: dict[str, list[dict]] = {}
@@ -782,7 +800,7 @@ def parse_variants_csv(
             # Resolve bare leaves → full accessors; track scope.
             resolved_ok = True
             for cmp in ast.comparisons:
-                acc, sc = _resolve_path(cmp.path, index, leaf_map, None) if index else (cmp.path, _accessor_scope(cmp.path))
+                acc, sc = _resolve_path(cmp.path, index, leaf_map, doc_scope) if index else (cmp.path, _accessor_scope(cmp.path))
                 if acc is None:
                     errors.append(f"{ph}: {sc}")
                     resolved_ok = False

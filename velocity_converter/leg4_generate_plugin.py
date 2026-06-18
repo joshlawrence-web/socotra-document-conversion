@@ -317,6 +317,21 @@ def _registry_accessor_to_velocity(registry_path: Path | None) -> dict[str, str]
     return out
 
 
+def _scope_velocity_to_root(vel: str, doc_scope: str | None) -> str:
+    """Rewrite a custom-field velocity to the document's rendering-root scope.
+
+    A custom field's home velocity is ``$data.data.<f>`` (policy_data → segment in
+    Java). In a *quote* document the same field is reached as
+    ``$data.quote.data.<f>`` (→ ``quote_data`` wiring → ``quote.data().<f>()``), so
+    a variant-text token resolves into the quote overload alongside its
+    quote-scoped condition — not stranded as a policy-scoped TODO. No-op for any
+    non-quote root (the policy.data home is already correct there).
+    """
+    if doc_scope == "quote" and vel.startswith("$data.data."):
+        return "$data.quote.data." + vel[len("$data.data."):]
+    return vel
+
+
 def _augment_field_lookup_for_variants(
     field_lookup: dict[str, dict],
     cond_blocks: list[dict],
@@ -324,6 +339,7 @@ def _augment_field_lookup_for_variants(
     registry_path: Path | None,
     classpath: str | None,
     product: str | None,
+    doc_scope: str | None = None,
 ) -> dict[str, dict]:
     """Add wiring for field tokens that appear only inside variant text/default.
 
@@ -331,6 +347,10 @@ def _augment_field_lookup_for_variants(
     HTML), so synthesize a pseudo-variable per distinct accessor and run it
     through _build_cond_field_lookup — reusing the exact category/javap wiring the
     binary path uses. Existing entries are never overwritten.
+
+    ``doc_scope`` is the document's rendering-root scope; when ``"quote"`` a
+    custom-field token resolves to the quote accessor (see
+    :func:`_scope_velocity_to_root`) so it wires into the quote overload.
     """
     names: set[str] = set()
     for b in cond_blocks:
@@ -360,11 +380,11 @@ def _augment_field_lookup_for_variants(
     extra: dict[str, dict] = {}
     for n in names:
         if n in acc_to_vel:
-            synth_vars.append({"name": n, "data_source": acc_to_vel[n]})
+            synth_vars.append({"name": n, "data_source": _scope_velocity_to_root(acc_to_vel[n], doc_scope)})
             continue
         accs = leaf_to_accs.get(n, []) if "." not in n else []
         if len(accs) == 1:
-            synth_vars.append({"name": n, "data_source": acc_to_vel[accs[0]]})
+            synth_vars.append({"name": n, "data_source": _scope_velocity_to_root(acc_to_vel[accs[0]], doc_scope)})
             continue
         if accs:
             reason = (
@@ -1934,7 +1954,8 @@ def _process_form(
         suggested, vel_to_cat, classpath=classpath, product=product,
     )
     field_lookup = _augment_field_lookup_for_variants(
-        field_lookup, cond_blocks, vel_to_cat, registry_path, classpath, product
+        field_lookup, cond_blocks, vel_to_cat, registry_path, classpath, product,
+        doc_scope="quote" if primary_root_id == "quote" else "policy",
     )
     unresolved_fields, unsupported_fields, mixed_scope_ids = _analyse_cond_fields(
         cond_blocks, field_lookup

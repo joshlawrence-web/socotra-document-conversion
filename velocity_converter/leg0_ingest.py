@@ -1069,6 +1069,7 @@ def parse_variants_csv_to_blocks(
     *,
     classpath: str | None = None,
     product: str | None = None,
+    doc_scope: str | None = None,
 ) -> list[dict]:
     """Merge a filled ``<stem>.variants.csv`` with its machine sidecar
     (``blocks_meta`` from :func:`load_conditional_blocks`) into the block list
@@ -1093,7 +1094,7 @@ def parse_variants_csv_to_blocks(
     by_key = {block_key(b): b for b in blocks_meta}
     result = parse_variants_csv(
         csv_path, registry, classpath=classpath, product=product,
-        template_placeholders=template_phs,
+        template_placeholders=template_phs, doc_scope=doc_scope,
     )
     errors = list(result.errors)
 
@@ -1139,6 +1140,26 @@ def parse_variants_csv_to_blocks(
             + "\n  - ".join(errors)
         )
     return out_blocks
+
+
+def _primary_root_scope(mapping_path: Path) -> str | None:
+    """Condition scope ('quote'|'policy') of a mapping's primary rendering root.
+
+    A quote-rooted document conditions on quote accessors; everything else
+    (segment/policy/term) conditions on policy accessors. Returns None when the
+    mapping is absent or carries no rendering root (caller stays scope-blind).
+    """
+    if not mapping_path.is_file():
+        return None
+    try:
+        data = yaml.safe_load(mapping_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return None
+    roots = data.get("rendering_roots") or []
+    if not roots:
+        return None
+    primary = next((r for r in roots if r.get("primary")), roots[0])
+    return "quote" if str(primary.get("id") or "").lower() == "quote" else "policy"
 
 
 def write_conditional_registry(blocks: list[dict], output_path: Path) -> None:
@@ -1351,9 +1372,14 @@ def main() -> int:
 
         reg_path = _discover_registry(csv_path.parent) or _discover_registry(machine_dir)
         registry = load_registry_dict(reg_path) if reg_path else None
+        # Resolve bare-leaf conditions against the document's rendering root, so a
+        # (quote) document conditions on quote.data.<f>, not the policy.data home.
+        doc_scope = _primary_root_scope(machine_dir / f"{stem}.mapping.yaml")
         try:
             blocks_meta = load_conditional_blocks(blocks_path)
-            blocks = parse_variants_csv_to_blocks(csv_path, blocks_meta, registry=registry)
+            blocks = parse_variants_csv_to_blocks(
+                csv_path, blocks_meta, registry=registry, doc_scope=doc_scope
+            )
         except ValueError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return 1

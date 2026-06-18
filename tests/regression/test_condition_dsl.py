@@ -258,6 +258,49 @@ class TestVariantsCsv(unittest.TestCase):
         # Bare leaf 'state' resolved to the full accessor.
         self.assertEqual(ph["variants"][0]["when"]["path"], "policy.data.state")
 
+    def test_bare_leaf_resolves_to_rendering_root_scope(self):
+        # A custom field (stored policy_data) used as a bare leaf must resolve to
+        # the document's rendering-root scope: quote.data.<f> in a (quote) doc,
+        # policy.data.<f> in a (segment/policy) doc. Regression for the condition
+        # landing in the wrong plugin overload (disclosureClause demo bug).
+        csv_text = (
+            "placeholder,when,text\n"
+            'clause,"state == ""CA""","CA text"\n'
+            "clause,,Default text\n"
+        )
+        quote_res = parse_variants_csv(_write_csv(csv_text), REGISTRY, doc_scope="quote")
+        self.assertEqual(quote_res.errors, [])
+        self.assertEqual(quote_res.placeholders["clause"]["scope"], "quote")
+        self.assertEqual(
+            quote_res.placeholders["clause"]["variants"][0]["when"]["path"],
+            "quote.data.state",
+        )
+
+        policy_res = parse_variants_csv(_write_csv(csv_text), REGISTRY, doc_scope="policy")
+        self.assertEqual(policy_res.errors, [])
+        self.assertEqual(policy_res.placeholders["clause"]["scope"], "policy")
+        self.assertEqual(
+            policy_res.placeholders["clause"]["variants"][0]["when"]["path"],
+            "policy.data.state",
+        )
+
+    def test_bare_leaf_default_scope_blind_without_rendering_root(self):
+        # Backward compat: with no doc_scope the resolution stays scope-blind and
+        # a custom-field leaf keeps resolving to its policy.data home.
+        res = parse_variants_csv(
+            _write_csv(
+                "placeholder,when,text\n"
+                'clause,"state == ""CA""","CA text"\n'
+                "clause,,Default text\n"
+            ),
+            REGISTRY,
+        )
+        self.assertEqual(res.errors, [])
+        self.assertEqual(res.placeholders["clause"]["scope"], "policy")
+        self.assertEqual(
+            res.placeholders["clause"]["variants"][0]["when"]["path"], "policy.data.state"
+        )
+
     def test_missing_default_flagged(self):
         path = _write_csv(
             "placeholder,when,text\n"

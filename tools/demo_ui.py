@@ -10,7 +10,7 @@ This UI tells the "Priya / ZenCover Welcome Letter" story (docs/demo-story.md):
 the customer writes a normal Word letter with four markers, hands it over once,
 and the pipeline gives back three fill-in-the-blank files.
 
-Flow (four stages, left to right):
+Flow (five stages, left to right):
   1. Intake    — drop a .docx/.pdf → Leg -1 (suggest) + Leg 0 (scan) produce the
                  THREE human-fill files: <stem>.path-review.md,
                  <stem>.variants.csv.
@@ -23,6 +23,9 @@ Flow (four stages, left to right):
                  customer answers are never clobbered.
   4. Generate  — parse the variants.csv → registry, then Leg 2+3
                  → .final.vm; optional toggle also runs Leg 4 (snapshot plugin).
+  5. Preview   — render the .final.vm against a live tenant quote/policy (ad-hoc
+                 render) and pop the PDF open. Renders against the ALREADY-deployed
+                 SnapshotPlugin; needs .env.ai-documents creds at the repo root.
 """
 
 from __future__ import annotations
@@ -54,6 +57,15 @@ from velocity_converter.models import (  # noqa: E402
     ContractError,
     PathRegistry,
     validate_contract,
+)
+from velocity_converter.render_preview import (  # noqa: E402
+    ENV_PREFIX,
+    REFERENCE_TYPES,
+    RenderPreviewError,
+    load_env,
+    render_template,
+    require_settings,
+    reveal_file,
 )
 from velocity_converter.socotra_config_fingerprint import (  # noqa: E402
     compute_source_config_sha256,
@@ -168,6 +180,9 @@ def form_status(form_dir: Path) -> dict:
         "plugin": bool(plugin),
         "unfilled": unfilled,
         "formStale": form_stale,
+        # Reference type baked into the stem suffix (e.g. Foo(quote) → quote),
+        # used as the default for the live render preview (Stage 5).
+        "renderType": _scope_from_stem(stem),
     }
 
 
@@ -646,6 +661,115 @@ def do_plugin(stem: str) -> dict:
     return r4
 
 
+def _scope_from_stem(stem: str) -> str | None:
+    """Reference type baked into the stem suffix, e.g. ``Foo(quote)`` → ``quote``.
+
+    Returns None when the suffix is absent or not a renderable reference type.
+    """
+    m = re.search(r"\(([^)]+)\)\s*$", stem)
+    scope = m.group(1).lower() if m else None
+    return scope if scope in REFERENCE_TYPES else None
+
+
+def preview_env() -> dict:
+    """Live-render readiness for the UI: are creds present + which locators known.
+
+    Cheap (reads the small .env.ai-documents once). The UI uses ``configured`` to
+    enable/disable the Stage-5 Render button and ``locators`` to pre-fill the
+    per-reference-type locator field.
+    """
+    env = load_env(REPO_ROOT)
+    configured = all(env.get(f"{ENV_PREFIX}{n}") for n in ("API_URL", "TENANT_LOCATOR", "PAT"))
+    tenant = env.get(f"{ENV_PREFIX}TENANT_LOCATOR") or ""
+    locators = {
+        t: env[f"{ENV_PREFIX}REFERENCE_{t.upper()}"]
+        for t in REFERENCE_TYPES
+        if env.get(f"{ENV_PREFIX}REFERENCE_{t.upper()}")
+    }
+    return {
+        "configured": bool(configured),
+        "tenant": (tenant[:8] + "…") if tenant else None,
+        "locators": locators,
+    }
+
+
+def do_render_preview(stem: str, reference_type: str = "", reference_locator: str = "") -> dict:
+    """Stage 5: render ``<stem>.final.vm`` against the live tenant (ad-hoc render).
+
+    Renders against the ALREADY-deployed DocumentDataSnapshotPlugin — there is no
+    deploy step here. Writes the rendered PDF/HTML next to the template and pops it
+    open in the OS viewer (mirrors ``render_preview --open``). The reference type
+    defaults to the one baked into the stem; the locator defaults to
+    ``AI_DOCUMENTS_REFERENCE_<TYPE>`` when the caller leaves it blank.
+    """
+    form_dir = OUTPUT_DIR / stem
+    template = form_dir / f"{stem}.final.vm"
+    if not template.exists():
+        return {"ok": False, "error": f"{stem}.final.vm not found — run Generate first."}
+
+    env = load_env(REPO_ROOT)
+    try:
+        api_url, tenant_locator, token = require_settings(env)
+    except RenderPreviewError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    ref_type = (reference_type or _scope_from_stem(stem) or "").lower()
+    if ref_type not in REFERENCE_TYPES:
+        return {
+            "ok": False,
+            "error": (
+                f"Reference type must be one of {', '.join(REFERENCE_TYPES)} — none is "
+                f"baked into the stem (rename like Foo(quote)) so pass one explicitly."
+            ),
+        }
+    locator = (reference_locator or "").strip() or env.get(
+        f"{ENV_PREFIX}REFERENCE_{ref_type.upper()}", ""
+    )
+    if not locator:
+        return {
+            "ok": False,
+            "error": (
+                f"No {ref_type} locator — enter one in the field, or set "
+                f"{ENV_PREFIX}REFERENCE_{ref_type.upper()} in .env.ai-documents."
+            ),
+        }
+
+    try:
+        rendered, content_type = render_template(
+            api_url=api_url,
+            tenant_locator=tenant_locator,
+            token=token,
+            template_text=template.read_text(encoding="utf-8"),
+            reference_type=ref_type,
+            reference_locator=locator,
+            product_name=env.get(f"{ENV_PREFIX}PRODUCT_NAME"),
+        )
+    except RenderPreviewError as exc:
+        msg = str(exc)
+        if exc.body:
+            msg += "\n" + exc.body[:800]
+        return {"ok": False, "error": msg}
+
+    # The render endpoint returns the PDF with an empty Content-Type header — sniff
+    # the magic bytes rather than trusting the header (same as the CLI).
+    is_pdf = rendered[:5] == b"%PDF-" or "pdf" in (content_type or "").lower()
+    if not content_type and is_pdf:
+        content_type = "application/pdf (sniffed)"
+    out_path = form_dir / f"{stem}.preview.{'pdf' if is_pdf else 'html'}"
+    out_path.write_bytes(rendered)
+    opened = reveal_file(out_path)  # the --open beat: pop it into the OS viewer
+    return {
+        "ok": True,
+        "out": _rel(out_path),
+        "size": len(rendered),
+        "contentType": content_type or "unknown type",
+        "referenceType": ref_type,
+        "referenceLocator": locator,
+        "opened": opened,
+        "form": form_status(form_dir),
+    }
+
+
 def do_open(rel_path: str) -> dict:
     target = (REPO_ROOT / rel_path).resolve()
     if not str(target).startswith(str(REPO_ROOT)) or not target.exists():
@@ -686,7 +810,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
         elif path == "/api/forms":
-            self._json({"ok": True, "forms": list_forms()})
+            self._json({"ok": True, "forms": list_forms(), "preview": preview_env()})
         elif path == "/api/samples":
             self._json({"ok": True, "samples": list_samples()})
         elif path == "/api/file":
@@ -716,6 +840,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(do_generate(payload.get("stem", ""), bool(payload.get("plugin"))))
             elif path == "/api/plugin":
                 self._json(do_plugin(payload.get("stem", "")))
+            elif path == "/api/render-preview":
+                self._json(do_render_preview(
+                    payload.get("stem", ""),
+                    payload.get("referenceType", ""),
+                    payload.get("referenceLocator", ""),
+                ))
             elif path == "/api/parse-form":
                 self._json(parse_variants(payload.get("stem", "")))
             elif path == "/api/reset":
@@ -1050,6 +1180,21 @@ PAGE = r"""<!doctype html>
   .chk { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-dim); cursor: pointer; }
   .chk input { accent-color: var(--chartreuse); width: 15px; height: 15px; }
 
+  /* Stage 5 — live render preview controls (one row under the actions) */
+  .render-row {
+    display: flex; gap: 9px; align-items: center; flex-wrap: wrap;
+    margin-top: 10px; padding-top: 11px; border-top: 1px dashed rgba(127, 147, 180, .25);
+  }
+  .render-label { font-size: 11.5px; letter-spacing: .04em; color: var(--text-dim); }
+  .render-label b { color: var(--teal); }
+  .render-loc {
+    flex: 1; min-width: 150px; font-size: 12px; padding: 7px 10px;
+    border-radius: 9px; border: 1px solid rgba(127, 147, 180, .3);
+    background: var(--navy-0); color: var(--text);
+  }
+  .render-loc:focus { outline: none; border-color: var(--teal); }
+  .render-loc:disabled { opacity: .5; }
+
   .spin {
     width: 15px; height: 15px; border-radius: 50%; flex: none; display: inline-block;
     border: 2px solid rgba(22,224,207,.25); border-top-color: var(--chartreuse);
@@ -1193,6 +1338,10 @@ PAGE = r"""<!doctype html>
     <span class="stage-num">4</span><h2>Generate</h2>
     <p>Parse the conditions, then Legs&nbsp;2&nbsp;+&nbsp;3 write the production <b style="color:var(--teal)">.final.vm</b>. Optionally build the snapshot plugin (Leg&nbsp;4).</p>
   </div>
+  <div class="stage">
+    <span class="stage-num">5</span><h2>Preview</h2>
+    <p>Render the <b style="color:var(--teal)">.final.vm</b> against a live quote/policy on the tenant and pop the PDF open. Needs the plugin <b>deployed</b> + <span class="mono">.env.ai-documents</span> creds.</p>
+  </div>
 </div>
 
 <div class="toolbar" id="toolbar" hidden>
@@ -1266,6 +1415,8 @@ const consoleEl = document.getElementById('console');
 const drop = document.getElementById('drop');
 const fileInput = document.getElementById('fileInput');
 const busy = new Set();
+// Stage-5 live-render readiness (creds + per-reference-type locators), from /api/forms.
+let previewCfg = { configured: false, tenant: null, locators: {} };
 
 function log(msg, cls) {
   const row = document.createElement('div');
@@ -1314,8 +1465,11 @@ function pipelinePills(f) {
     : (f.pathReview ? 'next' : 'pending');
   const ingestState = f.ingested ? (f.pathsStale ? 'stale' : 'done')
     : ((f.pathReview && f.pathUnfilled === 0) ? 'next' : 'pending');
+  // Only unfilled conditions in an up-to-date registry are a true "to fill" state;
+  // a filled-but-unparsed CSV is "next" (Generate will parse it), not a blank.
+  const condsBlocking = f.registry && !f.formStale && f.unfilled > 0;
   const conditionsState = !f.ingested ? 'pending'
-    : f.unfilled > 0 ? 'warn'
+    : condsBlocking ? 'warn'
     : f.formStale ? 'stale'
     : f.registry ? 'done'
     : (f.conditionalForm ? 'next' : 'pending');
@@ -1328,7 +1482,7 @@ function pipelinePills(f) {
     stepPill('Intake', intakeDone ? 'done' : 'next'),
     stepPill(f.pathUnfilled > 0 ? `Paths (${f.pathUnfilled} to fill)` : 'Paths', pathsState),
     stepPill('Ingest', ingestState),
-    stepPill(f.unfilled > 0 ? `Conditions (${f.unfilled} to fill)` : 'Conditions', conditionsState),
+    stepPill(condsBlocking ? `Conditions (${f.unfilled} to fill)` : 'Conditions', conditionsState),
     stepPill('Template', templateState),
     stepPill('Plugin', pluginState),
   ].join('<span class="pill-sep" aria-hidden="true">›</span>');
@@ -1347,7 +1501,7 @@ function nextStep(f) {
     return { text: 'Resolve paths & ingest (Leg -1 apply → Leg 0)', severity: 'next' };
   if (f.pathsStale)
     return { text: 'Path review changed — re-run “Resolve & ingest”', severity: 'hot' };
-  if (f.unfilled > 0)
+  if (f.registry && !f.formStale && f.unfilled > 0)
     return {
       text: `Fill ${f.unfilled} condition${f.unfilled > 1 ? 's' : ''} in ${f.stem}.variants.csv`,
       severity: 'warn',
@@ -1397,13 +1551,39 @@ function render(forms) {
     }
     let generate = '';
     if (f.ingested) {
-      const blocked = f.unfilled > 0;
+      // Only genuinely-unfilled conditions in an up-to-date registry block Generate.
+      // A filled-but-unparsed (or stale) CSV must NOT block — Generate's pre-flight
+      // parses it first, and a real blank fails the parse with a clear message.
+      const blocked = f.registry && !f.formStale && f.unfilled > 0;
       const blockTitle = blocked ? ` title="Fill ${f.unfilled} condition${f.unfilled > 1 ? 's' : ''} first"` : '';
       generate = `<button class="btn-primary" data-act="generate" ${isBusy || blocked ? 'disabled' : ''}${blockTitle}>
           ${isBusy ? '<span class="spin"></span>Running…' : (f.formStale && !blocked ? 'Re-parse &amp; generate' : (f.template ? 'Regenerate template' : 'Generate template'))}
         </button>
         <label class="chk"><input type="checkbox" data-chk="plugin" ${plugChecked ? 'checked' : ''}> + plugin (Leg 4)</label>
         <button class="btn-ghost" data-act="plugin" ${isBusy || blocked ? 'disabled' : ''}${blockTitle}>Plugin only</button>`;
+    }
+
+    // Stage 5 — live render preview (only once a .final.vm exists).
+    let renderRow = '';
+    if (f.template) {
+      const rtype = f.renderType || '';
+      const loc = (previewCfg.locators && previewCfg.locators[rtype]) || '';
+      let disabled = isBusy, title = '';
+      if (!previewCfg.configured) {
+        disabled = true;
+        title = ' title="Set up .env.ai-documents (creds) at the repo root to enable the live render"';
+      } else if (!rtype) {
+        disabled = true;
+        title = ' title="No reference type in the stem — rename the document like Foo(quote) to render"';
+      }
+      const locLabel = rtype ? `Preview against <b>${esc(rtype)}</b>` : 'Preview <i>(no reference type in stem)</i>';
+      renderRow = `<div class="render-row">
+          <span class="render-label">${locLabel}</span>
+          <input class="render-loc mono" data-loc type="text" spellcheck="false"
+                 placeholder="${rtype ? esc(rtype) + ' locator' + (loc ? '' : ' (or set in .env)') : 'reference locator'}"
+                 value="${esc(loc)}" ${previewCfg.configured && rtype ? '' : 'disabled'}>
+          <button class="btn-ghost" data-act="render" ${disabled ? 'disabled' : ''}${title}>Render preview</button>
+        </div>`;
     }
 
     card.innerHTML = `
@@ -1418,7 +1598,8 @@ function render(forms) {
         <span style="flex:1"></span>
         <button class="btn-ghost iconbtn" data-act="folder" title="Open output folder">📂</button>
         <button class="btn-ghost iconbtn" data-act="reset" title="Delete generated outputs + fill files for this form">🗑</button>
-      </div>`;
+      </div>
+      ${renderRow}`;
     board.appendChild(card);
   }
 }
@@ -1428,16 +1609,18 @@ let formStems = [];
 async function refresh() {
   const data = await api('/api/forms');
   if (!data.ok) return;
+  previewCfg = data.preview || previewCfg;
   formStems = data.forms.map(f => f.stem);
   const toolbar = document.getElementById('toolbar');
   toolbar.hidden = data.forms.length < 2;
   if (!toolbar.hidden) {
-    const unfilled = data.forms.reduce((n, f) => n + (f.unfilled || 0) + (f.pathUnfilled || 0), 0);
+    const unfilled = data.forms.reduce((n, f) =>
+      n + ((f.registry && !f.formStale ? f.unfilled : 0) || 0) + (f.pathUnfilled || 0), 0);
     document.getElementById('toolbar-label').innerHTML =
       `${data.forms.length} forms` +
       (unfilled ? ` · <span style="color:var(--danger)">${unfilled} blanks still to fill</span>` : ' · all blanks filled');
   }
-  const snap = JSON.stringify(data.forms) + '|' + [...busy].join();
+  const snap = JSON.stringify(data.forms) + '|' + [...busy].join() + '|' + JSON.stringify(previewCfg);
   if (snap === lastSnapshot) return;
   lastSnapshot = snap;
   render(data.forms);
@@ -1665,6 +1848,22 @@ async function generateForm(stem, withPlugin) {
   return r.ok;
 }
 
+async function renderForm(stem, locator) {
+  log(`<b>${esc(stem)}</b> — rendering preview against the live tenant${locator ? ` (${esc(locator)})` : ''}…`);
+  const r = await api('/api/render-preview', {
+    method: 'POST',
+    body: JSON.stringify({ stem, referenceLocator: locator }),
+  });
+  if (r.ok) {
+    log(`✓ Rendered <b>${esc(r.referenceType)}=${esc(r.referenceLocator)}</b> → `
+      + `<span class="mono">${esc(r.out)}</span> (${kb(r.size)} · ${esc(r.contentType)})`
+      + (r.opened ? ' · opened in viewer' : ' · open it from the card'), 'ok');
+  } else {
+    log(esc((r.error || 'Render preview failed').slice(0, 800)), 'err');
+  }
+  return r.ok;
+}
+
 board.addEventListener('dblclick', (e) => {
   const fileEl = e.target.closest('.file');
   if (fileEl) openNative(fileEl.dataset.path);
@@ -1711,6 +1910,9 @@ board.addEventListener('click', async (e) => {
     } else {
       log(r.error || (r.stderr || 'Leg 4 failed').slice(0, 600), 'err');
     }
+  } else if (act === 'render') {
+    const locEl = card.querySelector('[data-loc]');
+    await renderForm(stem, locEl ? locEl.value.trim() : '');
   }
   busy.delete(stem);
   await refresh();
