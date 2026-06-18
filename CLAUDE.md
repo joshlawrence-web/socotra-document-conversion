@@ -486,8 +486,14 @@ an inline `documentConfig` JSON (self-sufficient — no deployed document config
 python3 -m velocity_converter.render_preview \
   --template workspace/output/<stem>/<stem>.final.vm \
   --reference-type quote --reference-locator <locator> \
-  --out workspace/output/<stem>/<stem>.preview.pdf
+  --out workspace/output/<stem>/<stem>.preview.pdf --open
 ```
+
+Add `--open` to pop the saved PDF straight into the OS viewer (a one-click "test
+render" for demos), or `--reveal` to select it in Finder/Explorer. Both require
+`--out`. The call prints a short progress trace (endpoint, response size) to stderr
+so you can watch the API round-trip. It renders against the **already-deployed**
+plugin — there is no deploy step here.
 
 Requires:
 1. The generated `DocumentDataSnapshotPlugin` **deployed to the tenant first** — the
