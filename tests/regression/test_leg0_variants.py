@@ -99,6 +99,38 @@ class TestVariantsCsvStub(unittest.TestCase):
             write_variants_csv([], "Demo", out)
             self.assertFalse(out.exists())
 
+    def test_stub_when_uses_present_not_null(self):
+        # Gap 3: pre-filled `when` examples must be valid DSL — never `!= null`.
+        blocks = extract_conditionals("<p>[[literal]]</p>")
+        with TemporaryDirectory() as d:
+            out = Path(d) / "Demo.variants.csv"
+            write_variants_csv(blocks, "Demo", out)
+            text = out.read_text()
+        self.assertNotIn("!= null", text)
+        self.assertIn("present", text)
+
+    def test_does_not_clobber_edited_csv(self):
+        # Gap 2: a re-ingest must not overwrite a customer's filled CSV.
+        blocks = extract_conditionals("<p>[[literal]]</p>")
+        with TemporaryDirectory() as d:
+            out = Path(d) / "Demo.variants.csv"
+            write_variants_csv(blocks, "Demo", out)
+            edited = out.read_text().replace("quote.quoteNumber present", 'state == "CA"')
+            out.write_text(edited, encoding="utf-8")
+            # Re-ingest (same blocks) must keep the edited content, not regenerate.
+            write_variants_csv(blocks, "Demo", out)
+            self.assertEqual(out.read_text(), edited)
+
+    def test_rewrites_identical_csv(self):
+        # An unedited CSV is a harmless no-op rewrite (content identical).
+        blocks = extract_conditionals("<p>[[literal]]</p>")
+        with TemporaryDirectory() as d:
+            out = Path(d) / "Demo.variants.csv"
+            write_variants_csv(blocks, "Demo", out)
+            first = out.read_text()
+            write_variants_csv(blocks, "Demo", out)
+            self.assertEqual(out.read_text(), first)
+
 
 class TestParseVariantsCsvMerge(unittest.TestCase):
     GOOD_CSV = (

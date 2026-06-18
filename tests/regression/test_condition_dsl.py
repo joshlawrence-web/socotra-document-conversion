@@ -100,6 +100,14 @@ class TestParse(unittest.TestCase):
         with self.assertRaises(ConditionError):
             parse_condition("policy.data.state in []")
 
+    def test_null_literal_gives_present_absent_hint(self):
+        # Gap 3: `!= null` is not DSL — the error must point at present/absent.
+        for cond in ("quote.quoteNumber != null", "policy.data.state == null"):
+            with self.assertRaises(ConditionError) as cm:
+                parse_condition(cond)
+            self.assertIn("present", str(cm.exception))
+            self.assertIn("absent", str(cm.exception))
+
 
 class TestValidate(unittest.TestCase):
     def test_valid_policy_condition(self):
@@ -129,6 +137,19 @@ class TestValidate(unittest.TestCase):
     def test_quote_condition_valid_in_quote_scope(self):
         ast = parse_condition('quote.quoteNumber present')
         self.assertEqual(validate_condition(ast, REGISTRY, "quote"), [])
+
+    def test_quote_data_custom_field_valid_in_quote_scope(self):
+        # Gap 4: quote custom fields (stored as policy_data) are addressable as
+        # quote.data.<f> in a quote-scoped block via the full accessor.
+        ast = parse_condition('quote.data.premium > 5')
+        self.assertEqual(validate_condition(ast, REGISTRY, "quote"), [])
+
+    def test_quote_data_alias_rejected_in_policy_scope(self):
+        # The quote.* alias is usable only at quote scope; a policy doc keeps
+        # using policy.data.<f> (root check rejects the quote root first).
+        ast = parse_condition('quote.data.premium > 5')
+        errs = validate_condition(ast, REGISTRY, "policy")
+        self.assertTrue(any("policy-scoped" in e or "not valid in a policy" in e for e in errs))
 
 
 class TestCodegen(unittest.TestCase):

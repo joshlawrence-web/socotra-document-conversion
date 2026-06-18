@@ -237,6 +237,21 @@ def match_leaf(leaf: str, loop_name: str | None, candidates: list[dict]) -> dict
             seen_acc.add(c["accessor"]); similar_accs.append(c["accessor"])
             ranked.append(_alt(c, f"name-similar to display `{c['display']}` [{c['category']}]"))
 
+    # Full-accessor pass-through (fallback): the author may have written the
+    # complete accessor (`{account.data.firstName}`) instead of a bare leaf. A
+    # token that exactly matches a known registry accessor is valid — resolve it
+    # to itself rather than reporting NO MATCH. The accessor encodes its own
+    # scope, so loop membership is not consulted (matched across all candidates).
+    if not ranked:
+        full = [c for c in candidates if c["accessor"] == leaf]
+        if full:
+            full.sort(key=lambda c: c["source"] == "datafetcher")  # prefer non-DF
+            best = full[0]
+            return {"status": "resolved", "match": "full accessor", "chosen": leaf,
+                    "alternatives": [_alt(best, f"exact registry accessor `{leaf}` "
+                                          f"[{best['category']}]")],
+                    "scope_note": scope_note}
+
     if not ranked:
         return {"status": "unmatched", "match": "", "chosen": "",
                 "alternatives": [], "scope_note": scope_note}

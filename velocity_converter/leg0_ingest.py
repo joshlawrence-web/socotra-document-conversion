@@ -885,14 +885,29 @@ def write_variants_csv(blocks: list[dict], stem: str, output_path: Path) -> None
     for b in blocks:
         key = block_key(b)
         if b.get("render") == "template":
-            w.writerow([key, 'policy.data.field != null', ""])
+            w.writerow([key, 'policy.data.field present', ""])
         elif b.get("variant"):
             w.writerow([key, 'state == "CA"', "Example text for California — edit me."])
             w.writerow([key, "", "Default text used when no condition matches — edit me."])
         else:  # binary block folds into a one-real-row + empty-default variant.
-            w.writerow([key, 'quote.quoteNumber != null', _tbd_to_braces(b.get("source_text", ""))])
+            w.writerow([key, 'quote.quoteNumber present', _tbd_to_braces(b.get("source_text", ""))])
             w.writerow([key, "", ""])
-    output_path.write_text("\n".join(header) + "\n" + buf.getvalue(), encoding="utf-8")
+    content = "\n".join(header) + "\n" + buf.getvalue()
+
+    # Clobber guard (human-fill friction Gap 2): a full re-ingest must not destroy
+    # a customer's filled conditions. If the file already exists and differs from
+    # the freshly-generated stub, it has been hand-edited — skip the write and
+    # warn rather than overwrite. (Identical content is a harmless no-op rewrite.)
+    if output_path.exists():
+        existing = output_path.read_text(encoding="utf-8")
+        if existing != content:
+            print(
+                f"WARN: {output_path.name} already exists with edits — keeping it, "
+                "NOT overwriting (delete it first to regenerate the blank stub).",
+                file=sys.stderr,
+            )
+            return
+    output_path.write_text(content, encoding="utf-8")
 
 
 # Fields persisted in the machine sidecar (everything the 3-column CSV can't carry).

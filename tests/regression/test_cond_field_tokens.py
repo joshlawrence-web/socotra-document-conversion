@@ -365,7 +365,7 @@ class TestLeg0FormRoundTrip(unittest.TestCase):
             # Fill the binary block's `when` (first data row). Use the DSL's
             # present/absent for null checks (not != null).
             text = text.replace(
-                'cond1,quote.quoteNumber != null,',
+                'cond1,quote.quoteNumber present,',
                 'cond1,policy.data.discountAmount present,',
             )
             csv_path.write_text(text, encoding="utf-8")
