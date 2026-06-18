@@ -42,6 +42,36 @@ class TestCandidateIndex(unittest.TestCase):
         self.assertEqual(itc[0]["exposure"], "Item")
         self.assertEqual(itc[0]["accessor"], "item.data.itemTypeCode")
 
+    def test_quote_only_doc_suppresses_policy_form(self):
+        # On a quote-only doc the policy doesn't exist yet, so a policy custom
+        # field offers ONLY the quote accessor — no policy.data.* duplicate that
+        # would manufacture a false ambiguity.
+        accs = {
+            c["accessor"]
+            for c in build_candidate_index(_reg(), roots=["quote"])
+            if c["leaf"] == "discounttype"
+        }
+        self.assertIn("quote.data.discountType", accs)
+        self.assertNotIn("policy.data.discountType", accs)
+
+    def test_quote_and_segment_doc_keeps_both_forms(self):
+        # When a policy-side (segment) root is also declared, both accessors are
+        # genuinely reachable — keep them (the human picks).
+        accs = {
+            c["accessor"]
+            for c in build_candidate_index(_reg(), roots=["quote", "segment"])
+            if c["leaf"] == "discounttype"
+        }
+        self.assertIn("quote.data.discountType", accs)
+        self.assertIn("policy.data.discountType", accs)
+
+    def test_quote_only_discounttype_resolves(self):
+        # End-to-end: the leaf that used to be flagged AMBIGUOUS now resolves.
+        cands = build_candidate_index(_reg(), roots=["quote"])
+        r = match_leaf("discountType", None, cands)
+        self.assertEqual(r["status"], "resolved")
+        self.assertEqual(r["chosen"], "quote.data.discountType")
+
 
 class TestMatchLeaf(unittest.TestCase):
     def setUp(self):
