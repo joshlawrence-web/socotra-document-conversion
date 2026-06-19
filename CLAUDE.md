@@ -11,7 +11,7 @@ without redeploying the entire product config JAR.
 
 | Leg | Script | Input → Output |
 |-----|--------|----------------|
-| -1 | `legminus1_resolve_paths.py` | doc with bare `{leaf}` → `.path-review.md`, `.path-map.yaml`, `.path-changes.md`, `.resolved.<ext>` |
+| -1 | `legminus1_resolve_paths.py` | doc with bare `{leaf}` → `.path-review.csv` (customer-fill) + canonical `.path-review.md`, `.path-map.yaml`, `.path-changes.md`, `.resolved.<ext>` |
 | 0 | `leg0_ingest.py` | `.docx`/`.pdf` → `.raw.html`, `.variants.csv` (+ `.conditional-blocks.yaml` sidecar) |
 | 1 | `convert.py` | `.html` → `.mapping.yaml` |
 | 2 | `leg2_fill_mapping.py` | `.mapping.yaml` → `.mapping.yaml` (enriched), `.review.md` |
@@ -41,9 +41,12 @@ workspace/
                      <stem>.variants.csv          (fill the `when` for every
                                                     conditional block — binary,
                                                     template, and N-way variant)
-                     <stem>.path-review.md        (Leg -1: edit the Final: lines)
+                     <stem>.path-review.csv       (Leg -1: fill the `final`
+                                                    accessor column; suggested
+                                                    column lists candidates)
   output/<stem>/   per-stem machine artifacts (.mapping.yaml, .final.vm, reports,
-                   .conditional-blocks.yaml sidecar, .java, …)
+                   .conditional-blocks.yaml sidecar, .java, the canonical
+                   .path-review.md, …)
 ```
 
 The legs always pass the per-stem **machine** dir (`workspace/output/<stem>`) as
@@ -65,12 +68,13 @@ python3 -m velocity_converter.agent --yes "RUN_PIPELINE intake input=<path.docx|
 ```
 
 Hand-fill files (both land in `workspace/action-needed/`):
-- `<stem>.path-review.md` — confirm/fix each `Final:` accessor (Leg -1)
+- `<stem>.path-review.csv` — confirm/fix each accessor in the `final` column; the
+  `suggested` column lists the registry candidates (Leg -1)
 - `<stem>.variants.csv` — the single conditional fill file: one `when` per binary/
   template block, plus the rows for any N-way `[[$token]]` block (Leg 0)
 
-…plus the machine map/audit (`<stem>.path-map.yaml`, `<stem>.path-changes.md`) in
-`workspace/output/<stem>/`. This collapses the two previously-separate human touchpoints
+…plus the canonical `<stem>.path-review.md` and the machine map/audit
+(`<stem>.path-map.yaml`, `<stem>.path-changes.md`) in `workspace/output/<stem>/`. This collapses the two previously-separate human touchpoints
 (path-review after Leg -1, then the conditional form after Leg 0) into a single up-front
 handoff. The scan runs **without** the path-map (path-review isn't filled yet, and the
 CSV shows the author's bare `{field}` syntax regardless — harmless).
@@ -107,17 +111,22 @@ paths against the rendering root downstream).
 python3 -m velocity_converter.agent --yes "RUN_PIPELINE legminus1 input=<path.docx|.pdf|.html> registry=registry/path-registry.yaml output=workspace/output"
 ```
 
-**Step 2 — the human edits** `workspace/action-needed/<stem>.path-review.md`: each
-`{leaf}` is a block with a suggested accessor, ranked alternatives, and an editable
-`Final:` line. Ambiguous leaves (multiple registry candidates in the same scope,
-e.g. `{premium}` across coverages) and unmatched leaves have an empty `Final:` for
-the human to fill.
+**Step 2 — the human fills** `workspace/action-needed/<stem>.path-review.csv`: three
+columns — `field` (the bare `{leaf}`), `suggested` (registry candidate accessors,
+one per line in the cell, top pick first), and `final` (the single accessor to use,
+pre-filled with the top pick). Ambiguous leaves (multiple registry candidates in the
+same scope, e.g. `{premium}` across coverages) list every candidate in `suggested`;
+unmatched leaves have a blank `final` for the human to type. The canonical
+`<stem>.path-review.md` (in `output/<stem>/`) is the system record — the CSV's `final`
+column is folded onto its `Final:` lines on apply.
 
-**Step 3 — apply** (parse the corrected review → final map + before/after audit +
-resolved doc copy):
+**Step 3 — apply** (fold the filled CSV onto the canonical review → final map +
+before/after audit + resolved doc copy):
 ```
-python3 -m velocity_converter.agent --yes "RUN_PIPELINE legminus1_apply review=workspace/action-needed/<stem>.path-review.md"
+python3 -m velocity_converter.agent --yes "RUN_PIPELINE legminus1_apply review=workspace/action-needed/<stem>.path-review.csv"
 ```
+*(`review=` also accepts the canonical `<stem>.path-review.md` directly, for an
+operator editing the `Final:` lines in place instead of the CSV.)*
 
 **Then feed Leg 0** — pass the validated map; the source doc is never modified:
 ```
@@ -133,8 +142,10 @@ policy/quote scope. A leaf used both inside and outside a loop is treated as
 document-level (mirrors Leg 0's loop-field rule).
 
 **Artifacts:**
-- `workspace/action-needed/<stem>.path-review.md` — **editable (human-fill)**; one
-  block per leaf, edit the `Final:` line
+- `workspace/action-needed/<stem>.path-review.csv` — **editable (human-fill)**; three
+  columns (`field` / `suggested` / `final`), fill the `final` accessor
+- `workspace/output/<stem>/<stem>.path-review.md` — canonical system copy (one block per
+  leaf); the CSV's `final` column is folded onto its `Final:` lines on apply
 - `workspace/output/<stem>/<stem>.path-map.yaml` — machine map (`leaf → chosen accessor`) consumed by Leg 0
 - `workspace/output/<stem>/<stem>.path-changes.md` — before/after audit, one row per field, with
   suggested-vs-human-override provenance (the traceability anchor)
@@ -160,7 +171,7 @@ python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg0 input=<path.docx|pa
 **Leg 0 scan** (front-load the customer handoff — emit ONLY the human-fill file,
 the single `<stem>.variants.csv` covering every conditional block, with **no** machine
 artifacts). Use this to hand the customer their CSV to fill while the full ingest is
-deferred; pair it with Leg -1 *suggest* to deliver `path-review.md` + `variants.csv` as
+deferred; pair it with Leg -1 *suggest* to deliver `path-review.csv` + `variants.csv` as
 one up-front package:
 ```
 python3 -m velocity_converter.agent --yes "RUN_PIPELINE leg0_scan input=<path.docx|path.pdf> output=workspace/output"

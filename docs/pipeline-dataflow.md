@@ -35,11 +35,11 @@ sequenceDiagram
     Priya->>Sam: Hand over the .docx
 
     Sam->>Pipe: RUN_PIPELINE intake<br/>(Leg -1 suggest + Leg 0 scan)
-    Pipe-->>Sam: 2 fill-in files (path-review.md + variants.csv)
+    Pipe-->>Sam: 2 fill-in files (path-review.csv + variants.csv)
 
     Note over Priya,Sam: ② ANSWER THE FORMS (no code)
     Sam->>Priya: "Here are your 2 fill-in files"
-    Priya->>Priya: path-review.md — confirm each {field} → real path
+    Priya->>Priya: path-review.csv — confirm each {field} → real path (final column)
     Priya->>Priya: variants.csv — write the "when" for each block,<br/>+ version rows for each [[$token]]
     Priya->>Sam: Return both files, filled
 
@@ -66,7 +66,7 @@ flowchart LR
     B["📨 Hand the .docx over"]:::do
     W1["⏳ pipeline runs intake"]:::wait
     C["📋 ② Get 2 fill-in files back"]:::get
-    D["✅ Confirm field names<br/>path-review.md"]:::do
+    D["✅ Confirm field names<br/>path-review.csv"]:::do
     E["✅ Fill conditions & versions<br/>variants.csv"]:::do
     F["📨 Send the 2 files back"]:::do
     W2["⏳ pipeline finalises + deploy"]:::wait
@@ -85,7 +85,7 @@ flowchart LR
 | `[[$token]]` | pick one of several versions (fill them in the CSV) |
 
 **The two forms the author fills** (both land in `workspace/action-needed/`):
-- `<stem>.path-review.md` — one block per `{field}`; confirm or fix the suggested accessor on the `Final:` line.
+- `<stem>.path-review.csv` — one row per `{field}` (columns `field` / `suggested` / `final`); confirm or fix the accessor in the `final` column. The canonical `<stem>.path-review.md` (in `output/<stem>/`) is the system copy the CSV folds onto.
 - `<stem>.variants.csv` — one file for **all** conditional text: write the `when` for each `[[…]]` block (its text is pre-filled), and the version rows for each `[[$token]]`.
 
 > The author only ever touches the Word doc and these two files. Everything in the next two
@@ -113,7 +113,7 @@ flowchart LR
   REGISTRY[("registry/\npath-registry.yaml\n+ sdk-schema-index.yaml")]
 
   %% ── Leg -1 artifacts (optional pre-stage) ───────────
-  PREVIEW[/".path-review.md\nedit Final: lines"/]
+  PREVIEW[/".path-review.csv\nfill the final column"/]
   PATHMAP[".path-map.yaml\nleaf → accessor"]
   PATHCHANGES[/".path-changes.md\nbefore/after audit"/]
   RESOLVED[".resolved doc\naccessors baked in"]
@@ -226,7 +226,7 @@ flowchart TD
   L0["ROUTE B — Leg 0 (full ingest)\ndoc → HTML + mapping + .variants.csv"]:::machine
 
   %% ── The two required hand-fill files (shared by both routes) ──
-  H1["🙋 .path-review.md\nconfirm / fix each Final: accessor\n(only if author wrote bare {leaf})"]:::human
+  H1["🙋 .path-review.csv\nconfirm / fix each final accessor\n(only if author wrote bare {leaf})"]:::human
   H2["🙋 .variants.csv\nALL conditional text\n(one file, every block kind)"]:::human
 
   L1["Leg 1\nconvert HTML mockup → mapping"]:::machine
@@ -279,15 +279,15 @@ flowchart TD
 
 The two **required** human moments are filling the variants CSV (`.variants.csv` — the
 single file for ALL conditional text) and — only when the author wrote bare leaves —
-confirming accessors in `.path-review.md`. Everything else is automated or advisory. There
+confirming accessors in `.path-review.csv`. Everything else is automated or advisory. There
 are **two routes to produce those same two files**:
 
 - **Route A — upfront bundle (`RUN_PIPELINE intake`, or `leg0_scan` on its own).** One
   command runs Leg -1 *suggest* + Leg 0 `--scan` and emits **both** hand-fill files
-  (`.path-review.md`, `.variants.csv`) **at once**, before any machine artifacts. The
+  (`.path-review.csv`, `.variants.csv`) **at once**, before any machine artifacts. The
   customer fills both in a single handoff; the full ingest is deferred. This collapses what
   would otherwise be two separate interruptions into one moment.
-- **Route B — per-leg.** Run Leg -1, fill `.path-review.md`, *then* run the full Leg 0
+- **Route B — per-leg.** Run Leg -1, fill `.path-review.csv`, *then* run the full Leg 0
   ingest, fill `.variants.csv`. Each file arrives at its own stage — two interruptions, but
   no need to know about `intake`.
 
@@ -302,9 +302,10 @@ into Leg 0, and `--parse-variants-csv` turns the filled CSV into the conditional
 
 When the author wrote bare leaves (`{firstName}`) instead of full accessors, Leg -1
 (`legminus1_resolve_paths.py`) runs *before* Leg 0. **Suggest mode** reads the doc
-(`.docx`/`.pdf`/`.html`) and emits `.path-review.md` — one block per leaf with a suggested
-accessor and editable `Final:` line — plus a machine `.path-map.yaml`. A human edits the
-`Final:` lines; **apply mode** (`legminus1_apply`) parses the corrected review into the final
+(`.docx`/`.pdf`/`.html`) and emits the customer-fill `.path-review.csv` (columns `field` /
+`suggested` / `final`) alongside the canonical `.path-review.md` and a machine
+`.path-map.yaml`. A human fills the `final` column; **apply mode** (`legminus1_apply`) folds
+the CSV's `final` column onto the canonical `.md`, then parses it into the final
 `.path-map.yaml`, a `.path-changes.md` before/after audit, and a `.resolved` doc copy with
 accessors baked in. Leg 0 then runs either with `--path-map <…>.path-map.yaml` (source doc
 unchanged) or directly on the `.resolved` doc. Leg -1 is **registry-only** — paths are
@@ -334,7 +335,7 @@ document's *markup* (the `[[…]]` blocks and `[Name]` loops), not on the regist
 resolution, or the mapping. Scan mode runs the same document parse but writes *only* the
 CSV (plus the sidecar), deferring `.raw.html`/`.annotated.html`/`.mapping.yaml` to a later
 full ingest. This lets you hand the customer their CSV up front — ideally bundled with
-Leg -1's `.path-review.md` so both hand-fill files arrive in one package instead of two
+Leg -1's `.path-review.csv` so both hand-fill files arrive in one package instead of two
 interruptions. The CSV scan writes is byte-identical to the full ingest's (shared parse);
 the later full ingest re-parses (deterministic, cheap) and re-emits it. Note: scan still
 requires the doc-to-text conversion, so it runs at the *front* of Leg 0, not before it —

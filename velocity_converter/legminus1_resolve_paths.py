@@ -13,16 +13,21 @@ Modes::
         --input <doc.docx|.pdf|.html> --registry registry/path-registry.yaml \
         --output-dir workspace/output
 
-    # 2. Apply — read the human-corrected review → final map + resolved doc
+    # 2. Apply — fold the customer-filled CSV onto the canonical review → map + doc
+    python3 -m velocity_converter.legminus1_resolve_paths \
+        --parse-path-review-csv workspace/action-needed/<stem>.path-review.csv
+
+    # 2b. Apply (operator) — parse the canonical .md directly (CSV not required)
     python3 -m velocity_converter.legminus1_resolve_paths \
         --parse-path-review workspace/output/<stem>/<stem>.path-review.md \
         --output-dir workspace/output/<stem>
 
-Outputs (under ``<output-dir>/<stem>/``):
-    <stem>.path-review.md    — editable: one block per leaf, edit the Final line
-    <stem>.path-map.yaml     — machine map (leaf → chosen accessor) for Leg 0
-    <stem>.path-changes.md   — before/after audit, one row per field
-    <stem>.resolved.<ext>    — (apply mode) doc copy with full accessors baked in
+Outputs:
+    action-needed/<stem>.path-review.csv  — customer-fill: field / suggested / final
+    <output-dir>/<stem>/<stem>.path-review.md   — canonical record (system copy)
+    <output-dir>/<stem>/<stem>.path-map.yaml    — machine map (leaf → accessor) for Leg 0
+    <output-dir>/<stem>/<stem>.path-changes.md  — before/after audit, one row per field
+    <output-dir>/<stem>/<stem>.resolved.<ext>   — (apply) doc copy with full accessors
 
 Matching is **registry-only** — no compiled SDK is consulted, so a "resolved"
 leaf is registry-matched, not JAR-verified. Leg 2 still verifies paths against
@@ -32,6 +37,7 @@ the rendering root downstream.
 from __future__ import annotations
 
 import argparse
+import csv
 import datetime as dt
 import re
 import sys
@@ -167,9 +173,10 @@ def write_path_review(results: list[dict], stem: str, source: str,
         f"<!-- legminus1 input: {input_path.resolve()} -->",
         f"<!-- legminus1 source: {source} -->",
         "",
-        "The author wrote bare `{leaf}` tokens. Each was matched against the path "
-        "registry below. **Edit the `Final:` line** to the accessor you want "
-        "(leave a resolved one as-is), then re-run:",
+        "**System / canonical copy.** The customer fills the simpler "
+        f"`{stem}.path-review.csv` (in `action-needed/`); its `final` column is "
+        "written back onto the `Final:` lines below on apply. You can also edit the "
+        "`Final:` lines here directly and re-run:",
         "",
         f"    python3 -m velocity_converter.legminus1_resolve_paths \\",
         f"        --parse-path-review {out.name} "
@@ -208,6 +215,80 @@ def write_path_review(results: list[dict], stem: str, source: str,
         lines.append(f"Final: {r['chosen']}")
         lines.append("")
     out.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _candidate_accessors(r: dict) -> list[str]:
+    """Accessor candidates for a leaf, top suggestion first, de-duplicated.
+
+    The chosen/suggested accessor leads; the ranked alternatives follow. Used to
+    build the multi-line ``suggested`` cell of the customer CSV.
+    """
+    accs: list[str] = []
+    if r.get("chosen"):
+        accs.append(r["chosen"])
+    for a in r.get("alternatives") or []:
+        acc = a.get("accessor")
+        if acc and acc not in accs:
+            accs.append(acc)
+    return accs
+
+
+def write_path_review_csv(results: list[dict], out: Path) -> None:
+    """Customer-facing view of the review — three columns: ``field`` /
+    ``suggested`` / ``final``.
+
+    ``suggested`` is a multi-line cell (one candidate accessor per line, the top
+    pick first) so Excel stacks the options; ``final`` is the single accessor the
+    customer keeps, pre-filled with the top pick (blank when nothing matched).
+    The ``.path-review.md`` stays the canonical record — on apply the ``final``
+    column is written back onto its ``Final:`` lines.
+    """
+    rows = [["field", "suggested", "final"]]
+    for r in results:
+        cands = _candidate_accessors(r)
+        suggested = "\n".join(cands) if cands else "(no registry match -- type an accessor)"
+        final = cands[0] if cands else ""
+        rows.append([f"{{{r['leaf']}}}", suggested, final])
+    with out.open("w", encoding="utf-8", newline="") as fh:
+        # Default dialect: \r\n row terminator, fields with embedded newlines are
+        # quoted — Excel shows the suggested cell as stacked lines.
+        csv.writer(fh).writerows(rows)
+
+
+def read_path_review_csv(csv_path: Path) -> dict[str, str]:
+    """Parse a customer-filled ``.path-review.csv`` → ``{leaf: final accessor}``.
+
+    ``final`` is meant to be a single accessor; if the customer left several
+    candidate lines in the cell, the first non-empty line wins.
+    """
+    finals: dict[str, str] = {}
+    with csv_path.open(encoding="utf-8-sig", newline="") as fh:
+        for row in csv.DictReader(fh):
+            m = _LEAF_RE.search((row.get("field") or "").strip())
+            if not m:
+                continue
+            raw = (row.get("final") or "").strip()
+            finals[m.group(1)] = next(
+                (ln.strip() for ln in raw.splitlines() if ln.strip()), ""
+            )
+    return finals
+
+
+def _patch_review_finals(md_path: Path, finals: dict[str, str]) -> None:
+    """Write the CSV ``final`` values onto the canonical review's ``Final:``
+    lines, block by block — keeps the ``.md`` the system source of truth."""
+    text = md_path.read_text(encoding="utf-8")
+    cur: str | None = None
+    out_lines: list[str] = []
+    for line in text.split("\n"):
+        hm = re.match(r"##\s+Field:\s*\{[$+*]?([A-Za-z_][\w.]*)\}", line)
+        if hm:
+            cur = hm.group(1)
+        if line.startswith("Final:") and cur in finals:
+            out_lines.append(f"Final: {finals[cur]}")
+        else:
+            out_lines.append(line)
+    md_path.write_text("\n".join(out_lines), encoding="utf-8")
 
 
 def _datafetcher_for(accessor: str, results_alts: list[dict]) -> dict | None:
@@ -321,9 +402,12 @@ def run_suggest(
     stem = input_path.stem
     out_dir = output_dir / stem
     out_dir.mkdir(parents=True, exist_ok=True)
-    # path-review.md is the human-fill artifact → action-needed/; the machine
-    # map + audit stay alongside the rest of the stem's output.
-    review = action_needed_file(out_dir, f"{stem}.path-review.md")
+    # The customer fills the simple .path-review.csv (→ action-needed/); the
+    # canonical .path-review.md and the machine map + audit stay in the stem's
+    # output dir. On apply, the CSV's `final` column is written back onto the
+    # md's `Final:` lines (the md remains the system source of truth).
+    review = out_dir / f"{stem}.path-review.md"
+    review_csv = action_needed_file(out_dir, f"{stem}.path-review.csv")
     pmap = out_dir / f"{stem}.path-map.yaml"
     changes = out_dir / f"{stem}.path-changes.md"
 
@@ -344,28 +428,32 @@ def run_suggest(
                   "(Decision B skip; nothing for the customer to resolve).")
             return 0
         write_path_review(net_new, stem, source, input_path, roots, review)
+        write_path_review_csv(net_new, review_csv)
         n_res = sum(1 for r in net_new if r["status"] == "resolved")
         n_amb = sum(1 for r in net_new if r["status"] == "ambiguous")
         n_none = sum(1 for r in net_new if r["status"] == "unmatched")
         print(f"Wrote {review}")
+        print(f"Wrote {review_csv}")
         print(f"\nPass 2: {len(net_new)} net-new variant-text leaf(s): "
               f"{n_res} resolved, {n_amb} ambiguous, {n_none} unmatched.")
-        print(f"Edit the Final lines in {review.name}, then re-run with --parse-path-review "
-              "(net-new leaves merge into the existing path-map).")
+        print(f"Fill the `final` column in {review_csv.name}, then re-run with "
+              "--parse-path-review-csv (net-new leaves merge into the existing path-map).")
         return 0
 
     write_path_review(results, stem, source, input_path, roots, review)
+    write_path_review_csv(results, review_csv)
     write_path_map(results, stem, source, input_path, roots, pmap)
     write_path_changes(results, stem, changes)
 
     n_res = sum(1 for r in results if r["status"] == "resolved")
     n_amb = sum(1 for r in results if r["status"] == "ambiguous")
     n_none = sum(1 for r in results if r["status"] == "unmatched")
-    for p in (review, pmap, changes):
+    for p in (review_csv, review, pmap, changes):
         print(f"Wrote {p}")
     print(f"\n{len(results)} field(s): {n_res} resolved, {n_amb} ambiguous, {n_none} unmatched.")
     if n_amb or n_none:
-        print(f"Edit the Final lines in {review.name}, then re-run with --parse-path-review.")
+        print(f"Fill the `final` column in {review_csv.name}, then re-run with "
+              "--parse-path-review-csv.")
     return 0
 
 
@@ -571,6 +659,28 @@ def run_apply(review_path: Path, output_dir: Path | None) -> int:
     return 0
 
 
+def run_apply_csv(csv_path: Path, output_dir: Path | None) -> int:
+    """Apply a customer-filled ``.path-review.csv``: write its ``final`` column
+    onto the canonical ``.path-review.md``, then run the normal md apply.
+
+    The md is the system source of truth; the CSV is just the customer surface,
+    so we fold the CSV back into the md and reuse :func:`run_apply` unchanged.
+    """
+    out_dir = output_dir or machine_dir_for_action_file(csv_path) or csv_path.parent
+    suffix = ".path-review.csv"
+    stem = (csv_path.name[: -len(suffix)] if csv_path.name.endswith(suffix)
+            else csv_path.stem.replace(".path-review", ""))
+    md_path = out_dir / f"{stem}.path-review.md"
+    if not md_path.exists():
+        print(f"Error: canonical review not found next to the CSV: {md_path}\n"
+              "Run Leg -1 suggest first — it writes the .path-review.md the CSV maps onto.",
+              file=sys.stderr)
+        return 1
+    _patch_review_finals(md_path, read_path_review_csv(csv_path))
+    print(f"Folded {csv_path.name} → {md_path}")
+    return run_apply(md_path, out_dir)
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -597,11 +707,22 @@ def main() -> int:
     parser.add_argument("--output-dir", default=None, help="Output directory")
     parser.add_argument("--parse-path-review", default=None, metavar="REVIEW.md",
                         help="Parse a (human-edited) review → final map + resolved doc")
+    parser.add_argument("--parse-path-review-csv", default=None, metavar="REVIEW.csv",
+                        help="Apply a customer-filled .path-review.csv: fold its `final` "
+                             "column onto the canonical .path-review.md, then run the md apply")
     parser.add_argument("--variants-csv", default=None, metavar="VARIANTS.csv",
                         help="Pass 2 (Decision B): also scan a filled <stem>.variants.csv's "
                              "text cells; emit a delta review of net-new variant-text leaves "
                              "(deduped against the pass-1 path-map)")
     args = parser.parse_args()
+
+    if args.parse_path_review_csv:
+        review = Path(args.parse_path_review_csv)
+        if not review.exists():
+            print(f"Error: file not found: {review}", file=sys.stderr)
+            return 1
+        out_dir = Path(args.output_dir) if args.output_dir else None
+        return run_apply_csv(review, out_dir)
 
     if args.parse_path_review:
         review = Path(args.parse_path_review)
@@ -612,7 +733,7 @@ def main() -> int:
         return run_apply(review, out_dir)
 
     if not args.input:
-        print("Error: --input is required (unless using --parse-path-review)", file=sys.stderr)
+        print("Error: --input is required (unless using --parse-path-review[-csv])", file=sys.stderr)
         return 1
     input_path = Path(args.input)
     if not input_path.exists():

@@ -14,20 +14,24 @@ file + roughly where" index, not a source of truth.
 
 ## Pipeline legs
 
-### Leg -1 — `legminus1_resolve_paths.py` (567 lines) — bare `{leaf}` → accessor path
-Registry-only resolution; produces a human-validated `.path-review.md` before Leg 0.
+### Leg -1 — `legminus1_resolve_paths.py` (758 lines) — bare `{leaf}` → accessor path
+Registry-only resolution; emits a customer-fill `.path-review.csv` (field / suggested /
+final) + a canonical `.path-review.md` before Leg 0.
 
 | Symbol | Line | Role |
 |---|---|---|
 | `collect_placeholders()` | 110 | Scan doc text for `{leaf}` placeholders + loop scope |
 | `_loop_spans()` / `_loop_for_position()` | 90 / 103 | Map `[Item]…[/Item]` spans → which loop a position is in |
 | `resolve_fields()` | 141 | Match each leaf against registry candidates |
-| `run_suggest()` | 280 | **Suggest mode** entry — writes review + map + changes |
-| `parse_path_review()` | 322 | Parse the human-edited `Final:` lines back out |
-| `run_apply()` | 428 | **Apply mode** entry — final map + resolved doc copy |
-| `_rewrite_docx()` / `write_resolved_doc()` | 360 / 394 | Bake accessors into a `.resolved.docx` |
-| `write_path_review/map/changes()` | 161 / 220 / 248 | The three artifacts |
-| `main()` | 529 | CLI: `--suggest` vs `--apply` |
+| `run_suggest()` | 378 | **Suggest mode** entry — writes CSV + review + map + changes |
+| `write_path_review/map/changes()` | 167 / 301 / 329 | The canonical artifacts |
+| `write_path_review_csv()` | 236 | Customer-fill CSV view (field / suggested / final) |
+| `read_path_review_csv()` / `_patch_review_finals()` | 258 / 277 | Fold the filled CSV's `final` column back onto the md |
+| `parse_path_review()` | 464 | Parse the (folded) `Final:` lines back out |
+| `run_apply()` | 570 | **Apply mode** entry (md) — final map + resolved doc copy |
+| `run_apply_csv()` | 662 | **Apply mode** entry (csv) — fold CSV → md, then `run_apply()` |
+| `_rewrite_docx()` / `write_resolved_doc()` | 503 / 537 | Bake accessors into a `.resolved.docx` |
+| `main()` | 701 | CLI: `--parse-path-review[-csv]` vs suggest |
 
 ### Leg 0 — `leg0_ingest.py` — `.docx`/`.pdf` → HTML + mapping + variants CSV
 | Symbol | Line | Role |

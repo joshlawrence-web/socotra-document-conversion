@@ -470,9 +470,11 @@ def run_legminus1(input_path: str, registry: str, output_dir: str) -> dict:
 
     stem = Path(input_path).stem
     out_p = _resolve_safe(output_dir, repo_root) / stem
-    # path-review.md is projected into action-needed/; map + audit stay in out_p.
+    # The customer-fill path-review.csv lands in action-needed/; the canonical
+    # .md + map + audit stay in out_p.
     artifact_locs = [
-        (action_needed_dir(out_p), f"{stem}.path-review.md"),
+        (action_needed_dir(out_p), f"{stem}.path-review.csv"),
+        (out_p, f"{stem}.path-review.md"),
         (out_p, f"{stem}.path-map.yaml"),
         (out_p, f"{stem}.path-changes.md"),
     ]
@@ -485,14 +487,19 @@ def run_legminus1(input_path: str, registry: str, output_dir: str) -> dict:
 
 
 def run_legminus1_apply(review: str, output_dir: str | None = None) -> dict:
-    """Run Leg -1 (apply): parse a human-edited path-review → final map +
-    audit + resolved doc. Returns ok/artifacts/stdout/stderr."""
+    """Run Leg -1 (apply): parse a path-review → final map + audit + resolved doc.
+
+    Accepts either the customer-filled ``.path-review.csv`` (folded onto the
+    canonical ``.md`` first) or the ``.path-review.md`` directly. Returns
+    ok/artifacts/stdout/stderr."""
     repo_root = _find_repo_root()
+    flag = ("--parse-path-review-csv" if review.endswith(".path-review.csv")
+            else "--parse-path-review")
     cmd = [
         sys.executable,
         "-m",
         "velocity_converter.legminus1_resolve_paths",
-        "--parse-path-review",
+        flag,
         str(_resolve_safe(review, repo_root)),
     ]
     if output_dir:

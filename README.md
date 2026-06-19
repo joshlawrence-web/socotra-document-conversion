@@ -11,7 +11,7 @@ flowchart LR
   DOC["Word / PDF\n(.docx / .pdf)"]
   HTML[".html mockup"]
   LegM1["Leg -1\nlegminus1_resolve_paths.py"]
-  PREVIEW[/".path-review.md\nedit Final: lines"/]
+  PREVIEW[/".path-review.csv\nfill the final column"/]
   PATHMAP[".path-map.yaml\nleaf → accessor"]
   Leg0["Leg 0\nleg0_ingest.py"]
   Leg1["Leg 1\nconvert.py"]

@@ -57,7 +57,7 @@ This agent requires an explicit invocation token. Examples:
 Required per operation:
   intake             : input=<file.docx|file.pdf>  (Leg -1 suggest + Leg 0 scan — all hand-fill files)
   legminus1          : input=<file.docx|file.pdf|file.html>
-  legminus1_apply    : review=<file.path-review.md>
+  legminus1_apply    : review=<file.path-review.csv> (customer-filled) or <file.path-review.md>
   leg0_scan          : input=<file.docx|file.pdf>  (human-fill files only)
   leg0               : input=<file.docx|file.pdf>
   leg0+leg2+leg3     : input=<file.docx|file.pdf>
@@ -238,7 +238,7 @@ def run(invocation: str, auto_yes: bool) -> int:
         from velocity_converter.agent_tools import run_legminus1_apply
         review = parsed.get("review")
         if not review:
-            print("Missing required field: review=<path.path-review.md>", file=sys.stderr)
+            print("Missing required field: review=<path.path-review.csv|path.path-review.md>", file=sys.stderr)
             return 1
         r = run_legminus1_apply(review=review, output_dir=parsed.get("output"))
         if not r["ok"]:

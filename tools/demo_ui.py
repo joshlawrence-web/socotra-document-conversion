@@ -12,7 +12,7 @@ and the pipeline gives back three fill-in-the-blank files.
 
 Flow (five stages, left to right):
   1. Intake    — drop a .docx/.pdf → Leg -1 (suggest) + Leg 0 (scan) produce the
-                 THREE human-fill files: <stem>.path-review.md,
+                 two human-fill files: <stem>.path-review.csv,
                  <stem>.variants.csv.
   2. Fill      — click any fill file to edit it right in the browser:
                  confirm the Final: accessor lines, write the Condition: lines,
@@ -82,8 +82,9 @@ DATAMODEL_JAR = "build/core-datamodel-v1.7.61.jar"
 
 ALLOWED_UPLOAD_SUFFIXES = {".docx", ".pdf"}
 
-# The three customer-facing hand-fill files (suffixes), in fill order.
-FILL_SUFFIXES = (".path-review.md", ".variants.csv")
+# The customer-facing hand-fill files (suffixes), in fill order. The path review
+# is filled as a simple CSV (the .path-review.md stays the system/canonical copy).
+FILL_SUFFIXES = (".path-review.csv", ".variants.csv")
 
 
 # --------------------------------------------------------------------------
@@ -106,11 +107,14 @@ def _inbox_source(stem: str) -> Path | None:
     return None
 
 
-def _count_blank(path: Path, pattern: str) -> int:
-    """Count lines matching ``pattern`` (a `^…$` regex) in a text file."""
+def _count_blank_csv_final(path: Path) -> int:
+    """Count path-review.csv rows whose ``final`` accessor is still blank."""
     if not path.exists():
         return 0
-    return len(re.findall(pattern, path.read_text(encoding="utf-8"), re.M))
+    import csv as _csv
+    with path.open(encoding="utf-8-sig", newline="") as fh:
+        return sum(1 for row in _csv.DictReader(fh)
+                   if not (row.get("final") or "").strip())
 
 
 def form_status(form_dir: Path) -> dict:
@@ -127,15 +131,17 @@ def form_status(form_dir: Path) -> dict:
     )
     plugin = sorted(form_dir.glob("*DocumentDataSnapshotPluginImpl.java"))
 
-    review_f = action_dir / f"{stem}.path-review.md"
+    # Customer fills the .path-review.csv (action-needed/); the .path-review.md
+    # is the canonical system copy alongside the machine artifacts.
+    review_f = action_dir / f"{stem}.path-review.csv"
     variants_f = action_dir / f"{stem}.variants.csv"
     pathmap_f = form_dir / f"{stem}.path-map.yaml"
     registry_f = form_dir / f"{stem}.conditional-registry.yaml"
     sidecar_f = form_dir / f"{stem}.conditional-blocks.yaml"
     mapping_f = form_dir / f"{stem}.mapping.yaml"
 
-    # Leg -1: how many Final: accessor lines the human still has to fill.
-    path_unfilled = _count_blank(review_f, r"^Final:\s*$")
+    # Leg -1: how many `final` accessor cells the human still has to fill.
+    path_unfilled = _count_blank_csv_final(review_f)
 
     # variants.csv edited after the registry it produced → conditionals are stale.
     form_stale = (
@@ -143,7 +149,7 @@ def form_status(form_dir: Path) -> dict:
         and variants_f.exists()
         and variants_f.stat().st_mtime > registry_f.stat().st_mtime
     )
-    # path-review edited after the ingest that consumed it → paths are stale.
+    # path-review.csv edited after the ingest that consumed it → paths are stale.
     paths_stale = (
         pathmap_f.exists()
         and review_f.exists()
@@ -196,7 +202,7 @@ def list_forms() -> list[dict]:
 def do_intake(rel_path: str) -> dict:
     """Run the intake front door: Leg -1 (suggest) + Leg 0 (scan).
 
-    Produces the two human-fill files at once — path-review.md and variants.csv.
+    Produces the two human-fill files at once — path-review.csv and variants.csv.
     Mirrors the ``RUN_PIPELINE intake`` operation in agent.py.
     """
     src = (REPO_ROOT / rel_path).resolve()
@@ -262,7 +268,8 @@ def list_samples() -> list[dict]:
 def do_resolve_ingest(stem: str) -> dict:
     """Stage 3: apply the filled path-review (Leg -1), then full Leg 0 ingest.
 
-    Leg -1 apply parses the human-edited path-review.md into a path-map. The full
+    Leg -1 apply folds the customer-filled path-review.csv onto the canonical
+    path-review.md, then parses it into a path-map. The full
     Leg 0 ingest is then run WITH that path-map so bare {leaf} placeholders bake
     into full accessors in the .mapping.yaml. The variants.csv and
     variants.csv are snapshotted before the ingest and restored after, because
@@ -275,14 +282,14 @@ def do_resolve_ingest(stem: str) -> dict:
 
     steps: list[dict] = []
     action_dir = action_needed_dir(form_dir)
-    review = action_dir / f"{stem}.path-review.md"
+    review = action_dir / f"{stem}.path-review.csv"
 
     # --- Leg -1 apply (only when a path-review exists) ---
     if review.exists():
-        if _count_blank(review, r"^Final:\s*$"):
+        if _count_blank_csv_final(review):
             return {
                 "ok": False,
-                "error": f"{stem}.path-review.md still has blank Final: lines — fill them first.",
+                "error": f"{stem}.path-review.csv still has blank `final` cells — fill them first.",
             }
         r1 = run_legminus1_apply(review=_rel(review), output_dir=f"workspace/output/{stem}")
         steps.append({"step": "Leg -1 apply — resolve paths", **r1})
@@ -1327,7 +1334,7 @@ PAGE = r"""<!doctype html>
     <span class="stage-num">2</span><h2>Fill</h2>
     <p>Click a <b style="color:var(--chartreuse)">fill file</b> in a card to edit it in-browser:</p>
     <ul class="markers">
-      <li><code>path-review.md</code> — confirm the <code>Final:</code> accessor lines</li>
+      <li><code>path-review.csv</code> — confirm the <code>final</code> accessor column</li>
       <li><code>variants.csv</code> — fill the <code>when</code> condition (and variant <code>text</code>) for every conditional block</li>
     </ul>
   </div>
@@ -1494,9 +1501,9 @@ function nextStep(f) {
     return { text: 'Run intake to start', severity: 'next' };
   if (f.pathUnfilled > 0)
     return {
-      text: `Confirm ${f.pathUnfilled} accessor${f.pathUnfilled > 1 ? 's' : ''} in ${f.stem}.path-review.md`,
+      text: `Confirm ${f.pathUnfilled} accessor${f.pathUnfilled > 1 ? 's' : ''} in ${f.stem}.path-review.csv`,
       severity: 'warn',
-      highlightFile: `${f.stem}.path-review.md`,
+      highlightFile: `${f.stem}.path-review.csv`,
     };
   if (!f.ingested)
     return { text: 'Resolve paths & ingest (Leg -1 apply → Leg 0)', severity: 'next' };
@@ -1534,7 +1541,7 @@ function render(forms) {
     const step = nextStep(f);
 
     const fileRows = f.files.map(file => {
-      const fill = /\.(path-review\.md|variants\.csv)$/.test(file.name);
+      const fill = /\.(path-review\.csv|variants\.csv)$/.test(file.name);
       const key = file.name.endsWith('.final.vm') || file.name.endsWith('.mapping.yaml');
       const urgent = step.highlightFile && file.name === step.highlightFile;
       return `<div class="file ${fill ? 'fill' : ''} ${key ? 'key' : ''} ${urgent ? 'urgent' : ''}" data-path="${esc(file.path)}" title="Click to view / edit · double-click to open natively">
@@ -1704,7 +1711,7 @@ const previewEditBtn = document.getElementById('preview-edit');
 const previewSaveBtn = document.getElementById('preview-save');
 let previewPath = null;
 
-const isFill = (path) => /\/(.*)\.(path-review\.md|variants\.csv)$/.test(path);
+const isFill = (path) => /\/(.*)\.(path-review\.csv|variants\.csv)$/.test(path);
 const isConfig = (path) => path.startsWith('socotra-config/') && path.endsWith('.json');
 const isEditable = (path, truncated) => !truncated && (isFill(path) || isConfig(path));
 

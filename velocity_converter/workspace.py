@@ -6,7 +6,7 @@ Layout::
       inbox/           source docs (pipeline input)
       action-needed/   FLAT — files a human must hand-edit:
                          {stem}.variants.csv
-                         {stem}.path-review.md
+                         {stem}.path-review.csv
       output/<stem>/   per-stem machine artifacts (.final.vm, .mapping.yaml, …)
 
 The pipeline passes the per-stem **machine** dir (``…/output/<stem>``) around as
@@ -33,7 +33,7 @@ ACTION_NEEDED = "action-needed"
 # stays in the machine output/<stem>/ dir.
 ACTION_NEEDED_SUFFIXES = (
     ".variants.csv",
-    ".path-review.md",
+    ".path-review.csv",
 )
 
 
