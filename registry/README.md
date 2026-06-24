@@ -8,7 +8,7 @@ Hand-curated map of every Velocity path available in this product config, organi
 
 ## `sdk-schema-index.yaml`
 
-Generated artefact. Produced by `scripts/build_schema_index.py` from the compiled customer and datamodel JARs. Contains entity-type → field name → return type mappings. Regenerate whenever the JARs change. Used by Leg 2's strict lookup step (`match_token`) to resolve tokens against the exact schema exposed by the deployed config.
+Generated artefact. Produced by `python3 -m velocity_converter.build_schema_index` from the compiled customer and datamodel JARs. Contains entity-type → field name → return type mappings. Regenerate whenever the JARs change. Used by Leg 2's strict lookup step (`match_token`) to resolve tokens against the exact schema exposed by the deployed config.
 
 ## `terminology.yaml`
 

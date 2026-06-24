@@ -134,7 +134,6 @@ def _derive_leg2_paths(input_html: str, output: str) -> dict:
         "mapping": f"{base}/{stem}.mapping.yaml",
         "out": f"{base}/{stem}.mapping.yaml",
         "review_out": f"{base}/{stem}.review.md",
-        "telemetry_log": None,
     }
 
 
@@ -394,7 +393,6 @@ def run(invocation: str, auto_yes: bool) -> int:
                 "mapping": m_path,
                 "out": m_path,
                 "review_out": f"{base}/{stem}.review.md",
-                "telemetry_log": None,
             }
         elif operation in ("leg1+leg2", "leg1+leg2+leg3"):
             leg2_paths = _derive_leg2_paths(input_html, output)
@@ -407,7 +405,6 @@ def run(invocation: str, auto_yes: bool) -> int:
                 "mapping": mapping,
                 "out": f"{base}/{stem}.mapping.yaml",
                 "review_out": f"{base}/{stem}.review.md",
-                "telemetry_log": None,
             }
 
         mappings = (
@@ -431,7 +428,6 @@ def run(invocation: str, auto_yes: bool) -> int:
                 registry=registry,
                 out=this_suggested,
                 review_out=leg2_paths.get("review_out") or f"{base}/{stem}.review.md",
-                telemetry_log=leg2_paths.get("telemetry_log"),
                 terminology=terminology,
             )
             if not r["ok"]:

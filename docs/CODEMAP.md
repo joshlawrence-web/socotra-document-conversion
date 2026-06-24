@@ -211,14 +211,11 @@ Helpers: `validate_contract()` (446), `load_contract()` (474), `check_contract_v
 
 ---
 
-## Telemetry, state & misc
+## State & misc
 
 | Module | Lines | Key symbols |
 |---|---|---|
-| `emit_telemetry.py` | 284 | `derive_run()` (221), `build_summary_record()` (147), `append_jsonl()` (259) |
-| `suggester_inspect.py` | 139 | `cmd_list_runs()` (23), `cmd_show_run()` (49), `cmd_diff_runs()` (64) |
 | `suggester_state.py` | 125 | `evaluate_registry_config_gate()` (37) — registry/config staleness gate |
 | `socotra_config_fingerprint.py` | 62 | `compute_source_config_sha256()` (50) |
 | `workspace.py` | 86 | `action_needed_dir()` (50), `action_needed_file()` (62) — routes human-fill files |
 | `render_preview.py` | 282 | `render_template()` (126) — live-tenant ad-hoc render; `load_env()` (69) |
-| `validate_plugin.py` | 71 | `main()` (21) — standalone plugin path validator |

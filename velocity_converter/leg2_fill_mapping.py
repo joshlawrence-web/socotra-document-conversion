@@ -1422,18 +1422,12 @@ def load_terminology(path: Path | None, registry_path: Path | None = None) -> di
 
 
 # ---------------------------------------------------------------------------
-# Plumbing: repo root, emit_telemetry loader
+# Plumbing: repo root
 # ---------------------------------------------------------------------------
 
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
-
-
-def _load_emit_telemetry():
-    from velocity_converter import emit_telemetry
-
-    return emit_telemetry
 
 
 # ---------------------------------------------------------------------------
@@ -1461,7 +1455,6 @@ def main() -> int:
     ap.add_argument("--allow-stale-registry", action="store_true")
     ap.add_argument("--allow-missing-registry-fingerprint", action="store_true")
     ap.add_argument("--require-registry-config-check", action="store_true")
-    ap.add_argument("--telemetry-log", type=Path, default=None)
     ap.add_argument("--review-out", type=Path, default=None)
     ap.add_argument(
         "--terminology", type=Path, default=None,
@@ -1637,7 +1630,6 @@ def main() -> int:
         default_flow_style=False, width=120,
     )
     args.out.write_text(header + body, encoding="utf-8")
-    result_sha = sha256_file(args.out)
 
     # Re-attach idx + root ids for review generation (not written to YAML)
     suggested["_idx"] = idx_for_review
@@ -1655,18 +1647,8 @@ def main() -> int:
         escape_note=escape_note,
     )
 
-    if args.telemetry_log:
-        emit = _load_emit_telemetry()
-        ts = gen_at
-        records = emit.derive_run(args.out, args.registry, run_id=run_id, ts=ts)
-        summ = records[-1]
-        summ["result_suggested_sha256"] = result_sha
-        emit.append_jsonl(args.telemetry_log, records)
-
     print(f"Wrote {args.out}")
     print(f"Wrote {review_path}")
-    if args.telemetry_log:
-        print(f"Appended telemetry to {args.telemetry_log}")
     return 0
 
 

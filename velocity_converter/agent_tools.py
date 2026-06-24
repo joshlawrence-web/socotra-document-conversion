@@ -597,7 +597,6 @@ def run_leg2(
     registry: str,
     out: str,
     review_out: str,
-    telemetry_log: str | None = None,
     terminology: str | None = None,
 ) -> dict:
     """Run leg2_fill_mapping.py for Leg 2. Returns ok/artifacts/stdout/stderr."""
@@ -615,8 +614,6 @@ def run_leg2(
         "--review-out",
         str(_resolve_safe(review_out, repo_root)),
     ]
-    if telemetry_log:
-        cmd += ["--telemetry-log", str(_resolve_safe(telemetry_log, repo_root))]
     if terminology:
         cmd += ["--terminology", str(_resolve_safe(terminology, repo_root))]
 
@@ -625,7 +622,7 @@ def run_leg2(
         return {"ok": False, "returncode": result.returncode, "stderr": result.stderr}
 
     artifacts = []
-    for p_str in [out, review_out, telemetry_log]:
+    for p_str in [out, review_out]:
         if p_str is None:
             continue
         p = _resolve_safe(p_str, repo_root)

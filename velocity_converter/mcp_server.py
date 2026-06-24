@@ -91,12 +91,10 @@ def convert_html_to_velocity(
     mapping = stem_dir / f"{stem}.mapping.yaml"
     suggested = stem_dir / f"{stem}.suggested.yaml"
     review_out = stem_dir / f"{stem}.review.md"
-    telemetry = stem_dir / f"{stem}.suggester-log.jsonl"
 
     ok, msg = _run([sys.executable, "-m", _LEG2,
                     "--mapping", str(mapping), "--registry", str(reg),
-                    "--out", str(suggested), "--review-out", str(review_out),
-                    "--telemetry-log", str(telemetry)])
+                    "--out", str(suggested), "--review-out", str(review_out)])
     if not ok:
         return f"Leg 1 succeeded, Leg 2 failed:\n{msg}"
 
@@ -175,12 +173,10 @@ def suggest_velocity_paths(
 
     suggested = base / f"{stem}.suggested.yaml"
     review_out = base / f"{stem}.review.md"
-    telemetry = base / f"{stem}.suggester-log.jsonl"
 
     cmd = [sys.executable, "-m", _LEG2,
            "--mapping", str(mapping_path), "--registry", str(reg),
-           "--out", str(suggested), "--review-out", str(review_out),
-           "--telemetry-log", str(telemetry)]
+           "--out", str(suggested), "--review-out", str(review_out)]
     if terminology:
         cmd += ["--terminology", str(_resolve(terminology))]
 
