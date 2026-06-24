@@ -274,19 +274,79 @@ def build_substitution_map(suggested: dict) -> dict[str, str]:
         ds = (value or "").strip()
         return "" if ds.startswith("UNRESOLVED:") else ds
 
+    def _resolve(entry: dict) -> str:
+        """data_source for one entry, made null-safe when the field is optional.
+
+        Occurrence is declared in the source document ({$x} optional). The plugin
+        emits a guard only for `required`/`one_or_more`, so an absent OPTIONAL
+        scalar reaches the renderer as a bare `$data.x` reference and Socotra's
+        strict renderer aborts on the null. Wrapping optional refs as a Velocity
+        quiet reference (`$!{...}`) renders empty instead — the template-side
+        mirror of the plugin guard. Collections (`zero_or_more`) are driven by
+        #foreach and need no scalar guard.
+        """
+        ds = _clean_data_source(entry.get("data_source") or "")
+        occ = (entry.get("occurrence") or "required").strip() or "required"
+        return _to_quiet_ref(ds) if (ds and occ == "optional") else ds
+
     for v in suggested.get("variables") or []:
         ph = v.get("placeholder") or ""
         if ph:
-            smap[ph] = _clean_data_source(v.get("data_source") or "")
+            smap[ph] = _resolve(v)
     for loop in suggested.get("loops") or []:
         ph = loop.get("placeholder") or ""
         if ph:
             smap[ph] = _clean_data_source(loop.get("data_source") or "")
+        coverages = loop.get("available_coverages") or []
         for fld in loop.get("fields") or []:
             fph = fld.get("placeholder") or ""
-            if fph:
-                smap[fph] = _clean_data_source(fld.get("data_source") or "")
+            if not fph:
+                continue
+            val = _resolve(fld)
+            # A field reached THROUGH an optional coverage (e.g.
+            # `$item.AccidentalDamage.data.labourCovered`, AccidentalDamage =
+            # zero_or_one) navigates a nullable intermediate. A quiet ref
+            # (`$!{...}`) doesn't help — the strict renderer aborts the moment it
+            # calls `.data` on a null coverage (error 216041). Guard the whole
+            # reference on the coverage's presence so absent coverages render empty.
+            cov_vel = _optional_coverage_prefix(
+                _clean_data_source(fld.get("data_source") or ""), coverages)
+            if val and cov_vel:
+                val = f"#if({cov_vel}){val}#end"
+            smap[fph] = val
     return smap
+
+
+def _optional_coverage_prefix(ds: str, coverages: list[dict]) -> str | None:
+    """If ``ds`` traverses an OPTIONAL coverage (``zero_or_one``/``zero_or_more``,
+    i.e. quantifier ``?``/``*``), return that coverage's velocity prefix (the
+    nullable intermediate to guard); else None. ``exactly_one`` coverages (``!``)
+    are always present and need no guard."""
+    for cov in coverages:
+        vel = (cov.get("velocity") or "").strip()
+        if not vel:
+            continue
+        card = (cov.get("cardinality") or "").strip()
+        quant = (cov.get("quantifier") or "").strip()
+        optional = card in {"zero_or_one", "zero_or_more"} or quant in {"?", "*"}
+        if optional and (ds == vel or ds.startswith(vel + ".")):
+            return vel
+    return None
+
+
+def _to_quiet_ref(ds: str) -> str:
+    """Turn a Velocity reference into a quiet (null-safe) one: `$x`/`${x}` -> `$!{x}`.
+
+    Idempotent — an already-quiet `$!...` ref is returned unchanged. Non-reference
+    strings (no leading `$`) pass through untouched.
+    """
+    if ds.startswith("$!"):
+        return ds
+    if ds.startswith("${") and ds.endswith("}"):
+        return "$!{" + ds[2:-1] + "}"
+    if ds.startswith("$"):
+        return "$!{" + ds[1:] + "}"
+    return ds
 
 
 def build_foreach_map(suggested: dict) -> dict[str, str]:
@@ -294,6 +354,14 @@ def build_foreach_map(suggested: dict) -> dict[str, str]:
     {loop_placeholder: foreach_directive} for loops that have both
     a data_source and a foreach directive from Leg 2.
     Accepts both schema 1.x (flat fields) and 2.0 (per-root verdicts).
+
+    The stored ``foreach`` carries the registry-default, unprefixed collection
+    (e.g. ``$data.items``), but the loop iterates the list the plugin actually
+    populates — the rendering-root object — which the verified per-root
+    ``data_source`` names (``$data.quote.items`` / ``$data.segment.items``).
+    There is no top-level ``items`` key in renderingData, so emitting the raw
+    ``foreach`` makes every loop iterate nothing. Splice ``data_source`` into
+    the directive's collection slot so it matches what the plugin exposes.
     """
     suggested = _flatten_to_primary_root(suggested)
     fmap: dict[str, str] = {}
@@ -302,15 +370,26 @@ def build_foreach_map(suggested: dict) -> dict[str, str]:
         foreach = loop.get("foreach") or ""
         ds = loop.get("data_source") or ""
         if ph and foreach and ds:
-            fmap[ph] = foreach
+            m = _FOREACH_COLLECTION_RE.search(foreach)
+            fmap[ph] = (m.group(1) + ds + m.group(2)) if m else foreach
     return fmap
+
+
+# Captures a #foreach directive's prefix (`#foreach ($item in `) and its
+# closing paren, leaving the collection expression in between for replacement.
+_FOREACH_COLLECTION_RE = re.compile(r"(#foreach\s*\(\s*\$?\w+\s+in\s+).+?(\))")
 
 
 # ---------------------------------------------------------------------------
 # Template processor
 # ---------------------------------------------------------------------------
 
-_TBD_TOKEN_RE = re.compile(r"\$(?:\w+\.)?TBD_[\w.]+")
+# A placeholder path is TBD_<seg>(.<seg>)* — it never ends in a dot. The old
+# `[\w.]+` tail greedily swallowed a sentence-ending period (e.g. "...is
+# $TBD_quote.data.discountType." captured the trailing "."), so the token no
+# longer matched the substitution map and was left unresolved. Anchoring on
+# `\w+(?:\.\w+)*` stops at a bare trailing dot (sentence punctuation).
+_TBD_TOKEN_RE = re.compile(r"\$(?:\w+\.)?TBD_\w+(?:\.\w+)*")
 _GUARD_OPEN_RE = re.compile(r"^\s*#if\(\$TBD_[\w.]+\)\s*$")
 _IF_OR_FOREACH_RE = re.compile(r"^\s*#(if|foreach)\b")
 _END_RE = re.compile(r"^\s*#end\s*$")

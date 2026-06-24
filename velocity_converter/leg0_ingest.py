@@ -863,23 +863,6 @@ def write_variants_csv(blocks: list[dict], stem: str, output_path: Path) -> None
     import io  # noqa: PLC0415
     if not blocks:
         return
-    header = [
-        "# Conditional text -- one row group per block, keyed by `placeholder`.",
-        "#   placeholder : the block key from the document (pre-filled -- do not rename).",
-        "#   when        : a condition, e.g.  state == \"CA\"   |   premium > 500",
-        "#                 (first matching row wins -- drag rows to reorder priority).",
-        "#                 leave blank (or write * / else) for the DEFAULT row used",
-        "#                 when nothing else matches -- exactly one per variant block.",
-        "#   text        : the text shown when `when` matches (may contain {field}).",
-        "#",
-        "# Block kinds:",
-        "#   - variant ([[$token]]) : fill/add conditioned rows + the default row.",
-        "#   - binary  ([[text]])   : `text` is pre-filled; fill only `when` (the",
-        "#                            empty-default row hides it when nothing matches).",
-        "#   - template (loop block): fill only `when` -- the section wording stays in",
-        "#                            the document; leave `text` blank.",
-        "# Unsupported: an N-way block whose variants each carry their own loop.",
-    ]
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["placeholder", "when", "text"])
@@ -896,7 +879,7 @@ def write_variants_csv(blocks: list[dict], stem: str, output_path: Path) -> None
             # The document's wording is pre-filled in `text`; the customer fills `when`.
             w.writerow([key, "", _tbd_to_braces(b.get("source_text", ""))])
             w.writerow([key, "", ""])
-    content = "\n".join(header) + "\n" + buf.getvalue()
+    content = buf.getvalue()
 
     # Clobber guard (human-fill friction Gap 2): a full re-ingest must not destroy
     # a customer's filled conditions. If the file already exists and differs from

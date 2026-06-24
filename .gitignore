@@ -36,3 +36,5 @@ build/
 
 # Packaging
 *.egg-info/
+
+*.bak

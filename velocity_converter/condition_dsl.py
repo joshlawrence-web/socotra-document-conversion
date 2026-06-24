@@ -514,7 +514,21 @@ def _java_string_literal(value: object) -> str:
     return f'"{s}"'
 
 
-def _comparison_to_java(cmp: Comparison, scope: str) -> str:
+def _numeric_compare_java(full: str, not_null: str, value: object, jop: str, java_type: str | None) -> str:
+    """Render a null-guarded numeric comparison, type-correct for the leaf.
+
+    ``jop`` is the Java operator (``>``/``>=``/``<``/``<=``/``==``). Integral and
+    floating leaves autounbox (``leaf > 0``); BigDecimal/BigInteger leaves use
+    ``compareTo(...) <op> 0``. The leaf is null-guarded either way.
+    """
+    strat = _numeric_strategy(java_type)
+    if strat == "unbox":
+        return f"(!({not_null}) && {full} {jop} {_java_number_literal(value)})"
+    lit = _java_biginteger_literal(value) if strat == "biginteger" else _java_bigdecimal_literal(value)
+    return f"(!({not_null}) && {full}.compareTo({lit}) {jop} 0)"
+
+
+def _comparison_to_java(cmp: Comparison, scope: str, leaf_types: dict[str, str] | None = None) -> str:
     root_var, parts = _path_to_chain(_rewrite_for_scope(cmp.path, scope))
     if not parts:
         # Bare root reference — degenerate, treat as present check.
@@ -522,6 +536,8 @@ def _comparison_to_java(cmp: Comparison, scope: str) -> str:
 
     full = _full_accessor(root_var, parts)
     val = _null_safe_value(root_var, parts)
+    # Leaf types are keyed by the author-written path (pre scope-rewrite).
+    java_type = (leaf_types or {}).get(cmp.path)
 
     if cmp.op == "present":
         return f"{val} != null"
@@ -535,11 +551,11 @@ def _comparison_to_java(cmp: Comparison, scope: str) -> str:
         return f"java.util.List.of({items}).contains({norm})"
 
     if cmp.op in _ORDER_OPS:
-        # Numeric/date ordering → BigDecimal compareTo, fully null-guarded.
+        # Numeric/date ordering, fully null-guarded. BigDecimal compareTo for
+        # decimal leaves; autounboxed operator for int/float leaves.
         jop = {">": ">", ">=": ">=", "<": "<", "<=": "<="}[cmp.op]
         not_null = " || ".join(_null_guards(root_var, parts, include_leaf=True))
-        lit = _java_bigdecimal_literal(cmp.value)
-        return f"(!({not_null}) && {full}.compareTo({lit}) {jop} 0)"
+        return _numeric_compare_java(full, not_null, cmp.value, jop, java_type)
 
     # Equality / inequality.
     kind = _literal_kind(cmp.value)
@@ -547,8 +563,7 @@ def _comparison_to_java(cmp: Comparison, scope: str) -> str:
         java_eq = f"Objects.equals({val}, {'true' if cmp.value else 'false'})"
     elif kind == "number":
         not_null = " || ".join(_null_guards(root_var, parts, include_leaf=True))
-        lit = _java_bigdecimal_literal(cmp.value)
-        java_eq = f"(!({not_null}) && {full}.compareTo({lit}) == 0)"
+        java_eq = _numeric_compare_java(full, not_null, cmp.value, "==", java_type)
     else:  # string — toString-normalise so enum and String both work
         norm = _null_safe_tostring(root_var, parts)
         java_eq = f"Objects.equals({norm}, {_java_string_literal(cmp.value)})"
@@ -566,21 +581,63 @@ def _java_bigdecimal_literal(value: object) -> str:
     return f'new java.math.BigDecimal("{value}")'
 
 
-def condition_to_java(ast: ConditionAST, scope: str, javap_ctx: dict | None = None) -> str:
+def _java_biginteger_literal(value: object) -> str:
+    return f'new java.math.BigInteger("{value}")'
+
+
+def _java_number_literal(value: object) -> str:
+    """A bare Java numeric literal (for autounboxed comparison of int/float leaves)."""
+    return str(value)
+
+
+# Leaf Java types whose comparisons can use autounboxed relational/equality
+# operators directly (``leaf > 0``), rather than ``compareTo``. Integer.compareTo
+# only accepts an Integer, so emitting a BigDecimal there does not compile — the
+# bug this branch fixes. Anything not listed (notably BigDecimal) keeps compareTo.
+_UNBOX_JAVA_TYPES = {
+    "int", "long", "short", "byte", "double", "float",
+    "java.lang.Integer", "java.lang.Long", "java.lang.Short",
+    "java.lang.Byte", "java.lang.Double", "java.lang.Float",
+}
+
+
+def _numeric_strategy(java_type: str | None) -> str:
+    """Pick numeric-comparison codegen for a leaf's Java type.
+
+    ``"unbox"`` → autounboxed operator (Integer/Long/Short/Byte/Double/Float and
+    their primitives); ``"biginteger"`` → ``compareTo(new BigInteger(...))``;
+    ``"bigdecimal"`` → ``compareTo(new BigDecimal(...))``. ``"bigdecimal"`` is also
+    the fallback when the type is unknown (no javap context, e.g. unit tests), so
+    the pre-existing decimal codegen and its golden tests are preserved.
+    """
+    t = (java_type or "").strip()
+    if t in _UNBOX_JAVA_TYPES:
+        return "unbox"
+    if t == "java.math.BigInteger":
+        return "biginteger"
+    return "bigdecimal"
+
+
+def condition_to_java(ast: ConditionAST, scope: str, leaf_types: dict[str, str] | None = None) -> str:
     """Render an AST to a single boolean Java expression.
 
     Equality uses ``Objects.equals`` on a null-safe ``toString`` (so String and
     enum leaves both compare correctly, killing the ``==`` reference-equality
-    bug); ordering uses null-guarded ``BigDecimal.compareTo``; present/absent are
-    null checks; ``in`` is ``List.of(...).contains(...)``. Every accessor step is
-    null-guarded so the expression cannot NPE. ``javap_ctx`` is accepted for
-    forward-compatible type refinement; v1 codegen is literal-type-driven and
-    does not require it.
+    bug); numeric ordering/equality is null-guarded and **type-aware** —
+    ``compareTo`` for BigDecimal/BigInteger leaves, autounboxed operators for
+    int/float leaves (``Integer.compareTo(BigDecimal)`` does not compile);
+    present/absent are null checks; ``in`` is ``List.of(...).contains(...)``.
+    Every accessor step is null-guarded so the expression cannot NPE.
+
+    ``leaf_types`` maps an author-written condition path to its resolved Java
+    return type (e.g. ``{"quote.data.coolingOffPeriod": "java.lang.Integer"}``),
+    typically from a javap walk. When omitted or a leaf is absent, numeric
+    codegen falls back to ``BigDecimal.compareTo`` (the prior behaviour).
     """
     if not ast.comparisons:
         return "true"
     joiner = " || " if ast.join == "OR" else " && "
-    parts = [_comparison_to_java(c, scope) for c in ast.comparisons]
+    parts = [_comparison_to_java(c, scope, leaf_types) for c in ast.comparisons]
     if len(parts) == 1:
         return parts[0]
     return joiner.join(f"({p})" for p in parts)

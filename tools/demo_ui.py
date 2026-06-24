@@ -8,7 +8,7 @@ Single-file local web app (stdlib only — no Flask):
 
 This UI tells the "Priya / ZenCover Welcome Letter" story (docs/demo-story.md):
 the customer writes a normal Word letter with four markers, hands it over once,
-and the pipeline gives back three fill-in-the-blank files.
+and the pipeline gives back two fill-in-the-blank files.
 
 Flow (five stages, left to right):
   1. Intake    — drop a .docx/.pdf → Leg -1 (suggest) + Leg 0 (scan) produce the
@@ -1205,7 +1205,7 @@ PAGE = r"""<!doctype html>
 
   .spin {
     width: 15px; height: 15px; border-radius: 50%; flex: none; display: inline-block;
-    border: 2px solid rgba(22,224,207,.25); border-top-color: var(--chartreuse);
+    border: 2px solid var(--card-border); border-top-color: var(--chartreuse);
     animation: rot .7s linear infinite; vertical-align: -3px; margin-right: 8px;
   }
   @keyframes rot { to { transform: rotate(360deg); } }
@@ -1213,8 +1213,8 @@ PAGE = r"""<!doctype html>
   /* ---- console ---- */
   #console {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
-    background: rgba(5, 10, 24, .92); backdrop-filter: blur(10px);
-    border-top: 1px solid rgba(22, 224, 207, .25);
+    background: var(--surface-2); backdrop-filter: blur(10px);
+    border-top: 1px solid var(--card-border);
     max-height: 34vh; overflow: auto; padding: 10px 26px 14px;
     font-size: 12px;
   }
@@ -1246,8 +1246,8 @@ PAGE = r"""<!doctype html>
   #preview {
     position: fixed; top: 0; right: 0; bottom: 0; z-index: 60;
     width: min(720px, 56vw); display: flex; flex-direction: column;
-    background: rgba(7, 13, 30, .97); backdrop-filter: blur(14px);
-    border-left: 1px solid rgba(22, 224, 207, .35);
+    background: var(--surface-2); backdrop-filter: blur(14px);
+    border-left: 1px solid var(--card-border);
     box-shadow: -30px 0 70px rgba(0, 0, 0, .55);
     animation: slide .18s ease;
   }
@@ -1255,7 +1255,7 @@ PAGE = r"""<!doctype html>
   #preview[hidden] { display: none; }
   #preview-ta {
     flex: 1; margin: 0; padding: 16px 18px 60px; border: none; outline: none; resize: none;
-    background: rgba(195, 245, 60, .03); color: var(--text);
+    background: var(--glow-2); color: var(--text);
     font: 12px/1.55 "SF Mono", ui-monospace, Menlo, monospace;
   }
 
@@ -1263,15 +1263,15 @@ PAGE = r"""<!doctype html>
   #system {
     position: fixed; top: 0; right: 0; bottom: 0; z-index: 55;
     width: min(420px, 90vw); display: flex; flex-direction: column;
-    background: rgba(7, 13, 30, .97); backdrop-filter: blur(14px);
-    border-left: 1px solid rgba(22, 224, 207, .35);
+    background: var(--surface-2); backdrop-filter: blur(14px);
+    border-left: 1px solid var(--card-border);
     box-shadow: -30px 0 70px rgba(0, 0, 0, .55);
     animation: slide .18s ease;
   }
   #system[hidden] { display: none; }
   #system-head {
     display: flex; align-items: center; gap: 10px;
-    padding: 14px 18px; border-bottom: 1px solid rgba(127, 147, 180, .18);
+    padding: 14px 18px; border-bottom: 1px solid var(--card-border);
     letter-spacing: .22em; font-size: 12px; text-transform: uppercase; color: var(--text-dim);
   }
   #system-body { flex: 1; overflow: auto; padding: 16px 18px 60px; font-size: 13px; }
@@ -1286,7 +1286,7 @@ PAGE = r"""<!doctype html>
   .fp { color: var(--text-dim); font-size: 11px; word-break: break-all; }
   #preview-head {
     display: flex; align-items: center; gap: 10px;
-    padding: 14px 18px; border-bottom: 1px solid rgba(127, 147, 180, .18);
+    padding: 14px 18px; border-bottom: 1px solid var(--card-border);
   }
   #preview-name { font-size: 13px; color: var(--chartreuse); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #preview-body {
@@ -1319,13 +1319,13 @@ PAGE = r"""<!doctype html>
 
 <div class="story">
   <b>Write the letter like you'd write it to a person.</b> Wherever a real value goes, leave a marker.
-  Hand it over once — the pipeline gives back three fill-in-the-blank files. Fill them like a form; no code.
+  Hand it over once — the pipeline gives back two fill-in-the-blank files. Fill them like a form; no code.
 </div>
 
 <div class="rail">
   <div class="stage">
     <span class="stage-num">1</span><h2>Intake</h2>
-    <p>Drop a Word/PDF letter. Leg&nbsp;-1 + Leg&nbsp;0 emit the three customer fill-in files at once.</p>
+    <p>Drop a Word/PDF letter. Leg&nbsp;-1 + Leg&nbsp;0 emit the two customer fill-in files at once.</p>
     <div class="drop" id="drop">Drop a <b>.docx</b> / <b>.pdf</b> here<br>or click to browse</div>
     <input type="file" id="fileInput" accept=".docx,.pdf" multiple hidden>
     <div class="chips" id="samples"></div>

@@ -202,6 +202,49 @@ def _walk_java_chain(classpath: str, fqcn: str, parts: list[str]) -> tuple[str |
     return ret, ""
 
 
+def _condition_leaf_types(
+    blocks: list[dict], scope: str, classpath: str | None, product: str | None
+) -> dict[str, str]:
+    """Resolve each variant condition leaf's Java return type for ``scope``.
+
+    Returns ``{author-path: java-type}`` (e.g. ``"java.lang.Integer"``) so the
+    condition codegen can emit a type-correct numeric comparison (autounbox for
+    int/float, compareTo for BigDecimal). Keyed by the author-written path so it
+    lines up with :func:`condition_dsl._comparison_to_java`'s lookup, which
+    rewrites the root itself. Empty without classpath+product (unit tests), so
+    codegen falls back to the BigDecimal default.
+    """
+    if not (classpath and product):
+        return {}
+    root_fqcns = {
+        "quote": f"{CUSTOMER_PACKAGE}.{product}Quote",
+        "policy": _CORE_POLICY_FQCN,
+        "segment": f"{CUSTOMER_PACKAGE}.{product}Segment",
+    }
+    types: dict[str, str] = {}
+    for b in blocks:
+        for v in b.get("variants") or []:
+            when = v.get("when")
+            if not when:
+                continue
+            for cmp in ast_from_dict(when).comparisons:
+                if cmp.op not in _NUMERIC_OPS or cmp.path in types:
+                    continue
+                segs = _rewrite_condition_root(cmp.path, scope).split(".")
+                root_var, parts = segs[0], segs[1:]
+                fqcn = root_fqcns.get(root_var)
+                if not fqcn or not parts:
+                    continue
+                ret, _fail = _walk_java_chain(classpath, fqcn, parts)
+                if ret:
+                    types[cmp.path] = ret
+    return types
+
+
+# Operators whose codegen depends on the leaf's numeric Java type.
+_NUMERIC_OPS = {">", ">=", "<", "<=", "==", "!="}
+
+
 def _build_cond_field_lookup(
     suggested_flat: dict,
     vel_to_cat: dict[str, str],
@@ -949,6 +992,8 @@ def _append_to_plugin(
     field_lookup: dict[str, dict] | None = None,
     quote_guard_code: str = "",
     policy_guard_code: str = "",
+    classpath: str | None = None,
+    product: str | None = None,
 ) -> None:
     """Write a backup then insert missing puts before each overload's builder return.
 
@@ -962,8 +1007,10 @@ def _append_to_plugin(
     """
     quote_df_code = _generate_datafetcher_extras(missing_quote_df)
     policy_df_code = _generate_datafetcher_extras(missing_policy_df)
-    quote_cond_code = render_conditional_puts(offset_cond_blocks, scope="quote", field_lookup=field_lookup)
-    policy_cond_code = render_conditional_puts(offset_cond_blocks, scope="policy", field_lookup=field_lookup)
+    quote_cond_code = render_conditional_puts(offset_cond_blocks, scope="quote", field_lookup=field_lookup,
+                                              classpath=classpath, product=product)
+    policy_cond_code = render_conditional_puts(offset_cond_blocks, scope="policy", field_lookup=field_lookup,
+                                               classpath=classpath, product=product)
 
     if not any((quote_df_code, policy_df_code, quote_cond_code,
                 quote_guard_code, policy_guard_code)):
@@ -1227,7 +1274,8 @@ def _classify_text_fields(
     return field_exprs, todo
 
 
-def _render_variant_puts(block: dict, scope: str, field_lookup: dict[str, dict] | None) -> str:
+def _render_variant_puts(block: dict, scope: str, field_lookup: dict[str, dict] | None,
+                         leaf_types: dict[str, str] | None = None) -> str:
     """Render an N-way variant block to an if/else-if chain (the 50-state feature).
 
     First-match-wins: each variant's ``when`` AST becomes a null-safe boolean via
@@ -1254,7 +1302,7 @@ def _render_variant_puts(block: dict, scope: str, field_lookup: dict[str, dict] 
     branches: list[str] = []
     for i, v in enumerate(variants):
         ast = ast_from_dict(v.get("when") or {})
-        java_cond = condition_to_java(ast, scope)
+        java_cond = condition_to_java(ast, scope, leaf_types)
         text_tbd = _braces_to_tbd_text(v.get("text") or "")
         field_exprs, todo = _classify_text_fields(text_tbd, field_lookup, scope)
         todo_all.extend(todo)
@@ -1293,7 +1341,8 @@ def _render_variant_puts(block: dict, scope: str, field_lookup: dict[str, dict] 
     )
 
 
-def _render_template_put(block: dict, scope: str, bid, key: str, truncated: str) -> str:
+def _render_template_put(block: dict, scope: str, bid, key: str, truncated: str,
+                         leaf_types: dict[str, str] | None = None) -> str:
     """Render a ``render: template`` block to a single Boolean put.
 
     The loop/prose stays in the template under ``#if($data.<key>)`` — the plugin
@@ -1312,7 +1361,7 @@ def _render_template_put(block: dict, scope: str, bid, key: str, truncated: str)
                 f'        renderingData.put("{key}", false);'
             )
         ast = ast_from_dict(variants[0].get("when") or {})
-        java_cond = condition_to_java(ast, scope)
+        java_cond = condition_to_java(ast, scope, leaf_types)
         return (
             f'        // Conditional block {bid} (template-rendered): {truncated}\n'
             f'        renderingData.put("{key}", {java_cond});'
@@ -1349,7 +1398,8 @@ def _render_template_put(block: dict, scope: str, bid, key: str, truncated: str)
 
 
 def render_conditional_puts(
-    blocks: list[dict], scope: str = "quote", field_lookup: dict[str, dict] | None = None
+    blocks: list[dict], scope: str = "quote", field_lookup: dict[str, dict] | None = None,
+    classpath: str | None = None, product: str | None = None,
 ) -> str:
     """Generate renderingData.put(...) lines for conditional blocks.
 
@@ -1366,6 +1416,9 @@ def render_conditional_puts(
         return ""
     field_lookup = field_lookup or {}
     known_names = set(field_lookup)
+    # Resolve condition-leaf Java types so numeric comparisons are type-correct
+    # (Integer autounbox vs BigDecimal compareTo). Empty without classpath/product.
+    leaf_types = _condition_leaf_types(blocks, scope, classpath, product)
     sorted_blocks = _topo_sort_cond_blocks(blocks)
     lines = []
     for b in sorted_blocks:
@@ -1380,7 +1433,7 @@ def render_conditional_puts(
         # Checked before the variants branch — the new flow carries the single
         # `when` as a one-entry variants payload, so order matters.
         if b.get("render") == "template":
-            lines.append(_render_template_put(b, scope, bid, key, truncated))
+            lines.append(_render_template_put(b, scope, bid, key, truncated, leaf_types))
             continue
 
         # N-way variant block (the 50-state feature) + folded binary blocks: an
@@ -1388,7 +1441,7 @@ def render_conditional_puts(
         # A default-only named variant (placeholder set, no conditioned rows)
         # also routes here — it renders its default text unconditionally.
         if b.get("variants") or b.get("placeholder"):
-            lines.append(_render_variant_puts(b, scope, field_lookup))
+            lines.append(_render_variant_puts(b, scope, field_lookup, leaf_types))
             continue
 
         quote_scoped = any(c.strip().startswith("quote.") for c in raw_conds)
@@ -1466,13 +1519,16 @@ def render_java(
     cond_blocks: list[dict] | None = None,
     field_lookup: dict[str, dict] | None = None,
     variables: list[dict] | None = None,
+    classpath: str | None = None,
 ) -> str:
     quote_extras = _generate_datafetcher_extras(quote_df_calls or [])
     policy_extras = _generate_datafetcher_extras(policy_df_calls or [])
     all_calls = (quote_df_calls or []) + (policy_df_calls or [])
     dyn_imports = _generate_dynamic_imports(all_calls)
-    quote_cond_puts = render_conditional_puts(cond_blocks or [], scope="quote", field_lookup=field_lookup)
-    policy_cond_puts = render_conditional_puts(cond_blocks or [], scope="policy", field_lookup=field_lookup)
+    quote_cond_puts = render_conditional_puts(cond_blocks or [], scope="quote", field_lookup=field_lookup,
+                                              classpath=classpath, product=product)
+    policy_cond_puts = render_conditional_puts(cond_blocks or [], scope="policy", field_lookup=field_lookup,
+                                               classpath=classpath, product=product)
     quote_guards = render_occurrence_guards(variables or [], field_lookup or {}, scope="quote")
     policy_guards = render_occurrence_guards(variables or [], field_lookup or {}, scope="policy")
     if "Objects.toString(" in quote_cond_puts + policy_cond_puts:
@@ -2080,7 +2136,8 @@ def _process_form(
         _append_to_plugin(java_path, missing_quote_df, missing_policy_df, offset_cond_blocks,
                           field_lookup=field_lookup,
                           quote_guard_code=quote_guard_code,
-                          policy_guard_code=policy_guard_code)
+                          policy_guard_code=policy_guard_code,
+                          classpath=classpath, product=product)
 
         added_keys = {c["key"] for c in missing_quote_df + missing_policy_df}
         additive_summary = {
@@ -2100,7 +2157,8 @@ def _process_form(
             render_java(product, suggested_path.name,
                         quote_df_calls=quote_df_calls, policy_df_calls=policy_df_calls,
                         cond_blocks=cond_blocks, field_lookup=field_lookup,
-                        variables=suggested.get("variables") or []),
+                        variables=suggested.get("variables") or [],
+                        classpath=classpath),
             encoding="utf-8",
         )
 
