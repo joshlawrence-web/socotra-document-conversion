@@ -38,3 +38,6 @@ build/
 *.egg-info/
 
 *.bak
+
+# Live customer prod data — never commit
+workspace-prod/

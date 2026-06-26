@@ -158,13 +158,28 @@ def _parse_literal_token(tok: _Tok) -> object:
     raise ConditionError(f"expected a literal, found {tok.text!r}")
 
 
+# Forgiving normalisation: `x != null` ≡ `x present`, `x == null` ≡ `x absent`.
+# Authors (and most other DSLs) reach for ==/!= against null; rather than reject
+# with a teaching error, rewrite to the canonical unary form. A quoted "null"
+# is left alone — the `"` sits between the operator and the word, so `==\s*null`
+# never matches it.
+_NULLCHECK_RE = re.compile(r"(==|!=)\s*(?:null|nil|none)\b", re.IGNORECASE)
+
+
+def _normalize_nullchecks(text: str) -> str:
+    return _NULLCHECK_RE.sub(
+        lambda m: " present" if m.group(1) == "!=" else " absent", text
+    )
+
+
 def parse_condition(text: str) -> ConditionAST:
     """Parse one condition string into a :class:`ConditionAST`.
 
     Raises :class:`ConditionError` on any syntax error (unknown operator,
-    missing operand, mixed and/or, trailing junk).
+    missing operand, mixed and/or, trailing junk). ``x != null`` / ``x == null``
+    are forgivingly rewritten to ``x present`` / ``x absent`` first.
     """
-    raw = (text or "").strip()
+    raw = _normalize_nullchecks((text or "").strip())
     if not raw:
         raise ConditionError("empty condition")
     toks = _tokenize(raw)
@@ -401,6 +416,12 @@ def validate_condition(
 
         info = index.get(cmp.path)
         if info is None:
+            # The registry is a curated subset: when a jar is available and the
+            # accessor resolves against the real model, accept it (no registry
+            # entry to type-check against, so the type check is skipped — Leg 4's
+            # --compile-check is the final arbiter). Without a jar, stay strict.
+            if classpath and product and not _javap_check(cmp.path, scope, classpath, product):
+                continue
             errors.append(f"{cmp.path!r}: not found in the path registry")
             continue
 
@@ -859,8 +880,17 @@ def parse_variants_csv(
             for cmp in ast.comparisons:
                 acc, sc = _resolve_path(cmp.path, index, leaf_map, doc_scope) if index else (cmp.path, _accessor_scope(cmp.path))
                 if acc is None:
-                    errors.append(f"{ph}: {sc}")
-                    resolved_ok = False
+                    # Jar-as-authority: the curated registry is a subset (and can
+                    # lag the real model). If a jar was supplied and the author's
+                    # fully-qualified path resolves against the real classes, trust
+                    # it over the registry rather than rejecting a valid accessor.
+                    jar_sc = _accessor_scope(cmp.path)
+                    if (classpath and product and "." in cmp.path and jar_sc
+                            and not _javap_check(cmp.path, jar_sc, classpath, product)):
+                        scopes.add(jar_sc)  # full accessor taken as authored
+                    else:
+                        errors.append(f"{ph}: {sc}")
+                        resolved_ok = False
                     continue
                 cmp.path = acc
                 if sc:
@@ -881,7 +911,19 @@ def parse_variants_csv(
                 errors.append(f"{ph}: template (loop) block has no `when` row — fill the condition")
         else:
             if default_count == 0:
-                errors.append(f"{ph}: no default row (blank/*/else 'when') — block would render empty when nothing matches")
+                if len(variants) == 1:
+                    # Binary show/hide: one conditioned row, no default → render
+                    # the text when the condition holds, nothing otherwise. The
+                    # implicit empty default gives the exact downstream shape the
+                    # binary fold already produces (one real row + empty default),
+                    # so authors needn't hand-write a blank default row per block.
+                    default = ""
+                else:
+                    errors.append(
+                        f"{ph}: no default row (blank/*/else 'when') — an N-way block with "
+                        f"{len(variants)} variants needs an explicit default; a single-row "
+                        f"show/hide block does not"
+                    )
             elif default_count > 1:
                 errors.append(f"{ph}: {default_count} default rows (expected exactly one)")
             # A default-only block (exactly one default, no conditioned rows) is

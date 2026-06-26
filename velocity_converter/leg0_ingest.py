@@ -1149,6 +1149,18 @@ def _primary_root_scope(mapping_path: Path) -> str | None:
     return "quote" if str(primary.get("id") or "").lower() == "quote" else "policy"
 
 
+def _product_from_mapping(mapping_path: Path) -> str | None:
+    """Product name from a mapping.yaml ('product' key), or None. Used to form the
+    FQCN for optional jar verification of condition paths."""
+    if not mapping_path.is_file():
+        return None
+    try:
+        data = yaml.safe_load(mapping_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return None
+    return (data.get("product") or "").strip() or None
+
+
 def write_conditional_registry(blocks: list[dict], output_path: Path) -> None:
     """Write {stem}.conditional-registry.yaml for Leg 4."""
     validate_contract(
@@ -1325,6 +1337,25 @@ def main() -> int:
         help="Override the variants CSV location (legacy form parse: default is the "
         "sibling <stem>.variants.csv)",
     )
+    parser.add_argument(
+        "--customer-jar",
+        default=None,
+        metavar="customer-config.jar",
+        help="Customer config jar. With --datamodel-jar (+ --product), a condition "
+        "path absent from the curated registry is accepted when it resolves against "
+        "the real model — the jar is authority over the registry.",
+    )
+    parser.add_argument(
+        "--datamodel-jar",
+        default=None,
+        metavar="core-datamodel.jar",
+        help="Core datamodel jar, paired with --customer-jar for jar-verified paths.",
+    )
+    parser.add_argument(
+        "--product",
+        default=None,
+        help="Product name for jar verification (default: read from <stem>.mapping.yaml).",
+    )
     args = parser.parse_args()
 
     # --- Mode: parse filled variants.csv (+ sidecar) → conditional-registry ---
@@ -1362,10 +1393,18 @@ def main() -> int:
         # Resolve bare-leaf conditions against the document's rendering root, so a
         # (quote) document conditions on quote.data.<f>, not the policy.data home.
         doc_scope = _primary_root_scope(machine_dir / f"{stem}.mapping.yaml")
+        # Optional jar-as-authority: when a jar is supplied, a fully-qualified
+        # condition path missing from the curated registry is accepted if it
+        # resolves against the real model (verified via javap downstream).
+        classpath = product = None
+        if args.customer_jar and args.datamodel_jar:
+            classpath = f"{Path(args.customer_jar).resolve()}:{Path(args.datamodel_jar).resolve()}"
+            product = args.product or _product_from_mapping(machine_dir / f"{stem}.mapping.yaml")
         try:
             blocks_meta = load_conditional_blocks(blocks_path)
             blocks = parse_variants_csv_to_blocks(
-                csv_path, blocks_meta, registry=registry, doc_scope=doc_scope
+                csv_path, blocks_meta, registry=registry, doc_scope=doc_scope,
+                classpath=classpath, product=product,
             )
         except ValueError as exc:
             print(f"Error: {exc}", file=sys.stderr)

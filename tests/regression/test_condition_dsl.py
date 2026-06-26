@@ -12,6 +12,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pytest
+
 from velocity_converter.condition_dsl import (
     ConditionError,
     ast_from_dict,
@@ -100,13 +102,19 @@ class TestParse(unittest.TestCase):
         with self.assertRaises(ConditionError):
             parse_condition("policy.data.state in []")
 
-    def test_null_literal_gives_present_absent_hint(self):
-        # Gap 3: `!= null` is not DSL — the error must point at present/absent.
-        for cond in ("quote.quoteNumber != null", "policy.data.state == null"):
-            with self.assertRaises(ConditionError) as cm:
-                parse_condition(cond)
-            self.assertIn("present", str(cm.exception))
-            self.assertIn("absent", str(cm.exception))
+    def test_null_literal_rewritten_to_present_absent(self):
+        # Forgiving parse: `x != null` ≡ `x present`, `x == null` ≡ `x absent`.
+        ast = parse_condition("quote.quoteNumber != null")
+        self.assertEqual(ast.comparisons[0].op, "present")
+        ast = parse_condition("policy.data.state == null")
+        self.assertEqual(ast.comparisons[0].op, "absent")
+        # Within an and-join too.
+        ast = parse_condition("quote.a != null and quote.b == null")
+        self.assertEqual([c.op for c in ast.comparisons], ["present", "absent"])
+        # A quoted "null" stays a string literal (not a null check).
+        ast = parse_condition('policy.data.state == "null"')
+        self.assertEqual(ast.comparisons[0].op, "==")
+        self.assertEqual(ast.comparisons[0].value, "null")
 
 
 class TestValidate(unittest.TestCase):
@@ -301,10 +309,26 @@ class TestVariantsCsv(unittest.TestCase):
             res.placeholders["clause"]["variants"][0]["when"]["path"], "policy.data.state"
         )
 
-    def test_missing_default_flagged(self):
+    def test_single_row_no_default_is_binary(self):
+        # One conditioned row + no default = binary show/hide (valid). Implicit
+        # empty default → render the text when the condition holds, else nothing.
         path = _write_csv(
             "placeholder,when,text\n"
             'stateClause,"state == ""CA""","California text"\n'
+        )
+        res = parse_variants_csv(path, REGISTRY)
+        self.assertEqual(res.errors, [])
+        ph = res.placeholders["stateClause"]
+        self.assertEqual(len(ph["variants"]), 1)
+        self.assertEqual(ph["default"], "")
+
+    def test_multi_variant_missing_default_flagged(self):
+        # ≥2 conditioned rows with no default is still flagged — a genuine N-way
+        # block needs an explicit fallback so it can't silently render empty.
+        path = _write_csv(
+            "placeholder,when,text\n"
+            'stateClause,"state == ""CA""","California text"\n'
+            'stateClause,"state == ""NY""","New York text"\n'
         )
         res = parse_variants_csv(path, REGISTRY)
         self.assertTrue(any("no default row" in e for e in res.errors))
@@ -348,6 +372,54 @@ class TestVariantsCsv(unittest.TestCase):
         )
         res = parse_variants_csv(path, REGISTRY)
         self.assertTrue(any("non-numeric" in e for e in res.errors))
+
+
+_REPO = Path(__file__).resolve().parents[2]
+_CUSTOMER_JAR = _REPO / "build" / "customer-config.jar"
+_DATAMODEL_JARS = [
+    j for j in sorted((_REPO / "build").glob("core-datamodel-v*.jar"))
+    if "sources" not in j.name and "javadoc" not in j.name
+] if (_REPO / "build").is_dir() else []
+_HAVE_JARS = _CUSTOMER_JAR.is_file() and bool(_DATAMODEL_JARS)
+
+
+@pytest.mark.jar
+@unittest.skipUnless(_HAVE_JARS, "SDK jars not present under build/")
+class TestJarAsAuthority(unittest.TestCase):
+    """A fully-qualified path missing from the curated registry is accepted when a
+    jar is supplied and it resolves against the real model; rejected without a jar
+    (the registry is a curated/sometimes-stale subset, the jar is the truth)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.classpath = f"{_CUSTOMER_JAR}:{_DATAMODEL_JARS[0]}"
+
+    # quote.endTime is a real ZenCoverQuote accessor but is NOT in REGISTRY above.
+    _CSV = (
+        "placeholder,when,text\n"
+        "endClause,quote.endTime present,Ends {endTime}\n"
+    )
+
+    def test_registry_missing_path_rejected_without_jar(self):
+        res = parse_variants_csv(_write_csv(self._CSV), REGISTRY)
+        self.assertTrue(any("not a known accessor" in e for e in res.errors))
+
+    def test_registry_missing_path_accepted_with_jar(self):
+        res = parse_variants_csv(
+            _write_csv(self._CSV), REGISTRY,
+            classpath=self.classpath, product="ZenCover",
+        )
+        self.assertEqual(res.errors, [])
+        ph = res.placeholders["endClause"]
+        self.assertEqual(ph["scope"], "quote")
+        self.assertEqual(ph["variants"][0]["when"]["path"], "quote.endTime")
+
+    def test_bogus_path_still_rejected_with_jar(self):
+        res = parse_variants_csv(
+            _write_csv("placeholder,when,text\nx,quote.totallyBogusXyz present,t\n"),
+            REGISTRY, classpath=self.classpath, product="ZenCover",
+        )
+        self.assertTrue(res.errors)
 
 
 if __name__ == "__main__":
