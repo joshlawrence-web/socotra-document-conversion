@@ -1197,7 +1197,11 @@ def _topo_sort_cond_blocks(blocks: list[dict]) -> list[dict]:
     result: list[dict] = []
 
     def _deps(block: dict) -> list[str]:
-        return re.findall(r'\$doc\.([A-Za-z_]\w*)', block.get("source_text") or "")
+        # A binary block carries $doc.<key> in source_text; a variant block carries
+        # nested refs in its variant texts/default (peeled from [[$x]] at parse).
+        texts = [block.get("source_text") or "", block.get("default") or ""]
+        texts += [v.get("text") or "" for v in (block.get("variants") or [])]
+        return re.findall(r'\$doc\.([A-Za-z_]\w*)', " ".join(texts))
 
     def visit(key: str) -> None:
         if key in visited:

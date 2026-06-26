@@ -269,6 +269,18 @@ variant) is parsed by `condition_dsl`. Use `present`/`absent` for null checks (N
 they reference quote/account/policy(segment) accessors — never per-exposure `item.*`
 (rejected at document scope, since there is no single item local).
 
+**Nested `[[$label]]` inside a variant's text** — a variant's `text` cell may embed
+`[[$other]]`, where `other` is another placeholder (row) in the same `variants.csv`.
+Parse peels `[[$x]]` → `$doc.x`; a referenced placeholder that has no document marker of
+its own is **synthesized** as a nested-only block; Leg 4 composes its value into the
+referrer's plugin string (`" + other + "`), topo-ordering the label's local first. The
+nested label never appears in the template — it lives only inside the parent's plugin
+value. Validated at parse (raises, no half-valid registry): a missing referent, a
+self-reference, a reference cycle, and a scope clash (a nested label must share its
+referrer's scope, or be unconditional). This is the **sheet-native** way to express a
+conditional-inside-a-conditional — authoring the nesting in the docx body is not
+required (and not the supported path for CSV-driven labels).
+
 ---
 
 ## MANDATORY pre-flight before Leg 2, 3, or 4 (after a Leg 0 run)
@@ -456,7 +468,7 @@ python3 tests/pipeline/run_test_pipeline.py --auto --render-preview
 Output lands in `tests/pipeline/output/<stem>/`. Exit code is non-zero on failure.
 
 **What is tested:** Leg 0 → variants.csv fill (built from `condition_seeds.yaml`) →
-`--parse-variants-csv` → Leg 2+3 → Leg 4 (single combined plugin) across eight fixtures:
+`--parse-variants-csv` → Leg 2+3 → Leg 4 (single combined plugin) across nine fixtures:
 `TestQuoteSummary(quote)`, `TestItemCert(segment)`, `TestRenewalNotice(segment)`,
 `TestItemsSchedule(segment)` (loops over the items array via `[Item]`/`[/Item]` markers),
 `TestGiftSchedule(segment)` (an `[Item]` loop inside a `[[conditional]]` → `render: template`
@@ -465,7 +477,10 @@ block — the variants-only template-as-`when`-only-row guard),
 `TestVariantThenBinary(segment)` (a `[[$token]]` variant block immediately followed by a binary
 `[[…]]` block — regression guard for the variant-then-binary parse fix, now one CSV path), and
 `TestVariantBareLeaf(segment)` (a `[[$token]]` block whose variant text uses a **bare leaf**
-`{discountAmount}` — exercises Leg 4's variant-text leaf resolution / "Decision B").
+`{discountAmount}` — exercises Leg 4's variant-text leaf resolution / "Decision B"), and
+`TestNestedVariantLabel(segment)` (a `[[$token]]` block whose variant text embeds a **nested
+`[[$label]]` reference** to a second, document-marker-less placeholder — exercises the
+nested-ref peel + block synthesis + topo-ordered plugin composition).
 
 **Adding a new fixture** (four-step checklist):
 1. Add a builder function to `tools/generate_test_fixtures.py` and append it to `FIXTURES`.

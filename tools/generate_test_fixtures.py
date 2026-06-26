@@ -392,6 +392,48 @@ def _build_variant_bare_leaf(doc):
 
 
 # ---------------------------------------------------------------------------
+# Document 9: TestNestedVariantLabel(segment) — a [[$x]] reference nested INSIDE
+# another variant block's text cell (nested-only label, no document marker)
+# ---------------------------------------------------------------------------
+
+def _build_nested_variant_label(doc):
+    """Exercises nested [[$x]] references inside a variant text cell.
+
+    The document carries a single [[$benefitClause]] marker. Its seed variant text
+    embeds [[$amountLabel]] — a *second* placeholder that has no document marker of
+    its own (it exists only as a nested reference). The parse step must synthesize a
+    block for amountLabel, condition_dsl peels [[$amountLabel]] → $doc.amountLabel,
+    and Leg 4 composes the label's value into benefitClause's plugin string
+    (`" + amountLabel + "`), ordering amountLabel's local first via the topo sort.
+    Both share policy scope (the nested-label scope-match requirement).
+    """
+    _heading(doc, "Nested Variant Label Notice")
+
+    _para(doc, "Dear {account.data.firstName} {account.data.lastName},")
+    _para(doc, "")
+    _para(doc, "Please review the benefit that applies to your policy below.")
+    _para(doc, "")
+
+    _heading(doc, "Policy Details", level=2)
+    tbl = doc.add_table(rows=1, cols=2)
+    tbl.rows[0].cells[0].text = "Field"
+    tbl.rows[0].cells[1].text = "Value"
+    _table_row(tbl, "Policy Number", "{policy.policyNumber}")
+    _table_row(tbl, "Discount Type", "{policy.data.discountType}")
+    _para(doc, "")
+
+    _heading(doc, "Applicable Benefit", level=2)
+    # Only the parent marker is in the document; [[$amountLabel]] lives in its seed
+    # text and is synthesized as a nested-only block at parse time.
+    _para(doc, "[[$benefitClause]]")
+    _para(doc, "")
+
+    _para(doc, "Thank you for choosing ZenCover.")
+    _para(doc, "")
+    _para(doc, "ZenCover Customer Services")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -404,6 +446,7 @@ FIXTURES = [
     ("TestStateDisclosure(segment).docx", _build_state_disclosure),
     ("TestVariantThenBinary(segment).docx", _build_variant_then_binary),
     ("TestVariantBareLeaf(segment).docx", _build_variant_bare_leaf),
+    ("TestNestedVariantLabel(segment).docx", _build_nested_variant_label),
 ]
 
 
