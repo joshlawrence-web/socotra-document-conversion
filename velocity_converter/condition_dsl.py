@@ -776,6 +776,17 @@ def _resolve_path(
 _DEFAULT_WHEN = {"", "*", "else", "default"}
 _CSV_COLUMNS = ("placeholder", "when", "text")
 
+# A nested reference inside a variant's text cell: [[$otherRow]] points at another
+# placeholder in the same sheet. Peel it to the machine form $doc.<key> that the
+# downstream codegen ($doc.<key> → " + key + " in _source_text_to_java) and the
+# topo-sort already understand — so a label conditional composes into its parent.
+_NESTED_REF_RE = re.compile(r"\[\[\$([A-Za-z_]\w*)\]\]")
+
+
+def _peel_nested_refs(text: str) -> str:
+    """``[[$x]]`` → ``$doc.x`` in a variant text/default cell (no-op without one)."""
+    return _NESTED_REF_RE.sub(r"$doc.\1", text or "")
+
 
 @dataclass
 class VariantParseResult:
@@ -865,7 +876,8 @@ def parse_variants_csv(
         default_count = 0
         for row in prows:
             when = row.get("when", "").strip()
-            text = row.get("text", "")
+            # Peel nested [[$x]] refs to $doc.x before storing — composes downstream.
+            text = _peel_nested_refs(row.get("text", ""))
             if when.lower() in _DEFAULT_WHEN:
                 default_count += 1
                 default = text

@@ -49,6 +49,7 @@ ALL_FIXTURES = [
     "TestStateDisclosure(segment).docx",
     "TestVariantThenBinary(segment).docx",
     "TestVariantBareLeaf(segment).docx",
+    "TestNestedVariantLabel(segment).docx",
 ]
 
 # ---------------------------------------------------------------------------
@@ -120,8 +121,22 @@ def _build_filled_csv(csv_path: Path, sidecar_path: Path, seeds: dict) -> None:
                 raise SystemExit(f"missing `when` seed for binary block {key!r}")
             w.writerow([key, seed, stub_text.get(key, "")])
             w.writerow([key, "", ""])
+    # Nested-only labels: seed placeholders referenced via [[$x]] from another row's
+    # text, with no document marker (so absent from the sidecar). Emit their rows so
+    # the parse step can synthesize their blocks.
+    sidecar_keys = {b.get("key") for b in sidecar}
+    extra = 0
+    for key, seed in seeds.items():
+        if key in sidecar_keys:
+            continue
+        if not isinstance(seed, list):
+            raise SystemExit(f"nested-only seed {key!r} must be a list of rows")
+        for r in seed:
+            w.writerow([key, r.get("when", ""), r.get("text", "")])
+        extra += 1
     csv_path.write_text(buf.getvalue(), encoding="utf-8")
-    print(f"    built filled variants.csv ({len(sidecar)} block(s))")
+    print(f"    built filled variants.csv ({len(sidecar)} block(s)"
+          + (f" + {extra} nested-only" if extra else "") + ")")
 
 
 def _wait_for_csv(csv_path: Path, stem: str) -> None:

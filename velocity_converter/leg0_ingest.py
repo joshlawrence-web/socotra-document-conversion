@@ -1049,6 +1049,48 @@ def parse_conditional_form(
     return blocks
 
 
+# A nested reference in a parsed variant text cell: condition_dsl peels [[$x]] → $doc.x
+# before storing, so the join with sibling blocks works off the machine form.
+_DOC_REF_RE = re.compile(r"\$doc\.([A-Za-z_]\w*)")
+
+
+def _nested_refs(data: dict) -> set[str]:
+    """Placeholder keys referenced via ``$doc.<key>`` in a placeholder's texts."""
+    texts = [data.get("default") or ""]
+    texts += [v.get("text") or "" for v in (data.get("variants") or [])]
+    return set(_DOC_REF_RE.findall(" ".join(texts)))
+
+
+def _find_ref_cycle(refs: dict[str, set[str]]) -> list[str] | None:
+    """Return a cycle path through the nested-ref graph, or None. DFS 3-colour."""
+    WHITE, GREY = 0, 1
+    color: dict[str, int] = {}
+    stack: list[str] = []
+
+    def dfs(u: str) -> list[str] | None:
+        color[u] = GREY
+        stack.append(u)
+        for v in refs.get(u, ()):
+            if v not in refs:  # missing referent — reported separately
+                continue
+            if color.get(v) == GREY:
+                return stack[stack.index(v):] + [v]
+            if color.get(v, WHITE) == WHITE:
+                cyc = dfs(v)
+                if cyc:
+                    return cyc
+        stack.pop()
+        color[u] = 2
+        return None
+
+    for ph in refs:
+        if color.get(ph, WHITE) == WHITE:
+            cyc = dfs(ph)
+            if cyc:
+                return cyc
+    return None
+
+
 def parse_variants_csv_to_blocks(
     csv_path: Path,
     blocks_meta: list[dict],
@@ -1085,6 +1127,31 @@ def parse_variants_csv_to_blocks(
     )
     errors = list(result.errors)
 
+    # Nested [[$x]] refs (peeled to $doc.x at parse): validate the reference graph
+    # before building blocks so a half-valid registry is never written.
+    phs = result.placeholders
+    refs = {ph: _nested_refs(data) for ph, data in phs.items()}
+    for ph, deps in refs.items():
+        ph_scope = phs[ph].get("scope") or ""
+        for d in deps:
+            if d == ph:
+                errors.append(f"'{ph}' references itself via [[${ph}]] — nesting cannot be self-referential")
+                continue
+            if d not in phs:
+                errors.append(f"'{ph}' references [[${d}]] but the variants CSV has no row '{d}'")
+                continue
+            # A conditional label must share its parent's scope; an unconditional
+            # one (scope "") composes into either overload, so it is exempt.
+            d_scope = phs[d].get("scope") or ""
+            if d_scope and ph_scope and d_scope != ph_scope:
+                errors.append(
+                    f"'{ph}' ({ph_scope}-scoped) references [[${d}]] which is {d_scope}-scoped — "
+                    "a nested label must share its parent's scope (or be unconditional)"
+                )
+    cycle = _find_ref_cycle(refs)
+    if cycle:
+        errors.append("nested [[$...]] reference cycle: " + " → ".join(cycle))
+
     out_blocks: list[dict] = []
     for b in blocks_meta:
         key = block_key(b)
@@ -1114,8 +1181,30 @@ def parse_variants_csv_to_blocks(
             block["default"] = data["default"]
         out_blocks.append(block)
 
-    for ph in result.placeholders:
-        if ph not in by_key:
+    # Placeholders with no sidecar block: synthesize one if it is a nested-only label
+    # (referenced via [[$x]] from another row), else it is a true orphan — keep the
+    # error. Synthesized blocks carry no document marker (source_text "") and compose
+    # inside their referrer's plugin string; the template never sees them.
+    all_refs: set[str] = set().union(*refs.values()) if refs else set()
+    next_id = max((b.get("id") or 0 for b in blocks_meta), default=0) + 1
+    for ph in sorted(phs):
+        if ph in by_key:
+            continue
+        if ph in all_refs:
+            data = phs[ph]
+            out_blocks.append({
+                "id": next_id,
+                "key": ph,
+                "source_text": "",
+                "parent_id": None,
+                "depth": 0,
+                "placeholder": ph,
+                "scope": data["scope"],
+                "variants": data["variants"],
+                "default": data["default"],
+            })
+            next_id += 1
+        else:
             errors.append(
                 f"variants CSV placeholder '{ph}' has no matching block in the sidecar "
                 "(was it renamed?)"

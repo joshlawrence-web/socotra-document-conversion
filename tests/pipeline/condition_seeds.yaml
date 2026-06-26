@@ -73,3 +73,20 @@
       text: 'Policy {policy.policyNumber}: a percentage discount applies to your premium.'
     - when: ''
       text: 'Policy {policy.policyNumber}: no discount applies. Amount on file is {discountAmount}.'
+
+# Nested [[$x]] reference inside a variant text cell. benefitClause's text embeds
+# [[$amountLabel]]; amountLabel is a SEPARATE placeholder with no document marker
+# (nested-only) — the parse step synthesizes its block, condition_dsl peels the ref
+# to $doc.amountLabel, and Leg 4 composes it into benefitClause's plugin string.
+# Both share policy scope (the nested-label scope-match requirement).
+"TestNestedVariantLabel(segment)":
+  benefitClause:
+    - when: 'discountType == "FLAT"'
+      text: 'Policy {policy.policyNumber}: flat discount[[$amountLabel]] of {policy.data.discountAmount} applied.'
+    - when: ''
+      text: 'Policy {policy.policyNumber}: no discount applies.'
+  amountLabel:
+    - when: 'discountType == "FLAT"'
+      text: ' (flat tier)'
+    - when: ''
+      text: ''
