@@ -5,18 +5,23 @@
 Proves that `extract_paths.py` flips both `coverage_terms: true` and
 `default_option_prefix: true` when any coverage config carries a
 non-empty `coverageTerms: [...]` array whose options include at least
-one entry prefixed with `*`, that the extractor **does not read the
-term definitions** (the coverage's `data` map is still walked, but
-`coverageTerms` are silently dropped), and that the mapping-suggester
-refuses to emit a `high` match for any placeholder whose resolution
-would depend on a coverage-term lookup.
+one entry prefixed with `*`, and that the extractor **emits a `terms`
+entry per coverage term** (`$<iter>.<Cov>.<term>.value`) alongside the
+coverage's `data` fields.
 
-This is the canonical regression for `CONFIG_COVERAGE.md` rows 9 + 10
-— without `coverage_terms` detection, a placeholder that happens to
-name a coverage term would fall through Rule 2 step 5 to
-`supply-from-plugin`, silently inviting a plugin to invent the
-deductible — not flagging the structural gap that the term is part
-of the coverage config but unreachable through the current extractor.
+> **Updated 2026-06-29.** The extractor previously dropped `coverageTerms`
+> (registry had zero term paths); it now reads them — see
+> `CONFIG_COVERAGE.md` row 9. The `feature_support` flags below and the
+> coverage `data`-field behaviour are unchanged. The suggested/review
+> narrative further down (the `flood_deductible` refusal) describes the
+> **mapping-suggester skill**, which the conformance runner does not
+> execute and whose goldens are not committed; that narrative predates this
+> change and should be re-derived when the suggester is next run against
+> this fixture (the registry now offers `$dwelling.Flood.deductible.value`
+> as a candidate, so the refusal — if any — now hinges on
+> `default_option_prefix`, not a missing registry path).
+
+This is the canonical regression for `CONFIG_COVERAGE.md` rows 9 + 10.
 
 ## `CONFIG_COVERAGE.md` rows covered
 
@@ -59,20 +64,21 @@ name suggests a coverage-term lookup) is downgraded to `low` +
 
 1. **Presence of a non-empty `coverageTerms` list flips the flag.**
    `detect_features()` inspects every coverage config for a
-   `coverageTerms` key whose value is a non-empty list
-   (`extract_paths.py` lines 443–444). An empty list or a missing
-   key leaves the flag `false`. The fixture proves the positive
-   case.
+   `coverageTerms` key whose value is a non-empty list. An empty list
+   or a missing key leaves the flag `false`. The fixture proves the
+   positive case.
 2. **`default_option_prefix` is a dependent flag.** It only fires
    when `coverage_terms` is also `true` *and* at least one option
-   string starts with `*` (`extract_paths.py` lines 446–453). The
+   string starts with `*` (scanned in `detect_features()`). The
    fixture's `"*500"` option is the canonical trigger.
-3. **Extractor ignores term definitions.** `coverageTerms` never
-   reach `build_registry()`'s output — the `Flood` coverage block
-   in the golden registry carries exactly one field
-   (`effectiveDate`, from the coverage's `data` map), not the
-   `deductible` term. This mirrors the stated gap in
-   `CONFIG_COVERAGE.md` row 9's "In registry today?" column: `no`.
+3. **Extractor emits term paths.** `extract_coverage_terms()` reads
+   each `coverageTerms` entry and emits a `terms` row on the coverage
+   block — the `Flood` block in the golden registry now carries the
+   `deductible` term (`field: deductible`,
+   `velocity: $dwelling.Flood.deductible.value`,
+   `options: ["250", "*500", "1000"]`) alongside its one `data` field
+   (`effectiveDate`). This realises `CONFIG_COVERAGE.md` row 9's "In
+   registry today?" column: `yes`.
 4. **Coverage `data` fields still resolve cleanly.** The
    `flood_effective_date` placeholder matches
    `$dwelling.Flood.data.effectiveDate` at `high`. The refusal is
@@ -120,10 +126,11 @@ name suggests a coverage-term lookup) is downgraded to `low` +
 
 ## Goldens
 
-- `golden/path-registry.yaml` — 19 total addressable paths (8
+- `golden/path-registry.yaml` — 20 total addressable paths (8
   system + 9 account + 0 policy + 1 exposure field + 1 coverage
-  field); 1 iterable (Dwelling+); 1 coverage (Flood with 1 data
-  field — no term paths); `feature_support.coverage_terms: true`,
+  field + 1 coverage term); 1 iterable (Dwelling+); 1 coverage (Flood
+  with 1 data field + 1 term — `deductible`);
+  `feature_support.coverage_terms: true`,
   `feature_support.default_option_prefix: true`, every other flag
   `false`.
 - `golden/suggested.yaml` — 4 `high` (`policy_number`, `dwellings`,

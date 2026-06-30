@@ -162,6 +162,10 @@ def build_candidate_index(reg: dict, roots: list[str] | None = None) -> list[dic
             for e in cov.get("fields") or []:
                 if isinstance(e, dict):
                     _add(e, exp_name)
+            # Coverage terms mirror a field row (field + velocity = $…<term>.value).
+            for e in cov.get("terms") or []:
+                if isinstance(e, dict):
+                    _add(e, exp_name)
             for ch in cov.get("charges") or []:
                 if isinstance(ch, dict):
                     cname = str(ch.get("name") or "")

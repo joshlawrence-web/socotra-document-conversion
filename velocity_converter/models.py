@@ -233,6 +233,29 @@ class ChargeEntry(_ContractModel):
     requires_scope: list[ScopeRequirement] = Field(default_factory=list)
 
 
+class TermEntry(_ContractModel):
+    """Coverage term entry (coverage ``terms``).
+
+    The term's selected value lives at ``velocity`` (= ``$…<term>.value``);
+    ``velocity_object`` is the term object itself. Shaped like a field row
+    (``field`` + ``velocity``) so the shared candidate index needs no
+    special-casing."""
+
+    name: str
+    field: str = ""
+    display_name: str = ""
+    type: str = ""
+    base_type: str = ""
+    quantifier: Quantifier = ""
+    cardinality: Cardinality | Literal[""] = ""
+    iterable: bool = False
+    category: str = ""
+    velocity: str = ""
+    velocity_object: str = ""
+    options: list = Field(default_factory=list)
+    requires_scope: list[ScopeRequirement] = Field(default_factory=list)
+
+
 class IterableEntry(_ContractModel):
     """SCHEMA.md "iterables" index entry."""
 
@@ -259,6 +282,7 @@ class CoverageEntry(_ContractModel):
     requires_scope: list[ScopeRequirement] = Field(default_factory=list)
     fields: list[RegistryEntry] = Field(default_factory=list)
     charges: list[ChargeEntry] = Field(default_factory=list)
+    terms: list[TermEntry] = Field(default_factory=list)
 
 
 class ExposureEntry(_ContractModel):

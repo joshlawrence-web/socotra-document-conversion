@@ -1,9 +1,9 @@
 schema_version: '1.1'
 meta:
-  config_dir: /Users/joshualawrence/Projects/Cursor/Experiments/VelocityConverter1stLeg/conformance/fixtures/itemcare-jar/socotra-config
+  config_dir: conformance/fixtures/itemcare-jar/socotra-config
   product: ItemCare
   display_name: ItemCare
-  generated_at: '2026-06-03T09:40:06.316465+00:00'
+  generated_at: '2026-06-29T10:18:06.272494+00:00'
   source_config_sha256: 79f8ffedc7298f7e039dc5d6d25f6148f56f8147195c8d998115d4148936b56d
   note: 'Socotra Velocity dot-notation paths. Root object is $data (the renderingData
     from DocumentDataSnapshotPlugin). Policy custom fields: $data.data.<field>. Account
@@ -1156,6 +1156,21 @@ exposures:
       requires_scope:
       - iterator: $item
         foreach: '#foreach ($item in $data.items)'
+    terms:
+    - name: ZeroDeductible
+      field: zeroDeductible
+      display_name: ZeroDeductible
+      type: ''
+      base_type: ''
+      quantifier: ''
+      cardinality: exactly_one
+      iterable: false
+      category: coverage_term
+      velocity: $item.Accessories.zeroDeductible.value
+      velocity_object: $item.Accessories.zeroDeductible
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
     quantifier: '?'
     cardinality: zero_or_one
     iterable: false
@@ -1247,6 +1262,21 @@ exposures:
       category: nonFinancial
       velocity_amount: $item.AccidentalDamage.charges.premiumExclDiscount.amount
       velocity_object: $item.AccidentalDamage.charges.premiumExclDiscount
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    terms:
+    - name: ZeroDeductible
+      field: zeroDeductible
+      display_name: ZeroDeductible
+      type: ''
+      base_type: ''
+      quantifier: '!'
+      cardinality: exactly_one_auto
+      iterable: false
+      category: coverage_term
+      velocity: $item.AccidentalDamage.zeroDeductible.value
+      velocity_object: $item.AccidentalDamage.zeroDeductible
       requires_scope:
       - iterator: $item
         foreach: '#foreach ($item in $data.items)'
@@ -1386,6 +1416,21 @@ exposures:
       requires_scope:
       - iterator: $item
         foreach: '#foreach ($item in $data.items)'
+    terms:
+    - name: ZeroDeductible
+      field: zeroDeductible
+      display_name: ZeroDeductible
+      type: ''
+      base_type: ''
+      quantifier: ''
+      cardinality: exactly_one
+      iterable: false
+      category: coverage_term
+      velocity: $item.Breakdown.zeroDeductible.value
+      velocity_object: $item.Breakdown.zeroDeductible
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
     quantifier: '?'
     cardinality: zero_or_one
     iterable: false
@@ -1463,6 +1508,21 @@ exposures:
       category: premium
       velocity_amount: $item.Loss.charges.premium.amount
       velocity_object: $item.Loss.charges.premium
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    terms:
+    - name: ZeroDeductible
+      field: zeroDeductible
+      display_name: ZeroDeductible
+      type: ''
+      base_type: ''
+      quantifier: ''
+      cardinality: exactly_one
+      iterable: false
+      category: coverage_term
+      velocity: $item.Loss.zeroDeductible.value
+      velocity_object: $item.Loss.zeroDeductible
       requires_scope:
       - iterator: $item
         foreach: '#foreach ($item in $data.items)'
@@ -1546,6 +1606,21 @@ exposures:
       requires_scope:
       - iterator: $item
         foreach: '#foreach ($item in $data.items)'
+    terms:
+    - name: ZeroDeductible
+      field: zeroDeductible
+      display_name: ZeroDeductible
+      type: ''
+      base_type: ''
+      quantifier: ''
+      cardinality: exactly_one
+      iterable: false
+      category: coverage_term
+      velocity: $item.RepeatFaultThree.zeroDeductible.value
+      velocity_object: $item.RepeatFaultThree.zeroDeductible
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
     quantifier: '?'
     cardinality: zero_or_one
     iterable: false
@@ -1623,6 +1698,21 @@ exposures:
       category: premium
       velocity_amount: $item.Replacement.charges.premium.amount
       velocity_object: $item.Replacement.charges.premium
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    terms:
+    - name: ZeroDeductible
+      field: zeroDeductible
+      display_name: ZeroDeductible
+      type: ''
+      base_type: ''
+      quantifier: ''
+      cardinality: exactly_one
+      iterable: false
+      category: coverage_term
+      velocity: $item.Replacement.zeroDeductible.value
+      velocity_object: $item.Replacement.zeroDeductible
       requires_scope:
       - iterator: $item
         foreach: '#foreach ($item in $data.items)'
@@ -1706,6 +1796,21 @@ exposures:
       requires_scope:
       - iterator: $item
         foreach: '#foreach ($item in $data.items)'
+    terms:
+    - name: ZeroDeductible
+      field: zeroDeductible
+      display_name: ZeroDeductible
+      type: ''
+      base_type: ''
+      quantifier: ''
+      cardinality: exactly_one
+      iterable: false
+      category: coverage_term
+      velocity: $item.ReplacementRepair.zeroDeductible.value
+      velocity_object: $item.ReplacementRepair.zeroDeductible
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
     quantifier: '?'
     cardinality: zero_or_one
     iterable: false
@@ -1786,6 +1891,21 @@ exposures:
       requires_scope:
       - iterator: $item
         foreach: '#foreach ($item in $data.items)'
+    terms:
+    - name: ZeroDeductible
+      field: zeroDeductible
+      display_name: ZeroDeductible
+      type: ''
+      base_type: ''
+      quantifier: ''
+      cardinality: exactly_one
+      iterable: false
+      category: coverage_term
+      velocity: $item.ReplacementWO.zeroDeductible.value
+      velocity_object: $item.ReplacementWO.zeroDeductible
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
     quantifier: '?'
     cardinality: zero_or_one
     iterable: false
@@ -1863,6 +1983,21 @@ exposures:
       category: premium
       velocity_amount: $item.Theft.charges.premium.amount
       velocity_object: $item.Theft.charges.premium
+      requires_scope:
+      - iterator: $item
+        foreach: '#foreach ($item in $data.items)'
+    terms:
+    - name: ZeroDeductible
+      field: zeroDeductible
+      display_name: ZeroDeductible
+      type: ''
+      base_type: ''
+      quantifier: ''
+      cardinality: exactly_one
+      iterable: false
+      category: coverage_term
+      velocity: $item.Theft.zeroDeductible.value
+      velocity_object: $item.Theft.zeroDeductible
       requires_scope:
       - iterator: $item
         foreach: '#foreach ($item in $data.items)'

@@ -142,7 +142,7 @@ must land in the same PR or the contract is broken.
 | `quantifier` | enum | One of `''`, `'!'`, `'?'`, `'+'`, `'*'`. |
 | `cardinality` | enum | `exactly_one`, `exactly_one_auto`, `zero_or_one`, `one_or_more`, `any`. |
 | `iterable` | bool | `true` iff `quantifier in {'+', '*'}`. |
-| `category` | enum | `system`, `account`, `policy_data`, `exposure_data`, `exposure_system`, `coverage_data`. |
+| `category` | enum | `system`, `account`, `policy_data`, `exposure_data`, `exposure_system`, `coverage_data`, `coverage_term`. |
 | `velocity` | string | Full Velocity dot-notation path (e.g. `$vehicle.data.year`). |
 | `requires_scope` | list of map | Ordered list (outermost first) of `#foreach` steps that must be active for `velocity` to resolve. Empty list when none are required. |
 | `options` | list of string? | Enum options when the config declared `options: [...]`. Omitted otherwise. |
@@ -157,6 +157,26 @@ must land in the same PR or the contract is broken.
 | `velocity_amount` | string | `$…charges.<Name>.amount` path. |
 | `velocity_object` | string | `$…charges.<Name>` (use when iterating the charge object itself). |
 | `requires_scope` | list of map | Same shape as above. |
+
+### Term-entry keys (coverage `terms`)
+
+A coverage term compiles to a typed accessor on the coverage record
+(`lowerFirst(name)`); its selected value serialises at `$<iter>.<Cov>.<term>.value`.
+Sourced from a coverage's `coverageTerms` list — either string names referencing
+`coverageTerms/config.json` (optional quantifier suffix) or inline `{name, value|options}` objects.
+
+| Key | Type | Description |
+|---|---|---|
+| `name` | string | Term name as written in `coverageTerms` (config form, e.g. `AccidentalDeathMaximumAmount`). |
+| `field` | string | `lowerFirst(name)` — the record accessor / renderingData map key. |
+| `display_name` | string | `displayName` from the term definition, or `name`. |
+| `type` / `base_type` | string | The term's `value.type` (value-type terms); empty for options-type terms. |
+| `quantifier` / `cardinality` / `iterable` | enum | From the term name's suffix (e.g. `!` → `exactly_one_auto`). |
+| `category` | enum | Always `coverage_term`. |
+| `velocity` | string | `$<iter>.<Cov>.<term>.value` — the selected value. |
+| `velocity_object` | string | `$<iter>.<Cov>.<term>` — the term object. |
+| `options` | list of string? | Option codes when the term declared `options`. Omitted otherwise. |
+| `requires_scope` | list of map | Inherited from the parent exposure. |
 
 ### Iterables-index keys
 
@@ -196,6 +216,7 @@ must land in the same PR or the contract is broken.
 | `requires_scope` | list of map | Inherited from parent exposure. |
 | `fields` | list of map | Coverage data-extension fields. |
 | `charges` | list of map | Coverage-level charges. |
+| `terms` | list of map | Coverage terms (see Term-entry keys). Omitted when the coverage has none. |
 | `quantifier` / `cardinality` / `iterable` | enum | Same as entry-level. |
 
 ### `requires_scope` step shape
