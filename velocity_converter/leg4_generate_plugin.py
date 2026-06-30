@@ -275,6 +275,14 @@ def _build_cond_field_lookup(
         info = {"data_source": ds, "scope": None, "java_expr": "", "unsupported_reason": ""}
         cand = v.get("candidate") or {}
         cat = vel_to_cat.get(ds)
+        if cat is None and ds.startswith("$data."):
+            # data_source may carry a spliced rendering-root key
+            # ($data.policy.<f> / $data.segment.data.<f>) absent from the
+            # registry's root-relative velocities — strip it to find the
+            # category. The java_expr derivation below is already prefix-aware.
+            _head, _, _tail = ds[len("$data."):].partition(".")
+            if _head in ("policy", "segment") and _tail:
+                cat = vel_to_cat.get("$data." + _tail)
         if not ds or ds.startswith("UNRESOLVED:"):
             info["data_source"] = ""
         elif cand.get("source") == "datafetcher":

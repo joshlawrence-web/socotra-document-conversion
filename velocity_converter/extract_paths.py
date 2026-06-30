@@ -38,6 +38,7 @@ import copy
 import json
 import sys
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 
 
@@ -206,6 +207,92 @@ def extract_data_fields(data_map: dict, dot_prefix: str, category: str,
     return entries
 
 
+def _lower_first(name: str) -> str:
+    """Lowercase the first character (config term name → record accessor name)."""
+    return name[:1].lower() + name[1:] if name else name
+
+
+@lru_cache(maxsize=None)
+def _load_coverage_term_defs(config_dir_str: str) -> dict:
+    """``coverageTerms/config.json`` as a name → term-definition map (empty if absent).
+
+    Cached per config dir — the file is read once across all coverages.
+    """
+    path = Path(config_dir_str) / "coverageTerms" / "config.json"
+    if not path.exists():
+        return {}
+    try:
+        defs = load_json(path)
+    except Exception:
+        return {}
+    return defs if isinstance(defs, dict) else {}
+
+
+def extract_coverage_terms(raw_terms: list, term_defs: dict, iterator: str,
+                           coverage_name: str, scope: list) -> list:
+    """
+    Coverage terms → registry entries (one per term).
+
+    A coverage's ``coverageTerms`` list takes one of two shapes:
+      - a string name referencing ``coverageTerms/config.json`` (optional
+        quantifier suffix, e.g. ``"AccidentalDeathMaximumAmount!"``);
+      - an inline object ``{name, displayName, value|options}``.
+
+    Each term compiles to a typed accessor on the coverage record
+    (``lowerFirst(name)``, verified against customer-config.jar); its selected
+    value serialises at ``$<iter>.<Cov>.<accessor>.value`` (records → nested
+    Maps in renderingData). The entry mirrors a field row (``field`` +
+    ``velocity``) so the shared candidate index picks it up unchanged.
+    """
+    out = []
+    for raw in raw_terms or []:
+        if isinstance(raw, dict):
+            term_name, quant = str(raw.get("name") or ""), ""
+            defn = raw
+        elif isinstance(raw, str):
+            term_name, quant = parse_quantified_token(raw)
+            defn = term_defs.get(term_name) or {}
+        else:
+            continue
+        if not term_name:
+            continue
+
+        accessor = _lower_first(term_name)
+        display  = defn.get("displayName", term_name) if isinstance(defn, dict) else term_name
+
+        # A value-type term carries ``value: {type: ...}``; an options-type term
+        # carries ``options:`` and serialises the selected option code.
+        value_def  = defn.get("value") if isinstance(defn, dict) else None
+        value_type = value_def.get("type", "") if isinstance(value_def, dict) else ""
+        base_type, _vq = parse_quantified_token(value_type)
+
+        raw_opts = defn.get("options") if isinstance(defn, dict) else None
+        if isinstance(raw_opts, dict):
+            options = list(raw_opts.keys())
+        elif isinstance(raw_opts, list):
+            options = list(raw_opts)
+        else:
+            options = []
+
+        cov_term_object = "${}.{}.{}".format(iterator, coverage_name, accessor)
+        entry = {
+            "name":            term_name,
+            "field":           accessor,
+            "display_name":    display,
+            "type":            value_type,
+            "base_type":       base_type,
+            **quantifier_fields(quant),
+            "category":        "coverage_term",
+            "velocity":        "{}.value".format(cov_term_object),
+            "velocity_object": cov_term_object,
+            "requires_scope":  copy.deepcopy(scope),
+        }
+        if options:
+            entry["options"] = options
+        out.append(entry)
+    return out
+
+
 def extract_coverage(coverage_name: str, config_dir: Path, iterator: str,
                      scope: list) -> dict | None:
     """
@@ -226,6 +313,7 @@ def extract_coverage(coverage_name: str, config_dir: Path, iterator: str,
     display_name = cfg.get("displayName", coverage_name)
     data_map     = cfg.get("data", {})
     charge_names = cfg.get("charges", [])
+    term_names   = cfg.get("coverageTerms", [])
 
     cov_velocity    = "${}.{}".format(iterator, coverage_name)
     cov_data_prefix = "${}.{}.data".format(iterator, coverage_name)
@@ -251,6 +339,14 @@ def extract_coverage(coverage_name: str, config_dir: Path, iterator: str,
             "requires_scope":  copy.deepcopy(scope),
         })
 
+    terms = extract_coverage_terms(
+        term_names,
+        _load_coverage_term_defs(str(config_dir)),
+        iterator,
+        coverage_name,
+        scope,
+    )
+
     block = {
         "name":           coverage_name,
         "display_name":   display_name,
@@ -262,6 +358,8 @@ def extract_coverage(coverage_name: str, config_dir: Path, iterator: str,
         block["fields"] = fields
     if charges:
         block["charges"] = charges
+    if terms:
+        block["terms"] = terms
 
     return block
 
@@ -775,6 +873,7 @@ def main():
     n_exp_f    = sum(len(e.get("fields", [])) for e in registry["exposures"])
     n_cov      = sum(len(e.get("coverages", [])) for e in registry["exposures"])
     n_cov_f    = sum(len(c.get("fields", [])) for e in registry["exposures"] for c in e.get("coverages", []))
+    n_cov_t    = sum(len(c.get("terms", []))  for e in registry["exposures"] for c in e.get("coverages", []))
 
     n_features_on = sum(1 for v in registry["feature_support"].values() if v)
     n_features    = len(registry["feature_support"])
@@ -789,8 +888,9 @@ def main():
     print("  Exposure fields:  {}".format(n_exp_f))
     print("  Coverages:        {}".format(n_cov))
     print("  Coverage fields:  {}".format(n_cov_f))
+    print("  Coverage terms:   {}".format(n_cov_t))
     print("Feature flags on: {} / {}".format(n_features_on, n_features))
-    print("\nTotal paths:      {}".format(n_system + n_account + n_policy + n_charges + n_exp_f + n_cov_f))
+    print("\nTotal paths:      {}".format(n_system + n_account + n_policy + n_charges + n_exp_f + n_cov_f + n_cov_t))
     print("\nOutput: {}".format(output_path))
 
 

@@ -235,8 +235,14 @@ def convert_pdf(pdf_path: Path) -> str:
 # bare = required). Group 2: field name. See models.OCCURRENCE_SYMBOLS.
 _FIELD_RE = re.compile(r"\{([$+*]?)([a-zA-Z_][a-zA-Z0-9_.]*)\}")
 
+# Accessor roots that map to the rendering-root entity in renderingData. Their
+# registry velocity is root-relative ($data.X / $data.data.X) and needs the
+# $data.<root> entity key spliced in. account.* / item.* name their own
+# renderingData key and are excluded.
+_ROOT_ENTITY_ACCESSORS = frozenset({"policy", "quote", "segment"})
 
-def extract_fields(html: str, registry_path=None) -> list[dict]:
+
+def extract_fields(html: str, registry_path=None, rendering_root=None) -> list[dict]:
     """Extract {field_name} tokens from HTML (on plain text). Deduplicates.
 
     An occurrence symbol may prefix the name — {$x} optional, {x} required,
@@ -275,7 +281,11 @@ def extract_fields(html: str, registry_path=None) -> list[dict]:
             _scripts = str(Path(__file__).parent)
             if _scripts not in sys.path:
                 sys.path.insert(0, _scripts)
-            from agent_tools import build_velocity_lookup, build_velocity_meta_lookup  # noqa: PLC0415
+            from agent_tools import (  # noqa: PLC0415
+                build_velocity_lookup,
+                build_velocity_meta_lookup,
+                render_root_velocity,
+            )
             lookup = build_velocity_lookup(registry_path)
             meta_lookup = build_velocity_meta_lookup(registry_path)
         except Exception:
@@ -288,6 +298,14 @@ def extract_fields(html: str, registry_path=None) -> list[dict]:
         if "." in name and lookup:
             velocity = lookup.get(name)
             if velocity:
+                # Rendering-root-entity fields (policy/quote/segment accessors)
+                # render under the doc's named root key in renderingData
+                # ($data.segment.* / $data.quote.*). The registry velocity is
+                # root-relative, so splice the key in — mirrors Leg 2's per-root
+                # verdict (_reprefix) for the JAR path. account.* / item.* name
+                # their own renderingData key and are left untouched.
+                if name.split(".", 1)[0] in _ROOT_ENTITY_ACCESSORS:
+                    velocity = render_root_velocity(velocity, rendering_root)
                 data_source = velocity
                 # DataFetcher-sourced paths (e.g. account.data.firstName →
                 # getAccount) share their velocity path with a phantom direct
@@ -703,7 +721,12 @@ def extract_loops(
     loop_field_lists: dict[str, list[dict]] = {p[4]: [] for p in pairs}
     top_fields: list[dict] = []
     for f in fields:
-        token_re = re.compile(re.escape(f["token"]) + r"(?![\w.])")
+        # Reject a following word char (partial-name match) or a `.word`
+        # path continuation (a shorter token sitting inside a longer dotted
+        # accessor), but ALLOW a trailing sentence period: `...partsCovered.`
+        # must still match, else the field falls through to document scope and
+        # loses its loop/coverage guard.
+        token_re = re.compile(re.escape(f["token"]) + r"(?!\w|\.\w)")
         positions = [t.start() for t in token_re.finditer(html)]
         target = None
         for o_start, o_end, c_start, _c_end, name in pairs:
@@ -1319,8 +1342,14 @@ def _parse_document(
     if path_map is not None:
         raw_html = apply_path_map(raw_html, path_map)
 
+    # Rendering root from the filename suffix (e.g. ...(segment)) — drives the
+    # $data.<root> entity-key splice so resolved scalars match renderingData.
+    from velocity_converter.leg2_fill_mapping import parse_rendering_roots  # noqa: PLC0415
+    _roots, _ = parse_rendering_roots(input_path.stem)
+    rendering_root = _roots[0] if _roots else None
+
     # Extract + annotate fields, then conditionals.
-    fields = extract_fields(raw_html, registry_path=registry_path)
+    fields = extract_fields(raw_html, registry_path=registry_path, rendering_root=rendering_root)
     annotated = annotate_fields(raw_html, fields)
     blocks = extract_conditionals(annotated)
     annotated = annotate_conditionals(annotated, blocks)

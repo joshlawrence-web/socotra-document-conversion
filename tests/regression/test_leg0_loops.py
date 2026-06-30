@@ -96,6 +96,26 @@ class TestExtractLoops(unittest.TestCase):
         )
         self.assertEqual([f["name"] for f in top], ["account.data.firstName"])
 
+    def test_loop_field_followed_by_period_stays_in_loop(self) -> None:
+        # Regression: a dotted-accessor placeholder ending a sentence (trailing
+        # `.`) must still be recognised as a loop field. The membership regex's
+        # `(?![\w.])` lookahead used to reject the trailing period, dropping the
+        # field to document scope (and losing its #if($item.Cov) coverage guard).
+        html = (
+            "<html><body>"
+            "<p>[Item]</p>"
+            "<p>Cover: parts {item.AccidentalDamage.data.partsCovered}.</p>"
+            "<p>[/Item]</p>"
+            "</body></html>"
+        )
+        annotated, fields = _annotate(html)
+        _, top, loops = extract_loops(annotated, fields)
+        self.assertEqual(
+            [f["name"] for f in loops[0]["fields"]],
+            ["item.AccidentalDamage.data.partsCovered"],
+        )
+        self.assertEqual(top, [])
+
     def test_field_used_inside_and_outside_stays_top_level(self) -> None:
         html = (
             "<html><body>"

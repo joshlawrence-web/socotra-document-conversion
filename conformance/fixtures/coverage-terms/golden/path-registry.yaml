@@ -1,9 +1,9 @@
 schema_version: '1.1'
 meta:
-  config_dir: /Users/joshualawrence/Projects/Cursor/Experiments/VelocityConverter1stLeg/conformance/fixtures/coverage-terms/socotra-config
+  config_dir: conformance/fixtures/coverage-terms/socotra-config
   product: FloodProtection
   display_name: Flood Protection
-  generated_at: '2026-05-01T14:20:41.611739+00:00'
+  generated_at: '2026-06-29T10:17:41.389894+00:00'
   source_config_sha256: 639919681e9704ffed6bf39120fb7201d642ab203c3fc59521e43cc67077a51d
   note: 'Socotra Velocity dot-notation paths. Root object is $data (the renderingData
     from DocumentDataSnapshotPlugin). Policy custom fields: $data.data.<field>. Account
@@ -277,6 +277,25 @@ exposures:
       requires_scope:
       - iterator: $dwelling
         foreach: '#foreach ($dwelling in $data.dwellings)'
+    terms:
+    - name: deductible
+      field: deductible
+      display_name: Flood deductible
+      type: ''
+      base_type: ''
+      quantifier: ''
+      cardinality: exactly_one
+      iterable: false
+      category: coverage_term
+      velocity: $dwelling.Flood.deductible.value
+      velocity_object: $dwelling.Flood.deductible
+      requires_scope:
+      - iterator: $dwelling
+        foreach: '#foreach ($dwelling in $data.dwellings)'
+      options:
+      - '250'
+      - '*500'
+      - '1000'
     quantifier: ''
     cardinality: exactly_one
     iterable: false
