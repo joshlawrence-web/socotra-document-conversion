@@ -59,6 +59,13 @@ split under `tests/pipeline/`.
 
 ## Front door: one-shot intake (Leg -1 suggest + Leg 0 scan)
 
+> **🟢 Asked to "create a demo" / "run a doc back-to-front"? Use the runbook, not raw legs:**
+> **[docs/demo-runbook.md](docs/demo-runbook.md)**. Two commands — `python3
+> tools/run_demo.py intake <doc>` then `… finalize <stem>` — enforce the leg order
+> and end on the mandatory done-gate `python3 tools/validate_demo.py <stem>` (doc
+> coverage + renderingData shape). PASS = done; MISMATCH = not done. Do **not**
+> hand-declare success or hand-roll a validator.
+
 When the customer hands over a `.docx`/`.pdf` and you want to give them **everything to
 fill in one package**, run `intake`. It runs Leg -1 *suggest* and Leg 0 *scan* back to
 back on the same document and produces both human-fill files at once:
@@ -281,6 +288,12 @@ referrer's scope, or be unconditional). This is the **sheet-native** way to expr
 conditional-inside-a-conditional — authoring the nesting in the docx body is not
 required (and not the supported path for CSV-driven labels).
 
+> **The two customer-fill files in `action-needed/` — how they relate:**
+> [docs/variants-and-path-review.md](docs/variants-and-path-review.md) explains how
+> `<stem>.path-review.csv` (plain body fields, Leg -1) and `<stem>.variants.csv`
+> (conditional blocks, Leg 0) divide the document and share the same fields (with a
+> story + diagram). Read it when explaining the intake package to a customer.
+
 ---
 
 ## MANDATORY pre-flight before Leg 2, 3, or 4 (after a Leg 0 run)
@@ -300,6 +313,43 @@ python3 -m velocity_converter.leg0_ingest --parse-variants-csv workspace/action-
 4. Only after the registry is written (or confirmed to already exist) → run the requested downstream legs.
 
 **Do not skip this step.** The plugin will be empty and the template will have unresolved `$doc.condN` placeholders if the registry is missing. The user should not have to tell you to do this — it is always required.
+
+---
+
+## renderingData shape — the template-path rule (READ before any demo)
+
+**renderingData shape is the contract that makes a generated template actually render.**
+The registry stores velocities **root-relative** (`$data.policyNumber`, `$data.data.x`,
+`$data.items`) — but `$data` at render time is the Map the `DocumentDataSnapshotPlugin`
+builds, and it `.put()`s the rendering-root entity under a **named key**. A bare
+`$data.<field>` or `$data.data.<field>` in a `.final.vm` points at a key that doesn't
+exist and renders to nothing. Every rendering-root-entity field must carry its entity key.
+
+**The key = the field's verified Java local** (so the template mirrors the plugin):
+
+| Doc root | Field kind | Correct template path |
+|---|---|---|
+| `(quote)` | system + custom | `$data.quote.<f>` / `$data.quote.data.<f>` |
+| `(segment)` | **system** (core Policy) | `$data.policy.<f>` |
+| `(segment)` | **custom** (typed Segment) | `$data.segment.data.<f>` |
+| `(segment)` | **loop list / exposure** | `$data.segment.items`, then `$item.data.<f>` |
+| any | account / DataFetcher | `$data.account.data.<f>` *(own key — unchanged)* |
+
+A `(segment)` doc **splits across two keys**: system fields → `$data.policy.*`, custom
+data + exposures → `$data.segment.*`. A `(quote)` doc keeps everything on `$data.quote.*`.
+
+The splice lives in `agent_tools.render_root_velocity()` (Leg 0 pre-fill) and
+`leg2_fill_mapping._reprefix()` (Leg 2 JAR verdict). Full explanation + the chain:
+[docs/RenderingDataConfigRelated.md](docs/RenderingDataConfigRelated.md).
+
+**Demo checklist — after Leg 3, before declaring a template done, grep the `.final.vm`:**
+- ❌ No bare `$data.data.` (missing the `$data.segment.` / `$data.quote.` key).
+- ❌ No bare `$data.<systemField>` (e.g. `$data.policyNumber`) — must be `$data.policy.<f>`
+  (segment) or `$data.quote.<f>` (quote).
+- ✅ Every resolved field is under `$data.policy` / `$data.segment` / `$data.quote` /
+  `$data.account`; every loop is `#foreach ($item in $data.<root>.items)`.
+
+If any bare path slips through, the resolution is wrong — fix the data_source, don't ship it.
 
 ---
 

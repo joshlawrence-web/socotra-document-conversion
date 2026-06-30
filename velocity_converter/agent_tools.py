@@ -781,6 +781,46 @@ def _catalog_velocity(velocity: str, category: str) -> str:
     return v
 
 
+# renderingData keys the plugin .put()s the rendering-root entity under. These
+# are also the verified Java locals in leg4_generate_plugin._CATEGORY_WIRING, so
+# the template path mirrors the accessor the plugin wires. A segment document
+# splits across TWO keys: system fields read from core Policy (key "policy"),
+# custom data fields from the typed Segment record (key "segment"). A quote
+# document keeps both on the single "quote" key.
+_ENTITY_KEYS = frozenset({"quote", "segment", "policy", "account", "pricing", "charges", "termCharges"})
+
+
+def render_root_velocity(velocity: str, root: "str | None") -> str:
+    """Splice the rendering-root entity key into a root-relative registry velocity.
+
+    renderingData exposes the rendering-root entity under a named key the plugin
+    ``.put()``s, so a rendering-root-entity field's template path is
+    ``$data.<key>.<rest>`` — never bare ``$data.<rest>``. The key matches the
+    field's verified Java local (``_CATEGORY_WIRING``):
+
+      * quote root  → ``quote``  (system + custom both on the quote record)
+      * segment root, custom field (``$data.data.<f>``) → ``segment``
+      * segment root, system field (``$data.<f>``)      → ``policy``
+
+    Idempotent: a velocity already naming an entity key is returned unchanged.
+    The caller decides which fields are rendering-root-entity — account /
+    DataFetcher / exposure (``$item.*``) / loop-list paths name their own key
+    and must NOT be passed through here.
+    """
+    v = (velocity or "").strip()
+    root = (root or "").strip()
+    if root not in ("quote", "segment") or not v.startswith("$data."):
+        return v
+    rest = v[len("$data."):]
+    if rest.split(".", 1)[0] in _ENTITY_KEYS:  # already prefixed — idempotent
+        return v
+    if root == "quote":
+        key = "quote"
+    else:  # segment: typed Segment record for custom, core Policy for system
+        key = "segment" if rest.startswith("data.") else "policy"
+    return f"$data.{key}.{rest}"
+
+
 def build_velocity_lookup(registry_path: "str | Path") -> "dict[str, str]":
     """Build a flat lookup map: accessor shorthand (and full suffix) → velocity path.
 
