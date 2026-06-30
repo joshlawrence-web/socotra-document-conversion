@@ -6,6 +6,10 @@ This is the **one** place in the pipeline that is authored rather than derived �
 everything downstream (validation, Java codegen, the compile check) is
 prescriptive and runs off code in `velocity_converter/condition_dsl.py`.
 
+> `variants.csv` is one of **two** files the customer fills (the other is
+> `path-review.csv`). For how the two relate — which fields go where, and why a field
+> on both must agree — see [variants-and-path-review.md](variants-and-path-review.md).
+
 **The single most important rule:** you write *what to test*, in a tiny
 data-language. You never write Java, and you never reason about Java types.
 `coolingOffPeriod > 0` is the whole condition — the emitter decides whether that
