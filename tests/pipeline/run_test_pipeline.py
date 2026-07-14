@@ -50,6 +50,8 @@ ALL_FIXTURES = [
     "TestVariantThenBinary(segment).docx",
     "TestVariantBareLeaf(segment).docx",
     "TestNestedVariantLabel(segment).docx",
+    "TestCoverageGrid(segment).docx",
+    "TestCoverageSchedule(segment).docx",
 ]
 
 # ---------------------------------------------------------------------------
@@ -73,33 +75,22 @@ def _stem(filename: str) -> str:
     return Path(filename).stem
 
 
-def _read_csv_rows_simple(path: Path) -> list[list[str]]:
-    """Read a variants.csv into raw row lists, dropping ``#`` comment lines."""
-    import csv  # noqa: PLC0415
-    lines = [ln for ln in path.read_text(encoding="utf-8").splitlines()
-             if not ln.lstrip().startswith("#")]
-    return list(csv.reader(lines))
-
-
 def _build_filled_csv(csv_path: Path, sidecar_path: Path, seeds: dict) -> None:
     """Build a filled ``<stem>.variants.csv`` from Leg 0's stub + sidecar + seeds.
 
     The variants-only analogue of the old ``_autofill_form``: every block kind
     flows through one CSV. Per block (keyed by the sidecar's join ``key``):
-      - **variant**: emit the seed's ``[{when, text}, …]`` rows verbatim.
-      - **template** (``render: template``): one ``when``-only row (text blank).
-      - **binary**: a conditioned row (seed ``when`` + the stub's prefilled text)
-        plus an empty-default row.
+      - **variant** (``[[$token]]`` — includes former plain-text blocks, since a
+        bare ``[[text]]`` block is now a hard error at Leg 0): emit the seed's
+        ``[{when, text}, …]`` rows verbatim. A single-row seed with no blank-when
+        row is valid binary show/hide (the DSL supplies an implicit empty default).
+      - **template** (``render: template`` — a ``[Name/]`` loop's when-only row):
+        one ``when``-only row (text blank). A missing/blank seed means the loop
+        stays unconditional — that's valid, not an error.
     """
     import csv  # noqa: PLC0415
     import io  # noqa: PLC0415
     sidecar = yaml.safe_load(sidecar_path.read_text(encoding="utf-8")) or []
-    # Recover each binary block's prefilled text from the stub's row that
-    # carries it (the stub leaves every `when` blank, so key off non-blank text).
-    stub_text: dict[str, str] = {}
-    for row in _read_csv_rows_simple(csv_path)[1:]:
-        if len(row) >= 3 and row[2].strip():
-            stub_text.setdefault(row[0], row[2])
 
     buf = io.StringIO()
     w = csv.writer(buf)
@@ -107,20 +98,18 @@ def _build_filled_csv(csv_path: Path, sidecar_path: Path, seeds: dict) -> None:
     for b in sidecar:
         key = b.get("key")
         seed = seeds.get(key)
-        if b.get("variant"):
+        if b.get("presence"):
+            # [Coverage?] presence region: auto-wired, nothing for a human (or
+            # a seed) to fill — mirrors write_variants_csv's skip.
+            continue
+        if b.get("render") == "template":
+            # Blank/missing seed = plain unconditional loop — valid, not an error.
+            w.writerow([key, seed or "", ""])
+        else:  # variant ([[$token]]) — seed is a list of {when, text} rows
             if not isinstance(seed, list):
                 raise SystemExit(f"seed for variant block {key!r} must be a list of rows")
             for r in seed:
                 w.writerow([key, r.get("when", ""), r.get("text", "")])
-        elif b.get("render") == "template":
-            if not seed:
-                raise SystemExit(f"missing `when` seed for template block {key!r}")
-            w.writerow([key, seed, ""])
-        else:  # binary → one-real-row + empty-default fold
-            if not seed:
-                raise SystemExit(f"missing `when` seed for binary block {key!r}")
-            w.writerow([key, seed, stub_text.get(key, "")])
-            w.writerow([key, "", ""])
     # Nested-only labels: seed placeholders referenced via [[$x]] from another row's
     # text, with no document marker (so absent from the sidecar). Emit their rows so
     # the parse step can synthesize their blocks.
@@ -165,6 +154,17 @@ def _banner(text: str) -> None:
 # Per-fixture pipeline
 # ---------------------------------------------------------------------------
 
+def _leg0_converter() -> str:
+    """soffice when LibreOffice is installed, else the legacy converter (with a
+    warning) so the suite stays runnable on machines without LibreOffice."""
+    from velocity_converter.leg0_ingest import _find_soffice_binary
+    if _find_soffice_binary():
+        return "soffice"
+    print("WARNING: LibreOffice (soffice) not installed — running Leg 0 with the "
+          "legacy style-less converter", file=sys.stderr)
+    return "legacy"
+
+
 def run_fixture(fixture_file: str, auto: bool, seeds_data: dict) -> dict:
     """Run Leg 0 → fill form → parse form → Leg 2+3 for one fixture.
 
@@ -186,6 +186,7 @@ def run_fixture(fixture_file: str, auto: bool, seeds_data: dict) -> dict:
             sys.executable, "-m", "velocity_converter.leg0_ingest",
             "--input", str(input_path),
             "--output-dir", str(output_dir),
+            "--converter", _leg0_converter(),
         ],
         "Leg 0",
     )
@@ -380,7 +381,9 @@ def run_leg4(mapping_paths: list[str]) -> bool:
 
     # Every form must contribute its conditional keys to the combined plugin —
     # a single-form plugin passing silently was the multi-form regression. Keys
-    # are named (§1a): cond<id> for binary blocks, the $token for variant blocks.
+    # are named (§1a): the loop name for template blocks, the $token for variant
+    # blocks (every conditional is now a named [[$token]] — bare blocks are a
+    # hard error at Leg 0).
     plugin_text = java_files[0].read_text(encoding="utf-8")
     expected_keys: set[str] = set()
     for mp in mapping_paths:

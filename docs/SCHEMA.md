@@ -277,7 +277,7 @@ mapping-suggester reports them under "Unrecognised inputs" in
 | `name` | string | Loop name. |
 | `placeholder` | string | `$TBD_<name>`. |
 | `iterator` | string | `$<iterator>` (e.g. `$vehicle`). |
-| `detection` | enum | `mustache` / `auto` (Leg 1) / `marker` (Leg 0 `[Name]`…`[/Name]` sections). |
+| `detection` | enum | `mustache` / `auto` (Leg 1) / `marker` (Leg 0 `[Name/]`…`[/Name]` sections). |
 | `context` | map | See context keys above (`container`, `nearest_heading`, `line`). |
 | `data_source` | string | Empty at Leg 1. |
 | `fields` | list of map | Loop-scoped variables (each has the variable-entry shape with `type: loop_field`). |
@@ -758,31 +758,33 @@ key. The contract is enforced by `velocity_converter/models.py`
 ### Block entry shape
 
 The **universal** representation is `key`/`placeholder`/`scope`/`render` plus the
-`variants`/`default` pair. Every block — binary, template, and N-way — now flows
-through the variants path (`condition_dsl.parse_variants_csv`), so each block's
-condition is the structured `when` AST inside `variants[]`. The `conditions` and
-`operator` keys are **legacy-only**: they are kept for back-compat so old
-registries (and any in-flight `conditional-form.md` parse) still load, but new
-documents do not emit them.
+`variants`/`default` pair. Every block — a named `[[$token]]` variant (single- or
+N-way) and a `[Name/]` loop's template block alike — flows through the variants path
+(`condition_dsl.parse_variants_csv`), so each block's condition is the structured
+`when` AST inside `variants[]`. The `conditions` and `operator` keys are
+**legacy-only**: they are kept for back-compat so old registries (and any in-flight
+`conditional-form.md` parse, or a pre-existing `cond<id>`-keyed bare block) still
+load, but new documents do not emit them — Leg 0 now hard-errors on an unnamed
+`[[…]]` block instead of auto-naming it.
 
 | Key | Type | Required | Description |
 |---|---|---|---|
-| `key` | string | **yes** (or `id`) | Join key used end-to-end (`${data.<key>}`, `put("<key>", …)`). For a tokenised `[[$token]]` block it is the `$token` name; for an untokenised binary block a stable auto-name (`cond<id>`). A block must carry at least one of `id`/`key`. |
-| `id` | int | no | Transitional positional alias; when `key` is absent it is derived as `cond<id>` |
+| `key` | string | **yes** (or `id`) | Join key used end-to-end (`${data.<key>}`, `put("<key>", …)`). For a `[[$token]]` block or a `[Name/]` loop's template block it is the `$token`/loop name. `cond<id>` is a **legacy-only** auto-name carried over from old registries (new documents always name the block). A block must carry at least one of `id`/`key`. |
+| `id` | int | no | Transitional positional alias; when `key` is absent it is derived as `cond<id>` (legacy registries only) |
 | `source_text` | string | **yes** | The conditional text (with `{field}` tokens) |
-| `placeholder` | string or null | no | The author `$token` for a variant block; null on plain binary blocks |
+| `placeholder` | string or null | no | The author `$token` name for a `[[$token]]` variant block; **null** on a `[Name/]` loop's template block (the loop's wording stays in the document, not in a placeholder). |
 | `scope` | string | no | `quote` or `policy` — computed once at parse time from the block's conditions |
-| `variants` | list of `Variant` or null | no | **Universal** — one ordered (first-match-wins) variant per row: `{when, text}` where `when` is the structured condition AST (`condition_dsl.ast_to_dict`) and `text` is the per-variant source text. Binary blocks fold into a single conditioned variant; absent only on legacy registries. |
+| `variants` | list of `Variant` or null | no | **Universal** — one ordered (first-match-wins) variant per row: `{when, text}` where `when` is the structured condition AST (`condition_dsl.ast_to_dict`) and `text` is the per-variant source text. A single-condition `[[$token]]` block folds into one conditioned variant + a default; absent only on legacy registries. |
 | `default` | string or null | no | The trailing `else` text (the default/empty-default row) |
-| `render` | enum | no (default `plugin`) | `plugin` — Leg 4 bakes the text into the plugin's conditional string; the template prints `${data.condN}`. `template` — the content stays in the `.vm` inside `#if($data.condN)`…`#end` and the plugin puts a Boolean. Set by Leg 0 when the block contains a `[Name]`…`[/Name]` loop section. |
+| `render` | enum | no (default `plugin`) | `plugin` — Leg 4 bakes the text into the plugin's conditional string; the template prints `${data.<key>}`. `template` — the content stays in the `.vm` inside `#if($data.<key>)`…`#end` and the plugin puts a Boolean. Set by Leg 0 for **every** `[Name/]`…`[/Name]` loop, keyed by the loop's own name (not just loops nested inside a conditional). |
 | `parent_id` | int or null | no | Enclosing block id for nested blocks |
 | `depth` | int | no (default 0) | Nesting depth |
 | `conditions` | list of string | no (default `[]`) | **Legacy** — condition expressions; kept for back-compat with old registries / `conditional-form.md` parse. Not emitted for new documents. |
 | `operator` | string | no (default `AND`) | **Legacy** — combinator for multiple legacy `conditions`; normalised to upper case. |
 
 ```yaml
-- id: 1
-  key: cond1
+- key: accidentalDamageCover
+  placeholder: accidentalDamageCover
   source_text: Accidental Damage cover is included in your plan.
   scope: quote
   variants:

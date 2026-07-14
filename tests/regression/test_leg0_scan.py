@@ -18,15 +18,19 @@ from velocity_converter import leg0_ingest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = REPO_ROOT / "tests" / "pipeline" / "fixtures"
-# A fixture carrying a [[$token]] variant block and a binary block.
+# A fixture carrying an N-way [[$token]] variant block.
 VARIANT_FIXTURE = FIXTURES / "TestStateDisclosure(segment).docx"
-# A fixture with conditionals but no variant block — still folds into one CSV.
-BINARY_FIXTURE = FIXTURES / "TestItemCert(segment).docx"
+# A fixture whose conditionals are plain (binary-style) [[$token]] blocks.
+TOKEN_FIXTURE = FIXTURES / "TestItemCert(segment).docx"
 
 
 def _scan(input_path: Path, out_dir: Path) -> set[str]:
     """Run scan mode in-process; return the set of filenames written under out_dir."""
-    pr = leg0_ingest._parse_document(input_path, path_map=None, registry_path=None)
+    # converter="legacy": these tests cover the scan/CSV contract, not docx
+    # styling — keep them runnable without a LibreOffice install.
+    pr = leg0_ingest._parse_document(
+        input_path, path_map=None, registry_path=None, converter="legacy"
+    )
     leg0_ingest._write_human_fill_files(pr.blocks, input_path.stem, out_dir)
     return {p.name for p in out_dir.rglob("*") if p.is_file()}
 
@@ -47,20 +51,21 @@ class TestScanMode(unittest.TestCase):
                 f"scan should not write {forbidden}: {names}",
             )
 
-    def test_binary_only_fixture_still_gets_variants_csv(self):
-        # Under variants-only a binary-only fixture DOES get a variants.csv
-        # (binary blocks fold into the same CSV as a one-real-row + empty-default
-        # pair). No conditional-form.md is written.
-        stem = BINARY_FIXTURE.stem
+    def test_token_only_fixture_still_gets_variants_csv(self):
+        # A fixture whose blocks are all plain [[$token]] (no N-way, no loop)
+        # still gets the one variants.csv. No conditional-form.md is written.
+        stem = TOKEN_FIXTURE.stem
         with tempfile.TemporaryDirectory() as td:
-            names = _scan(BINARY_FIXTURE, Path(td))
+            names = _scan(TOKEN_FIXTURE, Path(td))
         self.assertIn(f"{stem}.variants.csv", names)
         self.assertNotIn(f"{stem}.conditional-form.md", names)
 
     def test_scan_csv_matches_full_ingest(self):
         """The variants.csv from scan is byte-identical to a full ingest."""
         stem = VARIANT_FIXTURE.stem
-        pr = leg0_ingest._parse_document(VARIANT_FIXTURE, path_map=None, registry_path=None)
+        pr = leg0_ingest._parse_document(
+            VARIANT_FIXTURE, path_map=None, registry_path=None, converter="legacy"
+        )
         with tempfile.TemporaryDirectory() as td_scan, tempfile.TemporaryDirectory() as td_full:
             scan_dir, full_dir = Path(td_scan), Path(td_full)
             # Scan: human-fill only.

@@ -30,7 +30,7 @@ import yaml
 
 MARKER = re.compile(r"(?<!\$)\{[+*$]?([A-Za-z0-9_.]+)\}")   # {leaf}, not ${resolved}
 BLOCK = re.compile(r"\[\[(.+?)\]\]", re.S)
-LOOP = re.compile(r"\[/?[A-Za-z0-9_]+\]")
+LOOP = re.compile(r"\[/?[A-Za-z0-9_]+[/?]?\]")  # [Item/] / [Name?] openers, [/Item] closer (+ legacy [Item])
 # Entity keys the plugin .put()s — every resolved field must sit under one.
 ENTITY_KEYS = ("quote", "segment", "policy", "account", "pricing", "charges", "termCharges")
 
@@ -100,6 +100,13 @@ def main():
         checks += 1
         if bad in vm:
             fails.append(f"unresolved {bad!r} left in template")
+    # any surviving loop opener [Name/], region opener [Name?], or closer
+    # [/Name] means Leg 0 never consumed the marker (bare [Name] is excluded —
+    # it can be prose brackets)
+    checks += 1
+    leftover = re.findall(r"(?<!\[)\[(?:[A-Za-z_]\w*[/?]|/[A-Za-z_]\w*)\](?!\])", vm)
+    if leftover:
+        fails.append(f"unconsumed loop/region marker(s) left in template: {sorted(set(leftover))}")
     checks += 1
     if MARKER.search(vm):
         fails.append(f"bare {{leaf}} markers left in template: {MARKER.findall(vm)}")

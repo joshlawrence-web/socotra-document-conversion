@@ -112,23 +112,56 @@ def build_cond_map(cond_blocks: list[dict]) -> dict[str, str]:
     }
 
 
+def _strip_unregistered_guards(vm_text: str, cond_map: dict[str, str]) -> str:
+    """Strip #if($doc.X)…#end pairs whose key has no conditional-registry entry.
+
+    Leg 0 wraps every [Name/] loop section in an #if($doc.<Name>) guard; a
+    customer who left the loop's `when` row blank produces no registry entry —
+    the loop is unconditional, so the guard pair is removed and its content
+    kept. Line-based, mirroring process_vm's #if($TBD_*) guard strip: nested
+    #if/#foreach inside a stripped guard are preserved.
+    """
+    out: list[str] = []
+    open_stack: list[bool] = []  # True = this open was a stripped guard
+    for raw in vm_text.splitlines(keepends=True):
+        s = raw.strip()
+        m = re.fullmatch(r"#if\(\$doc\.([A-Za-z_]\w*)\)", s)
+        if m and f"$doc.{m.group(1)}" not in cond_map:
+            open_stack.append(True)
+            continue
+        if s.startswith("#if") or s.startswith("#foreach"):
+            open_stack.append(False)
+            out.append(raw)
+        elif s == "#end":
+            if open_stack and open_stack.pop():
+                continue
+            out.append(raw)
+        else:
+            out.append(raw)
+    return "".join(out)
+
+
 def apply_cond_substitutions(vm_text: str, cond_map: dict[str, str]) -> str:
-    """Replace [[text]]$doc.condN with ${data.condN}; multi-pass for nesting.
+    """Replace [[$token]]$doc.<key> with ${data.<key>}; multi-pass for nesting.
 
     The plugin owns conditional text — it puts the resolved string (or "") into
-    renderingData under "condN". The template just outputs ${data.condN}.
+    renderingData under "<key>". The template just outputs ${data.<key>}.
 
-    Three phases:
-      0. Rewrite #if($doc.condN) guards → #if($data.condN). These come from
-         Leg 0's render-template blocks (a [[conditional]] containing a loop):
-         the content stays in the template and the plugin puts condN as a
-         Boolean, so only the guard token needs renaming.
-      1. Resolve [[...]]$doc.condN blocks innermost-first (repeated until stable).
-         Bare $doc.condN tokens are left untouched so outer blocks can still match
+    Four phases:
+      -1. Strip #if($doc.X) guard pairs whose key is NOT in the registry —
+         a [Name/] loop whose `when` row was left blank is unconditional.
+      0. Rewrite remaining #if($doc.X) guards → #if($data.X). These come from
+         Leg 0's [Name/] loop wrap (render: template rows): the content stays
+         in the template and the plugin puts X as a Boolean, so only the guard
+         token needs renaming.
+      1. Resolve [[...]]$doc.<key> blocks innermost-first (repeated until stable).
+         Bare $doc.<key> tokens are left untouched so outer blocks can still match
          on the next pass.
-      2. Replace any remaining bare $doc.condN tokens (e.g. inside a cond block's
+      2. Replace any remaining bare $doc.<key> tokens (e.g. inside a cond block's
          source_text that the annotator left un-bracketed).
     """
+    # Phase -1: unconditional loop guards (no registry entry) are stripped
+    vm_text = _strip_unregistered_guards(vm_text, cond_map)
     # Phase 0: template-rendered conditional guards
     vm_text = re.sub(r"#if\(\$doc\.([A-Za-z_]\w*)\)", r"#if($data.\1)", vm_text)
     # Phase 1: peel [[...]]$doc.<key> from innermost outward
@@ -303,13 +336,16 @@ def build_substitution_map(suggested: dict) -> dict[str, str]:
             if not fph:
                 continue
             val = _resolve(fld)
-            # A field reached THROUGH an optional coverage (e.g.
-            # `$item.AccidentalDamage.data.labourCovered`, AccidentalDamage =
-            # zero_or_one) navigates a nullable intermediate. A quiet ref
-            # (`$!{...}`) doesn't help — the strict renderer aborts the moment it
-            # calls `.data` on a null coverage (error 216041). Guard the whole
-            # reference on the coverage's presence so absent coverages render empty.
-            cov_vel = _optional_coverage_prefix(
+            # A field reached THROUGH a coverage (e.g.
+            # `$item.AccidentalDamage.data.labourCovered`) navigates a nullable
+            # intermediate. A quiet ref (`$!{...}`) doesn't help — the strict
+            # renderer aborts the moment it calls `.data` on a null coverage
+            # (error 216041). Guard the whole reference on the coverage's
+            # presence so absent coverages render empty. Every coverage hop is
+            # guarded regardless of quantifier: live tenant data can lack an
+            # `exactly_one_auto` coverage (unrated quote, config drift), and a
+            # redundant #if on a present coverage costs nothing.
+            cov_vel = _coverage_prefix(
                 _clean_data_source(fld.get("data_source") or ""), coverages)
             if val and cov_vel:
                 val = f"#if({cov_vel}){val}#end"
@@ -317,19 +353,14 @@ def build_substitution_map(suggested: dict) -> dict[str, str]:
     return smap
 
 
-def _optional_coverage_prefix(ds: str, coverages: list[dict]) -> str | None:
-    """If ``ds`` traverses an OPTIONAL coverage (``zero_or_one``/``zero_or_more``,
-    i.e. quantifier ``?``/``*``), return that coverage's velocity prefix (the
-    nullable intermediate to guard); else None. ``exactly_one`` coverages (``!``)
-    are always present and need no guard."""
+def _coverage_prefix(ds: str, coverages: list[dict]) -> str | None:
+    """If ``ds`` traverses a coverage (any quantifier), return that coverage's
+    velocity prefix (the nullable intermediate to guard); else None."""
     for cov in coverages:
         vel = (cov.get("velocity") or "").strip()
         if not vel:
             continue
-        card = (cov.get("cardinality") or "").strip()
-        quant = (cov.get("quantifier") or "").strip()
-        optional = card in {"zero_or_one", "zero_or_more"} or quant in {"?", "*"}
-        if optional and (ds == vel or ds.startswith(vel + ".")):
+        if ds == vel or ds.startswith(vel + "."):
             return vel
     return None
 

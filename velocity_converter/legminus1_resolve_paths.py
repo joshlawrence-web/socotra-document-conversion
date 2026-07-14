@@ -90,18 +90,18 @@ def _doc_to_text(input_path: Path) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Loop membership (mirrors leg0's [Name]...[/Name] marker pairing)
+# Loop membership (mirrors leg0's [Name/]...[/Name] marker pairing)
 # ---------------------------------------------------------------------------
 
 def _loop_spans(text: str) -> list[tuple[int, int, str]]:
-    """Return (inner_start, inner_end, name) for each matched [Name]...[/Name]."""
+    """Return (inner_start, inner_end, name) for each matched [Name/]...[/Name]."""
     pending: dict[str, int] = {}
     spans: list[tuple[int, int, str]] = []
     for m in _LOOP_MARKER_RE.finditer(text):
         name = m.group(2)
-        if m.group(1) != "/":
+        if m.group(1) != "/" and m.group(3) == "/":  # [Name/] opener
             pending[name] = m.end()
-        elif name in pending:
+        elif m.group(1) == "/" and m.group(3) != "/" and name in pending:  # [/Name] closer
             spans.append((pending.pop(name), m.start(), name))
     return spans
 
@@ -233,7 +233,8 @@ def _candidate_accessors(r: dict) -> list[str]:
     return accs
 
 
-def write_path_review_csv(results: list[dict], out: Path) -> None:
+def write_path_review_csv(results: list[dict], out: Path, *, append: bool = False,
+                          no_suggest: bool = False) -> None:
     """Customer-facing view of the review — three columns: ``field`` /
     ``suggested`` / ``final``.
 
@@ -242,13 +243,37 @@ def write_path_review_csv(results: list[dict], out: Path) -> None:
     customer keeps, pre-filled with the top pick (blank when nothing matched).
     The ``.path-review.md`` stays the canonical record — on apply the ``final``
     column is written back onto its ``Final:`` lines.
+
+    ``no_suggest`` blanks both ``suggested`` and ``final`` so the customer maps
+    every leaf by hand (the registry analysis still lands in the ``.md`` /
+    ``.path-map.yaml`` — only this human-fill view is blanked).
+
+    When ``append`` and ``out`` already exists, the existing data rows are kept
+    verbatim (preserving any customer-edited ``final``) and only ``results`` whose
+    ``{leaf}`` is not already a row are added. This is how a Pass-2 delta lands as
+    *extra* rows on the full pass-1 review instead of replacing it, so the
+    customer always sees every field in one file.
     """
     rows = [["field", "suggested", "final"]]
+    existing_fields: set[str] = set()
+    if append and out.is_file():
+        with out.open(encoding="utf-8-sig", newline="") as fh:
+            for i, row in enumerate(csv.reader(fh)):
+                if i == 0 or not row:
+                    continue  # skip header / blank lines
+                rows.append(row)
+                existing_fields.add((row[0] or "").strip())
     for r in results:
+        field = f"{{{r['leaf']}}}"
+        if field in existing_fields:
+            continue  # already on the sheet (e.g. a field also used in the body)
+        if no_suggest:
+            rows.append([field, "", ""])
+            continue
         cands = _candidate_accessors(r)
         suggested = "\n".join(cands) if cands else "(no registry match -- type an accessor)"
         final = cands[0] if cands else ""
-        rows.append([f"{{{r['leaf']}}}", suggested, final])
+        rows.append([field, suggested, final])
     with out.open("w", encoding="utf-8", newline="") as fh:
         # Default dialect: \r\n row terminator, fields with embedded newlines are
         # quoted — Excel shows the suggested cell as stacked lines.
@@ -377,16 +402,20 @@ def _variants_csv_text(csv_path: Path) -> str:
 
 def run_suggest(
     input_path: Path,
-    registry_path: Path,
+    registry_path: Path | None,
     output_dir: Path,
     variants_csv: Path | None = None,
+    no_suggest: bool = False,
 ) -> int:
     text = _doc_to_text(input_path)
     source = input_path.name
     roots, root_err = parse_rendering_roots(source)
     if root_err:
         print(f"WARNING: {root_err}", file=sys.stderr)
-    reg = yaml.safe_load(registry_path.read_text(encoding="utf-8")) or {}
+    # Registry is optional in no-suggest mode: with none loaded every leaf is
+    # unmatched, which is fine — the CSV is blanked for manual fill regardless.
+    reg = (yaml.safe_load(registry_path.read_text(encoding="utf-8")) or {}
+           if registry_path and registry_path.exists() else {})
 
     # Pass 2 (Decision B): also scan the filled variants.csv's text cells.
     pass2 = variants_csv is not None and variants_csv.is_file()
@@ -428,7 +457,10 @@ def run_suggest(
                   "(Decision B skip; nothing for the customer to resolve).")
             return 0
         write_path_review(net_new, stem, source, input_path, roots, review)
-        write_path_review_csv(net_new, review_csv)
+        # Append the net-new variant-text leaves onto the existing pass-1 CSV so
+        # the customer-facing sheet keeps every plain field too (not just the
+        # delta). The pass-1 path-map/audit stay untouched (merged on apply).
+        write_path_review_csv(net_new, review_csv, append=True, no_suggest=no_suggest)
         n_res = sum(1 for r in net_new if r["status"] == "resolved")
         n_amb = sum(1 for r in net_new if r["status"] == "ambiguous")
         n_none = sum(1 for r in net_new if r["status"] == "unmatched")
@@ -441,7 +473,7 @@ def run_suggest(
         return 0
 
     write_path_review(results, stem, source, input_path, roots, review)
-    write_path_review_csv(results, review_csv)
+    write_path_review_csv(results, review_csv, no_suggest=no_suggest)
     write_path_map(results, stem, source, input_path, roots, pmap)
     write_path_changes(results, stem, changes)
 
@@ -714,6 +746,10 @@ def main() -> int:
                         help="Pass 2 (Decision B): also scan a filled <stem>.variants.csv's "
                              "text cells; emit a delta review of net-new variant-text leaves "
                              "(deduped against the pass-1 path-map)")
+    parser.add_argument("--no-suggest", action="store_true",
+                        help="Blank the `suggested`/`final` columns in the path-review.csv "
+                             "so the customer maps every leaf by hand (the .md/.path-map "
+                             "still carry the registry analysis)")
     args = parser.parse_args()
 
     if args.parse_path_review_csv:
@@ -742,16 +778,23 @@ def main() -> int:
 
     registry_path = Path(args.registry) if args.registry else _find_registry(input_path.parent)
     if not registry_path or not registry_path.exists():
-        print("Error: registry not found — pass --registry registry/path-registry.yaml",
-              file=sys.stderr)
-        return 1
+        if args.no_suggest:
+            # No-suggest can run without a registry — emit blank fill files anyway.
+            print("No registry loaded — emitting blank path-review.csv for manual fill.",
+                  file=sys.stderr)
+            registry_path = None
+        else:
+            print("Error: registry not found — pass --registry registry/path-registry.yaml",
+                  file=sys.stderr)
+            return 1
 
     output_dir = Path(args.output_dir) if args.output_dir else input_path.parent
     variants_csv = Path(args.variants_csv) if args.variants_csv else None
     if variants_csv and not variants_csv.exists():
         print(f"Error: variants CSV not found: {variants_csv}", file=sys.stderr)
         return 1
-    return run_suggest(input_path, registry_path, output_dir, variants_csv=variants_csv)
+    return run_suggest(input_path, registry_path, output_dir, variants_csv=variants_csv,
+                       no_suggest=args.no_suggest)
 
 
 if __name__ == "__main__":

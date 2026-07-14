@@ -17,7 +17,6 @@ REPO = Path(__file__).resolve().parent.parent.parent
 
 from velocity_converter.leg0_ingest import (  # noqa: E402
     _braces_to_tbd,
-    _tbd_to_braces,
     load_conditional_blocks,
     parse_conditional_form,  # legacy form guard only (see TestLeg0FormRoundTrip)
     parse_variants_csv_to_blocks,
@@ -332,55 +331,44 @@ class TestJarVerifiedWiring(unittest.TestCase):
 
 class TestLeg0FormRoundTrip(unittest.TestCase):
 
-    def test_tbd_to_braces_trailing_dot(self):
-        self.assertEqual(_tbd_to_braces("effective $TBD_startDate."), "effective {startDate}.")
-
     def test_braces_to_tbd(self):
         self.assertEqual(_braces_to_tbd("a {policy.data.x} b"), "a $TBD_policy.data.x b")
 
     def test_braces_to_tbd_noop_on_tbd_form(self):
         self.assertEqual(_braces_to_tbd("a $TBD_policy.data.x b"), "a $TBD_policy.data.x b")
 
-    def test_csv_shows_braces_and_parse_restores_tbd(self):
-        # Variants-only: the binary block's text cell shows author-friendly braces
-        # in the CSV; the machine sidecar carries the raw $TBD_ source_text, which
-        # the parse step restores. The customer fills only `when`.
+    def test_variant_text_keeps_braces_and_sidecar_restores_source(self):
+        # Variants-only: the customer types author-friendly {braces} in a text
+        # cell (Leg 4 converts them to accessors at plugin time); the machine
+        # sidecar carries the block's source_text, restored on parse.
         import tempfile
-        blocks = [{"id": 1,
-                   "source_text": "A discount of $TBD_policy.data.discountAmount applies."}]
+        blocks = [{"id": 1, "key": "discountNote", "placeholder": "discountNote",
+                   "variant": True, "source_text": "$discountNote"}]
         registry = {
             "policy_data": [
                 {"velocity": "$data.data.discountAmount", "category": "policy_data",
                  "base_type": "decimal"},
             ],
         }
+        filled = (
+            "placeholder,when,text\n"
+            "discountNote,policy.data.discountAmount present,"
+            "A discount of {policy.data.discountAmount} applies.\n"
+            "discountNote,,\n"
+        )
         with tempfile.TemporaryDirectory() as td:
             csv_path = Path(td) / "x.variants.csv"
-            write_variants_csv(blocks, "x", csv_path)
-            text = csv_path.read_text(encoding="utf-8")
-            # The text cell shows the author-friendly brace form, never $TBD_.
-            self.assertIn("{policy.data.discountAmount}", text)
-            self.assertNotIn("$TBD_", text)
-
-            # Fill the binary block's `when` on the text row (the stub leaves it
-            # blank). Use the DSL's present/absent for null checks (not != null).
-            text = text.replace(
-                'cond1,,A discount',
-                'cond1,policy.data.discountAmount present,A discount',
-            )
-            csv_path.write_text(text, encoding="utf-8")
-
+            csv_path.write_text(filled, encoding="utf-8")
             sidecar = Path(td) / "x.conditional-blocks.yaml"
             write_conditional_blocks(blocks, sidecar)
             meta = load_conditional_blocks(sidecar)
             parsed = parse_variants_csv_to_blocks(csv_path, meta, registry=registry)
-            # source_text restored from the sidecar in raw $TBD_ form.
-            self.assertEqual(
-                parsed[0]["source_text"],
-                "A discount of $TBD_policy.data.discountAmount applies.",
-            )
-            # The filled condition rides as a one-entry variants payload.
+            # source_text restored from the sidecar.
+            self.assertEqual(parsed[0]["source_text"], "$discountNote")
+            # The filled condition rides in the variants payload; the text cell
+            # keeps its brace form for Leg 4 to resolve.
             self.assertEqual(parsed[0]["variants"][0]["when"]["path"], "policy.data.discountAmount")
+            self.assertIn("{policy.data.discountAmount}", parsed[0]["variants"][0]["text"])
 
     def test_old_tbd_format_form_still_parses(self):
         # Deliberate LEGACY-PATH guard: conditional-form.md is retired for new

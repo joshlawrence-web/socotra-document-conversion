@@ -2,13 +2,16 @@
 #
 # Keys match the document stem (filename without extension). Under each stem,
 # keys are the block keys from Leg 0's machine sidecar (<stem>.conditional-blocks.yaml):
-#   - binary / template block (cond<n>): a scalar `when` string in the condition
-#     DSL (use `present`/`absent`, NOT `!= null`). Binary blocks fold to a
-#     one-real-row + empty-default variant; the conditioned row's text is taken
-#     from Leg 0's prefilled stub. Template (loop) blocks use the `when` as a
-#     Boolean — the section text stays in the document.
-#   - variant block ($token): a list of {when, text} rows (row order = priority,
-#     first match wins). Exactly one row has a blank `when` (the default/else).
+#   - variant block ($token, incl. former plain-text blocks — bare [[text]] is now
+#     a hard error at Leg 0, so every non-loop conditional is a named $token): a
+#     list of {when, text} rows (row order = priority, first match wins). A single
+#     conditioned row with no default row is valid binary show/hide (the DSL
+#     supplies an implicit empty default); an N-way block needs one row with a
+#     blank `when` as its explicit default.
+#   - template block (a `[Name/]` loop's when-only row, keyed by the loop name):
+#     a scalar `when` string (condition DSL) to wrap the loop in #if, or blank/
+#     omitted for a plain unconditional loop. Carries no text — the loop's
+#     wording stays in the document.
 #
 # run_test_pipeline.py --auto builds the filled <stem>.variants.csv from these
 # seeds + Leg 0's stub, then runs --parse-variants-csv.
@@ -18,28 +21,50 @@
 # is correctly rejected by the condition DSL).
 
 "TestQuoteSummary(quote)":
-  cond1: "quote.quoteNumber present"
-  cond2: "quote.endTime present"
+  accidentalDamageNote:
+    - when: "quote.quoteNumber present"
+      text: "Accidental Damage cover is included in your plan. Your item is protected against unexpected physical damage."
+  theftCoverNote:
+    - when: "quote.endTime present"
+      text: "Theft cover is included in your plan. You are protected if your item is lost or stolen."
 
 "TestItemCert(segment)":
-  cond1: "policy.data.coolingOffPeriod present"
-  cond2: "policy.data.gracePeriod present"
-  cond3: "policy.data.settlementPeriod present"
+  warrantyStatusNote:
+    - when: "policy.data.coolingOffPeriod present"
+      text: "This item was confirmed to be within the manufacturer warranty period at the date of policy inception."
+  workingOrderNote:
+    - when: "policy.data.gracePeriod present"
+      text: "This item was confirmed to be in full working order at the date of policy inception."
+  accidentalDamageNote:
+    - when: "policy.data.settlementPeriod present"
+      text: "Accidental Damage Cover applies to this policy. Your item is protected against accidental physical damage."
 
 "TestRenewalNotice(segment)":
-  cond1: "policy.data.discountAmount present"
-  cond2: "policy.data.coolingOffPeriod present"
-  cond3: "policy.data.gracePeriod present"
+  loyaltyDiscountNote:
+    - when: "policy.data.discountAmount present"
+      text: 'A loyalty discount of {policy.data.discountAmount} has been applied to your renewal premium (discount type: {policy.data.discountType}).'
+  coolingOffNote:
+    - when: "policy.data.coolingOffPeriod present"
+      text: "A cooling-off period applies to this renewal. You have the right to cancel within the cooling-off window."
+  gracePeriodNote:
+    - when: "policy.data.gracePeriod present"
+      text: "A grace period may apply if your renewal payment is not received by the due date. Please contact us for details."
 
 "TestItemsSchedule(segment)":
-  cond1: "policy.data.discountAmount present"
+  accidentalDamageNote:
+    - when: "policy.data.discountAmount present"
+      text: "Accidental Damage Cover applies to the items listed above. Each item is protected against unexpected physical damage."
+  # Item: intentionally absent/blank — exercises the plain unconditional loop path.
+  Item: ""
 
-# cond1 is the [Item] loop inside a [[conditional]] → render: template block
-# (the `when` is a Boolean; the loop text stays in the document). cond2 is a
-# trailing binary block.
+# Item is the loop's when-only row: filled here so the #foreach gets wrapped in
+# #if($data.Item) — the conditional-loop path (TestItemsSchedule exercises the
+# unconditional path instead). theftCoverNote is the trailing tokenised block.
 "TestGiftSchedule(segment)":
-  cond1: "policy.data.discountAmount present"
-  cond2: "policy.data.gracePeriod present"
+  Item: "policy.data.discountAmount present"
+  theftCoverNote:
+    - when: "policy.data.gracePeriod present"
+      text: "Theft cover is included in your plan."
 
 # disclosureClause is the N-way [[$token]] variant block.
 "TestStateDisclosure(segment)":
@@ -51,8 +76,9 @@
     - when: ''
       text: 'Policy {policy.policyNumber}: no discount applies. Amount on file is {policy.data.discountAmount}.'
 
-# disclosureClause ([[$token]] variant) immediately followed by cond2 (binary) —
-# the regression guard for the variant-then-binary parse fix (now one CSV path).
+# disclosureClause ([[$token]] variant) immediately followed by coolingOffNote
+# (a second, plain tokenised block) — the regression guard for the
+# variant-then-binary parse fix (now two tokenised blocks, one CSV path).
 "TestVariantThenBinary(segment)":
   disclosureClause:
     - when: 'discountType == "FLAT"'
@@ -61,7 +87,9 @@
       text: 'Policy {policy.policyNumber}: a percentage discount applies to your premium.'
     - when: ''
       text: 'Policy {policy.policyNumber}: no discount applies. Amount on file is {policy.data.discountAmount}.'
-  cond2: "policy.data.coolingOffPeriod present"
+  coolingOffNote:
+    - when: "policy.data.coolingOffPeriod present"
+      text: "A cooling-off period applies to this policy. You have the right to cancel within the cooling-off window."
 
 # Decision B: the variant text uses a BARE leaf ({discountAmount}) — Leg 4 must
 # resolve it to policy.data.discountAmount and wire a real accessor, not a TODO.
@@ -90,3 +118,14 @@
       text: ' (flat tier)'
     - when: ''
       text: ''
+
+# The "giant table" fixture: [Name?] conditional row regions. Item + the two
+# in-loop / presence regions need no seed ([AccidentalDamage?] is a direct
+# #if($item.AccidentalDamage) guard, [Theft?] is auto-wired coverage presence —
+# neither surfaces in the variants.csv). CoolingOffRow is the generic
+# conditional-region shape: a template block with a when-only row, like a loop.
+"TestCoverageGrid(segment)":
+  CoolingOffRow: "policy.data.coolingOffPeriod present"
+
+# [Coverage/] plugin-list loop: unconditional (blank when), like any loop.
+"TestCoverageSchedule(segment)": {}

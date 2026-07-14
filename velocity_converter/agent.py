@@ -72,6 +72,10 @@ Required per operation:
 
   list_paths         : registry=<path> (optional)  out=<file> (optional)
 Optional for all:           output=<dir>  registry=<path>  terminology=<path>
+Optional for intake/legminus1: suggestions=off  ("without predictions" — blank the
+                            path-review.csv suggested/final columns so the customer
+                            maps every accessor by hand; the .path-map/.path-changes
+                            still carry the registry analysis)
 Optional for leg4 variants: compile_check=false  (skip javac after generating plugin)
 """
 
@@ -177,6 +181,17 @@ def run(invocation: str, auto_yes: bool) -> int:
     compile_check_raw = parsed.get("compile_check", "true")
     compile_check = compile_check_raw.lower() not in ("false", "0", "no")
     keep_intermediates = parsed.get("keep", "").lower() == "intermediates"
+    # Leg -1: `suggestions=off` (or no_suggest=true) blanks the path-review.csv
+    # suggested/final columns for manual fill.
+    no_suggest = (parsed.get("suggestions") or parsed.get("suggest") or "on").lower() in (
+        "off", "no", "false", "0"
+    ) or parsed.get("no_suggest", "").lower() in ("true", "1", "yes")
+    # Leg 0: converter=legacy falls back to the style-less python-docx converter
+    # (default soffice — LibreOffice headless, preserves document styling).
+    converter = parsed.get("converter") or "soffice"
+    if converter not in ("soffice", "legacy"):
+        print(f"Unknown converter: {converter!r} (accepted: soffice, legacy)", file=sys.stderr)
+        return 1
 
     # --- Leg -1 fast-path (registry-only path resolution, no preflight needed) ---
     if operation == "legminus1":
@@ -184,7 +199,8 @@ def run(invocation: str, auto_yes: bool) -> int:
         if not input_html:
             print("Missing required field: input=<doc.docx|.pdf|.html>", file=sys.stderr)
             return 1
-        r = run_legminus1(input_path=input_html, registry=registry, output_dir=output)
+        r = run_legminus1(input_path=input_html, registry=registry, output_dir=output,
+                          no_suggest=no_suggest)
         if not r["ok"]:
             print(f"Leg -1 failed (rc={r['returncode']}):\n{r['stderr']}", file=sys.stderr)
             return 1
@@ -212,7 +228,8 @@ def run(invocation: str, auto_yes: bool) -> int:
         # Step 1 — Leg -1 suggest: bare {leaf} → accessor review (registry-only).
         print("\nIntake step 1/2 — Leg -1 (resolve bare field names)…")
         from velocity_converter.agent_tools import run_legminus1
-        r1 = run_legminus1(input_path=input_html, registry=registry, output_dir=output)
+        r1 = run_legminus1(input_path=input_html, registry=registry, output_dir=output,
+                           no_suggest=no_suggest)
         if not r1["ok"]:
             print(f"Leg -1 failed (rc={r1['returncode']}):\n{r1['stderr']}", file=sys.stderr)
             return 1
@@ -222,7 +239,7 @@ def run(invocation: str, auto_yes: bool) -> int:
         # block). Runs WITHOUT a path-map — path-review isn't filled yet, and the
         # CSV shows the author's bare {field} syntax regardless, so it's harmless.
         print("Intake step 2/2 — Leg 0 scan (variants.csv)…")
-        r2 = run_leg0_scan(input_path=input_html, output_dir=f"{output}/{stem}")
+        r2 = run_leg0_scan(input_path=input_html, output_dir=f"{output}/{stem}", converter=converter)
         if not r2["ok"]:
             print(f"Leg 0 scan failed (rc={r2['returncode']}):\n{r2['stderr']}", file=sys.stderr)
             return 1
@@ -317,7 +334,7 @@ def run(invocation: str, auto_yes: bool) -> int:
         print("\nRunning Leg 0 (scan — human-fill files only)…")
         from pathlib import Path as _Path
         stem = _Path(input_html).stem
-        r = run_leg0_scan(input_path=input_html, output_dir=f"{output}/{stem}")
+        r = run_leg0_scan(input_path=input_html, output_dir=f"{output}/{stem}", converter=converter)
         if not r["ok"]:
             print(f"Leg 0 scan failed (rc={r['returncode']}):\n{r['stderr']}", file=sys.stderr)
             return 1
@@ -332,7 +349,7 @@ def run(invocation: str, auto_yes: bool) -> int:
         from pathlib import Path as _Path
         stem = _Path(input_html).stem
         leg0_out_dir = f"{output}/{stem}"
-        r = run_leg0(input_path=input_html, output_dir=leg0_out_dir)
+        r = run_leg0(input_path=input_html, output_dir=leg0_out_dir, converter=converter)
         if not r["ok"]:
             print(f"Leg 0 failed (rc={r['returncode']}):\n{r['stderr']}", file=sys.stderr)
             return 1

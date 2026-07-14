@@ -4,16 +4,19 @@ Leg 0 — Document Ingestion (PDF / Word → raw HTML) + Field/Conditional Extra
 
 Converts a customer's source document (PDF or Word) into a rough HTML file
 suitable for the existing Leg 1 pipeline, then extracts {field_name} tokens,
-[[conditional]] blocks, and [Name]...[/Name] loop sections, annotates them,
-and writes all pipeline-ready artifacts. Loop section names must exactly match
-a registry iterable name (e.g. [Item] ... [/Item]); fields inside become the
-loop's fields in the mapping and the markers become a #foreach scaffold.
+named [[$token]] conditional blocks, and [Name/]...[/Name] loop sections,
+annotates them, and writes all pipeline-ready artifacts. Bare [[text]] blocks
+are a hard error — every conditional must be a named token whose text lives in
+the variants.csv. Loop section names must exactly match a registry iterable
+name (e.g. [Item/] ... [/Item]); fields inside become the loop's fields in the
+mapping and the markers become an #if($doc.<Name>) + #foreach scaffold (the
+#if resolves or strips depending on the loop's when-only variants.csv row).
 
-Conditional text (binary, template, and N-way variant blocks) is handled by a
-single human-fill file — {stem}.variants.csv — paired with a machine sidecar
-{stem}.conditional-blocks.yaml that carries the per-block metadata the CSV can't
-(id, render flag, source_text, nesting). The legacy conditional-form.md flow is
-retained only behind --parse-conditional-form for in-flight forms.
+Conditional text ([[$token]] blocks, plus one when-only row per loop) is
+handled by a single human-fill file — {stem}.variants.csv — paired with a
+machine sidecar {stem}.conditional-blocks.yaml that carries the per-block
+metadata the CSV can't (id, render flag, source_text). The legacy
+conditional-form.md flow is retained only behind --parse-conditional-form.
 
 Usage:
     python3 -m velocity_converter.leg0_ingest --input <path.docx|path.pdf> [--output-dir <dir>]
@@ -23,7 +26,7 @@ Usage:
 
 Outputs (normal mode):
     {stem}.raw.html                  — raw converted HTML (pre-annotation)
-    {stem}.annotated.html            — HTML with {field} → $TBD_field, [[cond]] → $doc.condN
+    {stem}.annotated.html            — HTML with {field} → $TBD_field, [[$token]] → $doc.<token>
     {stem}.mapping.yaml              — leg2-compatible mapping (pipeline input; enriched in-place by Leg 2)
     {stem}.conditional-blocks.yaml   — machine sidecar (block metadata) for the parse step
     {stem}.variants.csv              — customer-facing fill file (every conditional block)
@@ -43,7 +46,10 @@ from __future__ import annotations
 
 import argparse
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -142,6 +148,257 @@ def convert_docx(docx_path: Path) -> str:
 
     body_content = "\n".join(parts)
     return f"<html>\n<body>\n{body_content}\n</body>\n</html>\n"
+
+
+# ---------------------------------------------------------------------------
+# Word (.docx) → HTML via LibreOffice headless (lossless styling path)
+# ---------------------------------------------------------------------------
+# The legacy convert_docx() above keeps only heading level / all-bold / table
+# structure; every colour, font, size and alignment in the source document is
+# discarded. The soffice path converts with LibreOffice's real layout engine,
+# so the document's actual styling (a <style> block + inline CSS resolved from
+# the docx style/theme XML) survives into raw.html → annotated.html → final.vm.
+#
+# Filter choice: ``xhtml:XHTML Writer File`` (not ``html:HTML (StarWriter)``).
+# StarWriter HTML drops body font-family/size (only heading .western rules
+# survive); the XHTML filter emits per-style classes with the real theme fonts
+# and sizes (e.g. ``.paragraph-Standard { font-family:Cambria; font-size:11pt }``).
+# Source font names are kept as-is (Calibri/Cambria/…) — register those faces
+# on the Socotra tenant; do not substitute PDF built-ins.
+#
+# Stage C cleans the XHTML for Velocity (DOCTYPE/xmlns, ``!important``, and the
+# XHTML ``td { font-size:12pt }`` override that fights the document body size).
+#
+# The one hazard: soffice emits one inline tag per Word *run*, and Word splits
+# runs arbitrarily (spell-check artifacts), so a {field} / [[$token]] /
+# [Name/] marker can straddle a run boundary and come out fragmented across
+# tags — which silently breaks the downstream annotation regexes that match
+# tokens on the raw HTML string. Fix is deterministic and lives in the docx,
+# not the HTML: flatten any token-spanning runs before conversion (no run
+# boundary inside a token ⇒ soffice cannot split it), then *verify* the HTML
+# and fail loudly — never repair markup after the fact.
+
+_SOFFICE_HINT = (
+    "LibreOffice (soffice) is required to convert .docx documents.\n"
+    "Install with: brew install --cask libreoffice   (macOS)\n"
+    "          or: apt install libreoffice            (Debian/Ubuntu)\n"
+    "Or re-run with --converter legacy for the style-less fallback converter."
+)
+
+# Document-body conditional markers are always a short named token (bare
+# [[text]] blocks are rejected by extract_conditionals).
+_VARIANT_MARKER_RE = re.compile(r"\[\[\$[A-Za-z_]\w*\]\]")
+
+# LibreOffice XHTML Writer filter — keeps theme fonts/sizes that StarWriter HTML drops.
+_SOFFICE_FILTER = "xhtml:XHTML Writer File"
+
+
+def _find_soffice_binary() -> str | None:
+    """Locate the soffice binary (PATH, then the macOS app bundle)."""
+    found = shutil.which("soffice")
+    if found:
+        return found
+    mac_path = Path("/Applications/LibreOffice.app/Contents/MacOS/soffice")
+    return str(mac_path) if mac_path.exists() else None
+
+
+def _atomic_token_spans(text: str) -> list[tuple[int, int]]:
+    """Character spans in ``text`` that must never cross a Word-run boundary:
+    {field} placeholders, [[$token]] markers, and [Name/] / [/Name] loop
+    markers (the exact patterns the downstream annotators match on the raw
+    HTML string)."""
+    spans: list[tuple[int, int]] = []
+    for rx in (_FIELD_RE, _VARIANT_MARKER_RE, _LOOP_MARKER_RE):
+        spans.extend(m.span() for m in rx.finditer(text))
+    return spans
+
+
+def _flatten_token_runs(paragraph) -> None:
+    """Rewrite ``paragraph``'s runs so no atomic token spans more than one run.
+
+    Same technique as Leg -1's placeholder rewrite: the runs a token touches
+    are collapsed into the first (full combined text there, the rest blanked).
+    Mid-token formatting collapses to the first run's — the honest outcome: a
+    placeholder resolves to one value, it cannot render two half-styles anyway.
+    """
+    runs = paragraph.runs
+    if len(runs) < 2:
+        return
+    text = "".join(r.text for r in runs)
+    spans = _atomic_token_spans(text)
+    if not spans:
+        return
+    # Cumulative end offset of each run within the paragraph text.
+    ends: list[int] = []
+    pos = 0
+    for r in runs:
+        pos += len(r.text)
+        ends.append(pos)
+
+    def run_index(char_pos: int) -> int:
+        for i, end in enumerate(ends):
+            if char_pos < end:
+                return i
+        return len(runs) - 1
+
+    # Collapse right-to-left so earlier offsets stay valid in `ends`.
+    for start, end in sorted(spans, reverse=True):
+        first, last = run_index(start), run_index(end - 1)
+        if first == last:
+            continue
+        combined = "".join(runs[i].text for i in range(first, last + 1))
+        runs[first].text = combined
+        for i in range(first + 1, last + 1):
+            runs[i].text = ""
+
+
+def _normalize_docx_runs(src: Path, dst: Path) -> None:
+    """Write a copy of ``src`` with token-spanning runs flattened (Stage A)."""
+    from docx import Document  # noqa: PLC0415
+
+    doc = Document(str(src))
+    for para in doc.paragraphs:
+        _flatten_token_runs(para)
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for para in cell.paragraphs:
+                    _flatten_token_runs(para)
+    doc.save(str(dst))
+
+
+def _verify_token_integrity(html: str, source_name: str) -> None:
+    """Every token visible in the document text must exist verbatim in the raw
+    HTML string (Stage D — verifier only). A failure means the Stage A
+    flattening has a gap; fix it there, never patch the HTML."""
+    try:
+        from bs4 import BeautifulSoup  # noqa: PLC0415
+        text = BeautifulSoup(html, "html.parser").get_text()
+    except ImportError:
+        text = re.sub(r"<[^>]+>", " ", html)
+
+    if not text.strip():
+        raise RuntimeError(
+            f"soffice produced an empty document for {source_name} — conversion failed"
+        )
+    missing = sorted({
+        m.group(0)
+        for rx in (_FIELD_RE, _VARIANT_MARKER_RE, _LOOP_MARKER_RE)
+        for m in rx.finditer(text)
+        if m.group(0) not in html
+    })
+    if missing:
+        raise RuntimeError(
+            f"token(s) fragmented across tags in soffice HTML for {source_name}: "
+            + ", ".join(missing)
+            + "\nThis is a gap in Leg 0's run-flattening (_flatten_token_runs) — "
+            "fix the flattening, do not patch the HTML."
+        )
+
+
+def _prepare_soffice_html(html: str) -> str:
+    """Stage C — clean LibreOffice XHTML for Velocity without changing fonts.
+
+    Keeps theme ``font-family`` values exactly as LibreOffice resolved them
+    (Calibri, Cambria, …). Also:
+
+    - strips XHTML chrome (DOCTYPE/xmlns)
+    - fixes invalid ``! important``
+    - drops the XHTML ``td/th { font-size:12pt }`` override that fights the
+      document's Normal/Standard body size
+    - zeroes horizontal table-cell padding (``padding-left`` / ``padding-right``)
+      that the XHTML filter copies from Word's default cell margins (~0.075in).
+      That padding shifts every table column right of the body text edge; for
+      borderless letter tables the PDF then looks indented vs the .docx.
+    """
+    # Drop XML prologue / MathML doctype — Velocity templates are HTML.
+    html = re.sub(r"^\s*<\?xml[^>]*\?>\s*", "", html, count=1, flags=re.I)
+    html = re.sub(
+        r"<!DOCTYPE[^>]*>\s*",
+        "<!DOCTYPE html>\n",
+        html,
+        count=1,
+        flags=re.I | re.S,
+    )
+    html = re.sub(r"\sxmlns(?::\w+)?=\"[^\"]*\"", "", html)
+    html = re.sub(
+        r'content="application/xhtml\+xml;\s*charset=([^"]+)"',
+        r'content="text/html; charset=\1"',
+        html,
+        flags=re.I,
+    )
+    # LibreOffice emits the invalid ``! important`` (space) form.
+    html = html.replace("! important", "!important")
+
+    def _style_block(match: re.Match) -> str:
+        css = match.group(1)
+        # XHTML filter defaults table cells to 12pt, which overrides the
+        # document's Normal/Standard 11pt inside every <td>.
+        css = re.sub(
+            r"(td\s*,\s*th\s*\{[^}]*?)font-size\s*:\s*[^;]+;?\s*",
+            r"\1",
+            css,
+            flags=re.I,
+        )
+        # Flush table text to the body margin: drop LO's default cell margins.
+        css = re.sub(
+            r"padding-(left|right)\s*:\s*[^;]+;",
+            r"padding-\1: 0;",
+            css,
+            flags=re.I,
+        )
+        return f"<style>{css}</style>"
+
+    return re.sub(
+        r"<style[^>]*>(.*?)</style>",
+        _style_block,
+        html,
+        count=1,
+        flags=re.I | re.S,
+    )
+
+
+def convert_docx_soffice(docx_path: Path) -> str:
+    """Convert .docx → styled HTML via LibreOffice headless (Stages A+B+C+D)."""
+    soffice = _find_soffice_binary()
+    if soffice is None:
+        sys.exit(_SOFFICE_HINT)
+
+    tmp = Path(tempfile.mkdtemp(prefix="leg0-soffice-"))
+    try:
+        normalized = tmp / docx_path.name
+        _normalize_docx_runs(docx_path, normalized)
+        outdir = tmp / "out"
+        # Unique profile per invocation — soffice can't share one profile
+        # across concurrent runs.
+        profile_uri = (tmp / "profile").as_uri()
+        result = subprocess.run(
+            [
+                soffice, "--headless", "--norestore",
+                f"-env:UserInstallation={profile_uri}",
+                "--convert-to", _SOFFICE_FILTER,
+                "--outdir", str(outdir), str(normalized),
+            ],
+            capture_output=True, text=True, timeout=120,
+        )
+        out_file = next(
+            (
+                p for p in sorted(outdir.glob(f"{normalized.stem}.*"))
+                if p.suffix.lower() in {".xhtml", ".html", ".htm"}
+            ),
+            None,
+        )
+        if result.returncode != 0 or out_file is None:
+            sys.exit(
+                f"soffice conversion failed for {docx_path.name} "
+                f"(rc={result.returncode}):\n{result.stderr.strip()}"
+            )
+        html = out_file.read_text(encoding="utf-8", errors="replace")
+        html = _prepare_soffice_html(html)
+        _verify_token_integrity(html, docx_path.name)
+        return html
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -442,39 +699,23 @@ _VARIANT_TOKEN_RE = re.compile(r"^\$([A-Za-z_]\w*)$")
 def _variant_placeholder(source_text: str) -> str | None:
     """Return the placeholder name if ``source_text`` is a variant token.
 
-    ``[[$stateClause]]`` → ``stateClause``. Content that starts with ``$`` but
-    is not a single clean identifier (``$state clause``) warns and is treated as
-    a binary literal block (returns None).
+    ``[[$stateClause]]`` → ``stateClause``; anything else returns None (and is
+    rejected by :func:`extract_conditionals` — bare blocks are unsupported).
     """
     s = (source_text or "").strip()
     m = _VARIANT_TOKEN_RE.match(s)
-    if m:
-        return m.group(1)
-    # Starts like a token attempt (one leading $word) but isn't a clean
-    # identifier — warn and fall through to literal-binary treatment.
-    if re.match(r"^\$\S", s) and not s.startswith("$TBD_"):
-        print(
-            f"WARNING: [[{s}]] starts with '$' but is not a single bare "
-            "identifier — treated as literal text, not a variant placeholder",
-            file=sys.stderr,
-        )
-    return None
+    return m.group(1) if m else None
 
 
 def extract_conditionals(html: str) -> list[dict]:
-    """Extract [[conditional text]] blocks including nested ones.
+    """Extract ``[[$token]]`` variant blocks. Bare blocks are rejected.
 
-    Nested [[...]] inside a block become child blocks with their own IDs.
-    Parent source_text references children via $doc.<key>.
-    IDs are pre-order (parent lower than children); list is sorted at return.
-    Each block carries top_level=True/False so annotate_conditionals can
-    restrict HTML replacement to top-level blocks only.
-
-    §1a named keys: every block carries a string ``key`` — the author ``$token``
-    for a variant block (``variant=True``, ``placeholder`` set), else a stable
-    auto-name ``cond<id>`` for a binary block. The key is the join key used by
-    annotation, Leg 3, and Leg 4 (binary keys stay ``cond<id>`` → byte-identical
-    to the old positional behaviour).
+    Every conditional in the document must be a named variant token —
+    ``[[$stateClause]]`` — whose text/conditions the customer supplies in the
+    variants.csv. A bare ``[[literal text]]`` block, a malformed token, or a
+    token used twice raises :class:`ValueError` listing every offender (nothing
+    is written). Conditional *nesting* is authored in the CSV via ``[[$other]]``
+    references inside a ``text`` cell, never in the document body.
     """
     try:
         from bs4 import BeautifulSoup
@@ -483,240 +724,327 @@ def extract_conditionals(html: str) -> list[dict]:
         text = re.sub(r"<[^>]+>", " ", html)
 
     blocks: list[dict] = []
-    next_id = [1]
-
-    def _make_block(block_id: int, source: str, raw: str, top_level: bool) -> dict:
+    errors: list[str] = []
+    seen: set[str] = set()
+    for block_id, (_start, _end, content) in enumerate(_find_top_level_brackets(text), start=1):
+        source = content.strip()
         ph = _variant_placeholder(source)
-        return {
+        if ph is None:
+            snippet = source if len(source) <= 60 else source[:57] + "…"
+            errors.append(
+                f"[[{snippet}]] — bare [[text]] blocks are not supported; name the "
+                f"block [[$myToken]] and put its text in the variants.csv"
+            )
+            continue
+        if ph in seen:
+            errors.append(f"[[${ph}]] appears more than once — each [[$token]] must be unique")
+            continue
+        seen.add(ph)
+        blocks.append({
             "id": block_id,
-            "key": ph if ph else f"cond{block_id}",
+            "key": ph,
             "placeholder": ph,
-            "variant": bool(ph),
+            "variant": True,
             "source_text": source,
-            "raw_text": raw,
-            "top_level": top_level,
-        }
+            "raw_text": content,
+            "top_level": True,
+        })
 
-    def _process_children(content: str) -> str:
-        nested = _find_top_level_brackets(content)
-        if not nested:
-            return content.strip()
-        result = content
-        offset = 0
-        for start, end, inner in nested:
-            child_id = next_id[0]
-            next_id[0] += 1
-            child_source = _process_children(inner)
-            child = _make_block(child_id, child_source, inner, top_level=False)
-            blocks.append(child)
-            ref = f"$doc.{child['key']}"
-            result = result[: start + offset] + ref + result[end + offset :]
-            offset += len(ref) - (end - start)
-        return result.strip()
-
-    for _start, _end, content in _find_top_level_brackets(text):
-        outer_id = next_id[0]
-        next_id[0] += 1
-        source = _process_children(content)
-        blocks.append(_make_block(outer_id, source, content, top_level=True))
-
-    blocks.sort(key=lambda b: b["id"])
-    _dedupe_block_keys(blocks)
+    if errors:
+        # A bare block spanning a <table> gets a targeted hint (tables can't
+        # live in a CSV text cell; the stripped-text capture would garble them).
+        if any("<table" in c for _s, _e, c in _find_top_level_brackets(html)):
+            errors.append(
+                "note: a [[...]] block spanning a <table> cannot be tokenised — "
+                "tables inside conditional text are not supported; leave the table "
+                "outside the conditional markers"
+            )
+        raise ValueError(
+            "conditional block validation failed:\n  - " + "\n  - ".join(errors)
+        )
     return blocks
 
 
-def _dedupe_block_keys(blocks: list[dict]) -> None:
-    """Enforce unique join keys (§1a). A colliding variant token warns and falls
-    back to its positional ``cond<id>`` so the registry never has two blocks
-    fighting over one key."""
-    seen: dict[str, int] = {}
-    for b in blocks:
-        key = b["key"]
-        if key in seen:
-            fallback = f"cond{b['id']}"
-            print(
-                f"WARNING: duplicate conditional key '{key}' "
-                f"(blocks {seen[key]} and {b['id']}) — block {b['id']} falls back to '{fallback}'",
-                file=sys.stderr,
-            )
-            b["key"] = fallback
-            b["variant"] = False
-            b["placeholder"] = None
-            seen[fallback] = b["id"]
-        else:
-            seen[key] = b["id"]
-
-
 def annotate_conditionals(html: str, blocks: list[dict]) -> str:
-    """Replace [[...]] → [[...]]$doc.<key> for all blocks (top-level and nested).
+    """Replace [[$token]] → [[$token]]$doc.<token> for every variant block.
 
-    Top-level blocks are matched by character position (right-to-left).
-    Child blocks are matched by a naive string replace on their raw_text;
-    this works as long as the child content contains no HTML tags. Binary blocks
-    keep key ``cond<id>`` so their annotation is byte-identical to the previous
-    positional behaviour (§1a); variant blocks emit ``$doc.<token>``.
+    Blocks are matched by character position (right-to-left) when the HTML
+    bracket count agrees with the block list, else by literal string replace.
     """
     regions = _find_top_level_brackets(html)
-    top_level = [b for b in blocks if b.get("top_level", True)]
 
-    if len(regions) != len(top_level):
+    if len(regions) != len(blocks):
         result = html
-        for b in top_level:
+        for b in blocks:
             original = "[[" + b.get("raw_text", b["source_text"]) + "]]"
             result = result.replace(original, f"{original}$doc.{b['key']}")
     else:
         result = html
-        for (start, end, content), b in zip(reversed(regions), reversed(top_level)):
+        for (start, end, content), b in zip(reversed(regions), reversed(blocks)):
             label = f"[[{content}]]"
             result = result[:start] + f"{label}$doc.{b['key']}" + result[end:]
-
-    # Second pass: annotate nested child blocks within the already-annotated HTML.
-    for b in [b for b in blocks if not b.get("top_level", True)]:
-        raw = b.get("raw_text", b["source_text"])
-        original = f"[[{raw}]]"
-        result = result.replace(original, f"{original}$doc.{b['key']}")
 
     return result
 
 
 # ---------------------------------------------------------------------------
-# Loop section extraction ([Name] ... [/Name])
+# Loop section extraction ([Name/] ... [/Name])
 # ---------------------------------------------------------------------------
 
-# Single-bracket loop markers: [Name] opens a repeating section, [/Name]
-# closes it. Lookarounds exclude [[conditional]] double brackets. The name
-# must exactly match a registry iterable name (e.g. [Item]) — Leg 2 resolves
-# loop roots by exact name only.
-_LOOP_MARKER_RE = re.compile(r"(?<!\[)\[(/?)([A-Za-z_]\w*)\](?!\])")
+# Single-bracket loop markers: [Name/] opens a repeating section, [/Name]
+# closes it (the trailing slash marks the opener as a loop, not prose in
+# brackets). Lookarounds exclude [[conditional]] double brackets. The name
+# must exactly match a registry iterable name (e.g. [Item/]) — Leg 2 resolves
+# loop roots by exact name only. Group 1 = leading slash (closer), group 3 =
+# trailing slash (loop opener) or `?` (conditional-region opener, e.g.
+# [AccidentalDamage?] … [/AccidentalDamage] — wraps the enclosed rows in a
+# presence/condition guard instead of a #foreach); a plain [Name] is legacy
+# syntax and only draws a migration warning when its [/Name] closer is present.
+_LOOP_MARKER_RE = re.compile(r"(?<!\[)\[(/?)([A-Za-z_]\w*)([/?]?)\](?!\])")
 
 # A directive that ended up as the sole content of a paragraph or a table row
 # (other cells empty) collapses to a bare line so Leg 3's line-level #foreach
-# replacement applies.
+# replacement / unregistered-guard strip applies — and so marker rows don't
+# render as blank gaps in the PDF. Openers may carry their #if($doc.<Name>)
+# guard on the line above the #foreach (and closers a second #end); a
+# conditional-region marker leaves a lone #if($doc.<Name>) / #if($item.<Cov>)
+# opener. Allow attributes on <p>/<td>/<tr> — the XHTML Writer filter emits
+# class/style on every tag; "empty" sibling cells often hold a nbsp <p>, not a
+# bare </td>.
+_DIRECTIVE = (
+    r"(?:#if\(\$doc\.\w+\)\n)?#foreach \([^)]*\)"
+    r"|#if\(\$\w+\.\w+\)"
+    r"|#end(?:\n#end)?"
+)
+_EMPTY_P = (
+    r"<p(?:\s[^>]*)?>\s*(?:&nbsp;|&#160;|\u00a0|<br\s*/?>|\s)*</p>"
+)
+_EMPTY_TD = rf"<td(?:\s[^>]*)?>\s*(?:{_EMPTY_P}\s*)*</td>"
+# Directive may still be wrapped in <p class=…> when it sits mid-line inside a
+# <td> (paragraph peel only matches a <p> that starts a line).
+_DIRECTIVE_CELL = rf"(?:<p(?:\s[^>]*)?>\s*)?({_DIRECTIVE})(?:\s*</p>)?"
 _DIRECTIVE_LINE_CLEANUP = [
-    (re.compile(r"^(\s*)<p>(#foreach \([^)]*\)|#end)</p>$", re.M), r"\1\2"),
-    (re.compile(r"^(\s*)<tr><td>(#foreach \([^)]*\)|#end)</td>(?:<td></td>)*</tr>$", re.M), r"\1\2"),
+    (re.compile(rf"^(\s*)<p(?:\s[^>]*)?>({_DIRECTIVE})</p>\s*$", re.M), r"\1\2"),
+    (
+        # Collapse a marker <tr> to a bare directive on its own line(s). Leading
+        # / trailing newlines matter: Leg 3's unregistered-guard strip is
+        # line-based (`#if($doc.X)` must be the whole line), and gluing
+        # `#foreach` onto the next `<tr>` hides the data row when the guard
+        # survives as `#if($data.Item)`.
+        re.compile(
+            rf"<tr(?:\s[^>]*)?>\s*<td(?:\s[^>]*)?>\s*{_DIRECTIVE_CELL}\s*</td>"
+            rf"(?:\s*{_EMPTY_TD})*\s*</tr>",
+            re.M,
+        ),
+        r"\n\1\n",
+    ),
 ]
 
 
-def _annotated_cond_spans(html: str) -> list[tuple[int, int, int | None]]:
-    """Spans of [[...]]$doc.condN regions (incl. nested) in annotated HTML.
+def _registry_coverage_map(registry_path) -> dict:
+    """``{coverage_name: {exposure, list_method}}`` from the registry, or {}.
 
-    Returns [(start, end, cond_id)]; end includes the ]]$doc.condN suffix.
-    cond_id is None when the closing ]] carries no annotation. Mirrors Leg 3's
-    _cond_block_spans so both legs agree on block boundaries.
+    Used to classify a ``[Name?]`` conditional-region marker: a name matching a
+    coverage gets automatic presence wiring (``list_method`` is the exposure
+    list's Java accessor, e.g. ``items`` from ``$data.items`` — Leg 4 walks
+    ``<root>.<list_method>()`` to test presence); anything else is a generic
+    conditional region the customer conditions via variants.csv.
     """
-    spans: list[tuple[int, int, int | None]] = []
-    stack: list[int] = []
-    i, n = 0, len(html)
-    while i < n - 1:
-        two = html[i : i + 2]
-        if two == "[[":
-            stack.append(i)
-            i += 2
-        elif two == "]]":
-            if stack:
-                start = stack.pop()
-                m = re.match(r"\$doc\.cond(\d+)", html[i + 2 :])
-                end = i + 2 + (m.end() if m else 0)
-                spans.append((start, end, int(m.group(1)) if m else None))
-            i += 2
-        else:
-            i += 1
-    return spans
+    if not registry_path:
+        return {}
+    try:
+        reg = yaml.safe_load(Path(registry_path).read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+    iter_methods: dict = {}
+    iterators: dict = {}
+    for it in reg.get("iterables") or []:
+        lv = str(it.get("list_velocity") or "")
+        name = str(it.get("name") or "")
+        if name and lv.startswith("$data.") and "." not in lv[len("$data."):]:
+            iter_methods[name] = lv[len("$data."):]
+        if name:
+            iterators[name] = str(it.get("iterator") or "").lstrip("$")
+    cov_map: dict = {}
+    for exp in reg.get("exposures") or []:
+        exp_name = str(exp.get("name") or "")
+        for cov in exp.get("coverages") or []:
+            name = str(cov.get("name") or "")
+            if name and exp_name:
+                cov_map.setdefault(name, {
+                    "exposure": exp_name,
+                    "list_method": iter_methods.get(exp_name, ""),
+                    # the exposure's registry iterator (e.g. "item") — the
+                    # in-loop guard must reference the same variable Leg 3
+                    # splices into the #foreach, not a name.lower() guess
+                    "iterator": iterators.get(exp_name, ""),
+                })
+    return cov_map
 
 
 def extract_loops(
-    html: str, fields: list[dict], cond_blocks: list[dict] | None = None
+    html: str,
+    fields: list[dict],
+    cond_blocks: list[dict] | None = None,
+    registry_path=None,
 ) -> tuple[str, list[dict], list[dict]]:
-    """Detect [Name]...[/Name] repeating sections in annotated HTML.
+    """Detect [Name/]...[/Name] repeating sections and [Name?]...[/Name]
+    conditional regions in annotated HTML.
 
     Returns (html, top_level_fields, loops):
-      - markers become ``#foreach ($<name> in $TBD_<Name>)`` / ``#end``
-        scaffold lines (Leg 2 supplies the real directive, Leg 3 swaps it in);
-      - a field whose every occurrence falls inside one section moves from
+      - loop markers become ``#if($doc.<Name>)`` + ``#foreach ($<name> in
+        $TBD_<Name>)`` / ``#end`` + ``#end`` scaffold lines (Leg 2 supplies the
+        real directive, Leg 3 swaps it in and strips the ``#if`` guard when the
+        loop's ``when`` row was left blank);
+      - a field whose every occurrence falls inside one loop section moves from
         the top level into that loop's ``fields`` list;
       - loops is a list of {name, token, iterator, fields} dicts.
 
-    Interaction with [[conditional]] blocks (cond_blocks from
-    extract_conditionals, mutated in place):
-      - a section fully inside a top-level block flips that block to
-        ``render: template`` — the block becomes ``#if($doc.condN)``…``#end``
-        in the HTML (content, loop included, stays in the template; the
-        plugin supplies condN as a Boolean instead of a rendered string);
-      - a section crossing a block boundary, or inside a *nested* block,
-        is refused: warning, markers left as literal text;
-      - a block fully inside a section is allowed but warned — conditions
-        are document-scoped, so it renders identically for every item.
+    Every loop also appends a ``render: template`` block (key = loop name) to
+    ``cond_blocks`` (mutated in place), which surfaces as a ``when``-only row
+    in the variants.csv: the customer fills the condition to show/hide the
+    section, or leaves it blank for a plain unconditional loop. A loop or
+    region name colliding with a ``[[$token]]`` key raises :class:`ValueError`.
 
-    Unmatched markers warn on stderr and stay as literal text.
+    **Conditional regions** (``[Name?]`` opener) wrap the enclosed content —
+    typically one or more table rows — in a presence/condition guard instead of
+    a ``#foreach``. Three cases:
+
+    - **inside a loop** → ``#if($<iterator>.<Name>)`` … ``#end`` emitted
+      directly (per-item coverage presence; survives Legs 2/3 untouched, no
+      customer fill, no plugin key). Warned when ``Name`` is not a registry
+      coverage of that exposure.
+    - **document level, Name is a registry coverage** → ``#if($doc.<Name>)``
+      scaffold + a ``render: template`` block carrying ``presence`` metadata;
+      the variants.csv skips it and Leg 4 auto-emits the presence Boolean
+      (any item carries the coverage). No customer fill.
+    - **document level, any other Name** → ``#if($doc.<Name>)`` scaffold + a
+      plain ``render: template`` block: a ``when``-only variants.csv row the
+      customer fills (blank = always render, guard stripped by Leg 3).
+
+    A ``[[$token]]`` placeholder inside a loop is allowed but warned —
+    conditions are document-scoped, so it renders identically for every item.
+    Legacy ``[Name]`` openers (no slash) draw a migration warning when their
+    ``[/Name]`` closer exists; unmatched markers warn and stay literal text.
     """
     pairs: list[tuple[int, int, int, int, str]] = []
-    pending: dict[str, tuple[int, int]] = {}
+    region_pairs: list[tuple[int, int, int, int, str]] = []
+    pending: dict[str, tuple[int, int, str]] = {}
+    legacy_openers: set[str] = set()
     for m in _LOOP_MARKER_RE.finditer(html):
-        name = m.group(2)
-        if m.group(1) != "/":
+        leading, name, trailing = m.group(1) == "/", m.group(2), m.group(3)
+        if leading and trailing:
+            print(
+                f"WARNING: malformed marker [/{name}{trailing}] — left as literal text",
+                file=sys.stderr,
+            )
+        elif not leading and trailing:  # [Name/] loop or [Name?] region opener
+            kind = "loop" if trailing == "/" else "region"
             if name in pending:
                 print(
-                    f"WARNING: loop [{name}] reopened before [/{name}] — earlier opener ignored",
+                    f"WARNING: [{name}{trailing}] reopened before [/{name}] — earlier opener ignored",
                     file=sys.stderr,
                 )
-            pending[name] = (m.start(), m.end())
-        elif name in pending:
-            o_start, o_end = pending.pop(name)
-            pairs.append((o_start, o_end, m.start(), m.end(), name))
-        else:
-            print(f"WARNING: [/{name}] closer without opener — left as literal text", file=sys.stderr)
-    for name in pending:
-        print(f"WARNING: loop [{name}] never closed — left as literal text", file=sys.stderr)
-    if not pairs:
+            pending[name] = (m.start(), m.end(), kind)
+        elif leading:  # [/Name] closer
+            if name in pending:
+                o_start, o_end, kind = pending.pop(name)
+                dest = pairs if kind == "loop" else region_pairs
+                dest.append((o_start, o_end, m.start(), m.end(), name))
+            elif name in legacy_openers:
+                legacy_openers.discard(name)
+                print(
+                    f"WARNING: legacy loop syntax [{name}]…[/{name}] — the opener is now "
+                    f"[{name}/]; markers left as literal text",
+                    file=sys.stderr,
+                )
+            else:
+                print(f"WARNING: [/{name}] closer without opener — left as literal text", file=sys.stderr)
+        else:  # plain [Name] — legacy opener candidate; silent unless a closer follows
+            legacy_openers.add(name)
+    for name, (_s, _e, kind) in pending.items():
+        marker = f"[{name}/]" if kind == "loop" else f"[{name}?]"
+        print(f"WARNING: {marker} never closed — left as literal text", file=sys.stderr)
+    if not pairs and not region_pairs:
         return html, fields, []
 
-    # Classify each pair against conditional block spans.
-    cond_spans = _annotated_cond_spans(html)
-    blocks_by_id = {b["id"]: b for b in (cond_blocks or [])}
-    template_spans: dict[int, tuple[int, int]] = {}  # cond_id -> (start, end)
-    kept_pairs: list[tuple[int, int, int, int, str]] = []
-    for pair in pairs:
-        o_start, o_end, c_start, c_end, name = pair
-        overlapping = [s for s in cond_spans if s[0] < c_end and o_start < s[1]]
-        containing = [s for s in overlapping if s[0] <= o_start and c_end <= s[1]]
-        inside = [s for s in overlapping if o_end <= s[0] and s[1] <= c_start]
-        crossing = [s for s in overlapping if s not in containing and s not in inside]
-        if crossing:
+    # A [[$token]] inside a loop renders identically for every item (conditions
+    # are document-scoped) — allowed, but worth a warning.
+    for o_start, o_end, c_start, _c_end, name in pairs:
+        if re.search(r"\$doc\.\w+", html[o_end:c_start]):
             print(
-                f"WARNING: loop [{name}] crosses a [[conditional]] block boundary — "
-                "markers left as literal text; restructure the document",
-                file=sys.stderr,
-            )
-            continue
-        if len(containing) > 1:
-            print(
-                f"WARNING: loop [{name}] sits inside a nested [[conditional]] — only "
-                "top-level blocks support loops; markers left as literal text",
-                file=sys.stderr,
-            )
-            continue
-        if inside:
-            print(
-                f"WARNING: [[conditional]] block(s) inside loop [{name}] are document-scoped — "
+                f"WARNING: [[$token]] block(s) inside loop [{name}/] are document-scoped — "
                 "the same text renders for every item",
                 file=sys.stderr,
             )
-        if containing:
-            b_start, b_end, cond_id = containing[0]
-            if cond_id is None or cond_id not in blocks_by_id:
+
+    # Classify each [Name?] region: inside a loop → direct iterator guard;
+    # document level → #if($doc.<Name>) + a render: template block, carrying
+    # presence metadata when the name is a registry coverage (auto-wired by
+    # Leg 4, skipped in the variants.csv).
+    cov_map = _registry_coverage_map(registry_path) if region_pairs else {}
+    region_guards: dict[tuple[int, int], str] = {}  # (o_start, c_start) -> guard ref
+    doc_level_regions: list[tuple[str, dict | None]] = []  # (name, coverage info|None)
+    for ro_start, _ro_end, rc_start, _rc_end, name in region_pairs:
+        enclosing = None  # innermost loop containing this region
+        for o_start, o_end, c_start, _c_end, lname in pairs:
+            if o_end <= ro_start and rc_start <= c_start:
+                if enclosing is None or o_start > enclosing[0]:
+                    enclosing = (o_start, lname)
+        if enclosing is not None:
+            loop_name = enclosing[1]
+            info = cov_map.get(name) or {}
+            is_loop_coverage = info.get("exposure") == loop_name
+            # Use the registry iterable's iterator so the guard references the
+            # same variable Leg 3's #foreach directive declares; name.lower()
+            # only as the registry-less fallback.
+            it_var = (
+                info["iterator"] if is_loop_coverage and info.get("iterator")
+                else loop_name.lower()
+            )
+            if cov_map and not is_loop_coverage:
                 print(
-                    f"WARNING: loop [{name}] is inside an unannotated [[conditional]] — "
-                    "markers left as literal text",
+                    f"WARNING: [{name}?] inside loop [{loop_name}/] — `{name}` is not a "
+                    f"registry coverage of `{loop_name}`; the rows render only when "
+                    f"${it_var}.{name} is non-null",
                     file=sys.stderr,
                 )
-                continue
-            template_spans[cond_id] = (b_start, b_end)
-            blocks_by_id[cond_id]["render"] = "template"
-        kept_pairs.append(pair)
-    pairs = kept_pairs
-    if not pairs:
-        return html, fields, []
+            region_guards[(ro_start, rc_start)] = f"${it_var}.{name}"
+        else:
+            region_guards[(ro_start, rc_start)] = f"$doc.{name}"
+            doc_level_regions.append((name, cov_map.get(name)))
+
+    # Every loop gets a when-only variants.csv row: append a render: template
+    # block keyed by the loop name (blank `when` = unconditional loop).
+    # Document-level [Name?] regions get one too — with `presence` metadata
+    # (no customer fill) when the name is a registry coverage.
+    if cond_blocks is not None:
+        taken = {b["key"] for b in cond_blocks}
+        next_id = max((b.get("id") or 0 for b in cond_blocks), default=0) + 1
+        block_specs = [(p[4], None, "loop") for p in pairs] + [
+            (name, cov_info, "region") for name, cov_info in doc_level_regions
+        ]
+        for name, cov_info, kind in block_specs:
+            if name in taken:
+                marker = f"[{name}/]" if kind == "loop" else f"[{name}?]"
+                raise ValueError(
+                    f"{marker} collides with another block keyed `{name}` — "
+                    "loop, region and conditional-token names share one key space; rename one"
+                )
+            taken.add(name)
+            block = {
+                "id": next_id,
+                "key": name,
+                "placeholder": None,
+                "variant": False,
+                "render": "template",
+                "source_text": "",
+                "top_level": True,
+            }
+            if kind == "region" and cov_info:
+                block["presence"] = {"coverage": name, **cov_info}
+            cond_blocks.append(block)
+            next_id += 1
 
     loop_field_lists: dict[str, list[dict]] = {p[4]: [] for p in pairs}
     top_fields: list[dict] = []
@@ -739,17 +1067,18 @@ def extract_loops(
             loop_field_lists[target].append(f)
 
     # Replace marker spans in reverse offset order so earlier offsets stay valid.
-    # Template-rendered blocks unwrap in the same pass: their [[ opener and
-    # ]]$doc.condN tail become #if($doc.condN) / #end guard lines (disjoint
-    # from the marker spans, which sit strictly inside the block content).
+    # Each loop is wrapped in its own #if($doc.<Name>) guard — Leg 3 resolves it
+    # to #if($data.<Name>) when the customer filled the loop's `when` row, or
+    # strips it when the row was left blank (unconditional loop). A [Name?]
+    # region opener becomes a single #if — iterator-scoped ($item.<Cov>, final
+    # as emitted) or document-scoped ($doc.<Name>, resolved/stripped by Leg 3).
     spans: list[tuple[int, int, str]] = []
     for o_start, o_end, c_start, c_end, name in pairs:
-        spans.append((o_start, o_end, f"#foreach (${name.lower()} in $TBD_{name})"))
-        spans.append((c_start, c_end, "#end"))
-    for cond_id, (b_start, b_end) in template_spans.items():
-        tail_len = 2 + len(f"$doc.cond{cond_id}")  # ]]$doc.condN
-        spans.append((b_start, b_start + 2, f"#if($doc.cond{cond_id})\n"))
-        spans.append((b_end - tail_len, b_end, "\n#end"))
+        spans.append((o_start, o_end, f"#if($doc.{name})\n#foreach (${name.lower()} in $TBD_{name})"))
+        spans.append((c_start, c_end, "#end\n#end"))
+    for ro_start, ro_end, rc_start, rc_end, _name in region_pairs:
+        spans.append((ro_start, ro_end, f"#if({region_guards[(ro_start, rc_start)]})"))
+        spans.append((rc_start, rc_end, "#end"))
     for start, end, text in sorted(spans, reverse=True):
         html = html[:start] + text + html[end:]
     for pattern, repl in _DIRECTIVE_LINE_CLEANUP:
@@ -829,24 +1158,8 @@ def write_leg2_mapping(
 # Write conditional form (E-T4)
 # ---------------------------------------------------------------------------
 
-_TBD_DISPLAY_RE = re.compile(r"\$TBD_([A-Za-z_][\w.]*)")
-
-
-def _tbd_to_braces(text: str) -> str:
-    """Display conversion: $TBD_name → {name} (customer-facing form only).
-
-    Trailing dots are sentence punctuation, not part of the field name —
-    `$TBD_amount.` becomes `{amount}.`, not `{amount.}`.
-    """
-    def _repl(m: re.Match) -> str:
-        name = m.group(1)
-        stripped = name.rstrip(".")
-        return "{" + stripped + "}" + name[len(stripped):]
-    return _TBD_DISPLAY_RE.sub(_repl, text)
-
-
 def _braces_to_tbd(text: str) -> str:
-    """Inverse of _tbd_to_braces: {name} → $TBD_name (canonical machine form).
+    """Convert {name} → $TBD_name (canonical machine form).
 
     No-op on text already in $TBD_ form, so forms written before the {field}
     display change still parse. Occurrence symbols ({$x}, {+x}, {*x}) are
@@ -860,18 +1173,16 @@ def write_variants_csv(blocks: list[dict], stem: str, output_path: Path) -> None
     conditional blocks (variants-only plan §2.1).
 
     One row group per block, keyed by the block's join ``key`` (pre-filled — the
-    customer never renames it). The stub lists the blocks with their document
-    wording but **no fabricated conditions** — every ``when`` is blank for the
-    customer to fill. Block kind drives the row shape:
+    customer never renames it). The stub lists the blocks with **no fabricated
+    conditions** — every ``when`` is blank for the customer to fill. Block kind
+    drives the row shape:
 
     - **variant** (``[[$token]]``): one conditioned row + one default row, both
       blank; the customer fills/adds rows and supplies each variant's ``text``.
-    - **binary** (``[[text]]``): a 2-row fold — one row whose ``text`` is
-      pre-filled from the document, plus an empty-default row. The text shows
-      when ``when`` matches, nothing otherwise; the customer fills only ``when``.
-    - **template** (``render: template`` — a loop inside a conditional): a single
+    - **template** (``render: template`` — a ``[Name/]`` loop section): a single
       ``when``-only row, ``text`` left blank because the section's wording stays
-      in the document. The customer fills only ``when``.
+      in the document. The customer fills the ``when`` to show/hide the section,
+      or leaves it blank for a plain unconditional loop.
 
     Block metadata that the three columns can't carry (id, ``render`` flag,
     ``source_text``, nesting) travels in the machine sidecar
@@ -891,16 +1202,17 @@ def write_variants_csv(blocks: list[dict], stem: str, output_path: Path) -> None
     w.writerow(["placeholder", "when", "text"])
     for b in blocks:
         key = block_key(b)
+        if b.get("presence"):
+            # [Name?] coverage-presence region: auto-wired by Leg 4 (any item
+            # carries the coverage) — nothing for the customer to fill.
+            continue
         if b.get("render") == "template":
-            # loop-in-conditional: a single `when`-only row, blank for the customer.
+            # [Name/] loop section or [Name?] conditional region: a single
+            # `when`-only row (blank = unconditional / always render).
             w.writerow([key, "", ""])
-        elif b.get("variant"):
+        else:
             # N-way [[$token]]: one conditioned row to fill + the default row.
             w.writerow([key, "", ""])
-            w.writerow([key, "", ""])
-        else:  # binary block folds into a one-real-row + empty-default variant.
-            # The document's wording is pre-filled in `text`; the customer fills `when`.
-            w.writerow([key, "", _tbd_to_braces(b.get("source_text", ""))])
             w.writerow([key, "", ""])
     content = buf.getvalue()
 
@@ -939,6 +1251,7 @@ def write_conditional_blocks(blocks: list[dict], output_path: Path) -> None:
             "top_level": b.get("top_level", True),
             "parent_id": b.get("parent_id"),
             "depth": b.get("depth", 0),
+            **({"presence": b["presence"]} if b.get("presence") else {}),
         }
         for b in blocks
     ]
@@ -1128,12 +1441,13 @@ def parse_variants_csv_to_blocks(
     written to ``conditional-registry.yaml`` (variants-only plan §2.3).
 
     This is the single parse path — every block kind flows through one CSV:
-      - **variant** / **binary** → ``variants`` + ``default`` + ``scope`` (binary
-        is the one-real-row + empty-default fold; its ``placeholder`` stays None
-        so ``block_key`` falls back to ``cond<id>``).
-      - **template** (``render: template``) → a Boolean: the single ``when`` is
-        carried as a one-entry ``variants`` payload (text blank) and evaluated by
-        Leg 4 through the same DSL→Java path as N-way blocks.
+      - **variant** (``[[$token]]``) → ``variants`` + ``default`` + ``scope``.
+      - **template** (``render: template`` — a ``[Name/]`` loop row) → a Boolean:
+        the single ``when`` is carried as a one-entry ``variants`` payload (text
+        blank) and evaluated by Leg 4 through the same DSL→Java path as N-way
+        blocks. A blank ``when`` means the loop is unconditional — the block is
+        **omitted** from the registry entirely (Leg 3 strips its ``#if`` guard,
+        Leg 4 puts nothing).
 
     Block metadata (id, ``render``, ``source_text``, nesting) comes from the
     sidecar; the human CSV only supplies ``when``/``text``. Any CSV/DSL/scope
@@ -1185,12 +1499,26 @@ def parse_variants_csv_to_blocks(
             "parent_id": b.get("parent_id"),
             "depth": b.get("depth", 0),
         }
+        if b.get("presence"):
+            # [Name?] coverage-presence region: no CSV rows (nothing to fill) —
+            # register directly; Leg 4 emits the presence Boolean, Leg 3 renames
+            # the #if($doc.<key>) guard to #if($data.<key>).
+            block["render"] = "template"
+            block["presence"] = b["presence"]
+            block["variants"] = []
+            block["default"] = None
+            out_blocks.append(block)
+            continue
         data = result.placeholders.get(key)
         if data is None:
             errors.append(f"block '{key}' has no rows in the variants CSV")
             out_blocks.append(block)
             continue
         if b.get("render") == "template":
+            if not data["variants"]:
+                # Blank `when` = unconditional loop: no registry entry at all —
+                # Leg 3 strips the #if($doc.<key>) guard, Leg 4 puts nothing.
+                continue
             block["render"] = "template"
             block["scope"] = data["scope"]
             # The single `when` rides in a one-entry variants payload (text blank);
@@ -1325,6 +1653,7 @@ def _parse_document(
     *,
     path_map: Path | None = None,
     registry_path: Path | None = None,
+    converter: str = "soffice",
 ) -> ParseResult:
     """Convert + extract a .docx/.pdf into a :class:`ParseResult`, writing nothing.
 
@@ -1335,7 +1664,13 @@ def _parse_document(
     Leg -1 ``path_map`` is applied to the working HTML before extraction.
     """
     suffix = input_path.suffix.lower()
-    raw_html = convert_docx(input_path) if suffix == ".docx" else convert_pdf(input_path)
+    if suffix == ".docx":
+        raw_html = (
+            convert_docx(input_path) if converter == "legacy"
+            else convert_docx_soffice(input_path)
+        )
+    else:
+        raw_html = convert_pdf(input_path)
 
     # Apply a Leg -1 path-map (bare {leaf} → full accessor) if supplied, so the
     # author's friendly leaves resolve before extraction.
@@ -1358,7 +1693,9 @@ def _parse_document(
     # membership is decided on $TBD_* token positions). Blocks containing a
     # loop flip to render: template — this is the only place the conditional
     # form's `render:` note is set, so --scan must run it too.
-    annotated, fields, loops = extract_loops(annotated, fields, cond_blocks=blocks)
+    annotated, fields, loops = extract_loops(
+        annotated, fields, cond_blocks=blocks, registry_path=registry_path
+    )
 
     return ParseResult(
         stem=input_path.stem,
@@ -1424,6 +1761,14 @@ def main() -> int:
         default=None,
         metavar="PATH_MAP.yaml",
         help="Apply a Leg -1 path-map (bare {leaf} → full accessor) before extraction",
+    )
+    parser.add_argument(
+        "--converter",
+        choices=["soffice", "legacy"],
+        default="soffice",
+        help=".docx→HTML converter: 'soffice' (default — LibreOffice headless, "
+        "preserves the document's styling; requires LibreOffice installed) or "
+        "'legacy' (structure-only python-docx converter, styling discarded).",
     )
     parser.add_argument(
         "--parse-variants-csv",
@@ -1607,8 +1952,21 @@ def main() -> int:
             print(f"Error: path-map not found: {path_map}", file=sys.stderr)
             return 1
 
-    # Single document parse — shared by --scan and full ingest.
-    pr = _parse_document(input_path, path_map=path_map, registry_path=registry_path)
+    # Single document parse — shared by --scan and full ingest. A ValueError is
+    # an authoring error in the document (bare [[text]] block, duplicate token,
+    # loop/token key collision) — report it cleanly, no traceback.
+    try:
+        pr = _parse_document(
+            input_path, path_map=path_map, registry_path=registry_path,
+            converter=args.converter,
+        )
+    except ValueError as exc:
+        print(f"Error in {input_path.name}:\n{exc}", file=sys.stderr)
+        return 1
+    except RuntimeError as exc:
+        # Token-integrity / conversion failure from the soffice path.
+        print(f"Error in {input_path.name}:\n{exc}", file=sys.stderr)
+        return 1
 
     # --- Sub-mode: scan — emit ONLY the human-fill files, defer machine artifacts.
     if args.scan:

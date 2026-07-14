@@ -831,11 +831,11 @@ def parse_variants_csv(
     ``when`` parses + (with a registry) validates, and a single shared scope.
     Bare leaf names in ``when`` are resolved against the registry.
 
-    ``template_placeholders`` (variants-only plan §2.3, Decision A): keys for
-    loop-bearing ``render: template`` blocks. Such a block carries a single
-    ``when`` and **no** text/default (its wording stays in the document), so the
-    default-row and N-way validations are skipped for it; >1 conditioned row is
-    rejected (the unsupported per-variant-loop edge).
+    ``template_placeholders``: keys for ``render: template`` blocks — the
+    when-only rows of ``[Name/]`` loop sections. Such a row carries a single
+    ``when`` (show/hide the section) or a blank ``when`` (plain unconditional
+    loop) and **no** text (the section's wording stays in the document); >1
+    conditioned row is rejected (the unsupported per-variant-loop edge).
 
     ``doc_scope`` is the document's rendering-root scope (``"quote"`` or
     ``"policy"``). When given, bare leaves resolve to that scope — so a custom
@@ -913,14 +913,21 @@ def parse_variants_csv(
 
         is_template = ph in template_placeholders
         if is_template:
-            if default_count:
-                errors.append(f"{ph}: template (loop) block takes a single `when` only — "
-                              "remove the default/blank-when row(s)")
+            # A loop section row: one `when` (conditional section) or one blank
+            # `when` (plain unconditional loop). Never any text — the section's
+            # wording stays in the document.
             if len(variants) > 1:
-                errors.append(f"{ph}: template (loop) block has {len(variants)} conditioned rows — "
-                              "an N-way block whose variants each carry a loop is unsupported")
-            if not variants and not errors:
-                errors.append(f"{ph}: template (loop) block has no `when` row — fill the condition")
+                errors.append(f"{ph}: loop section has {len(variants)} conditioned rows — "
+                              "a loop renders on a single condition (or unconditionally)")
+            if default_count and variants:
+                errors.append(f"{ph}: loop section has both a `when` row and a blank-when row — "
+                              "keep exactly one row (fill the `when`, or leave it blank)")
+            if default_count > 1:
+                errors.append(f"{ph}: loop section has {default_count} blank-when rows (expected one row)")
+            if (default or "").strip() or any((v.get("text") or "").strip() for v in variants):
+                errors.append(f"{ph}: loop section rows take no text — the section wording "
+                              "stays in the document")
+            default = None  # loop rows carry no text; blank-when → unconditional
         else:
             if default_count == 0:
                 if len(variants) == 1:

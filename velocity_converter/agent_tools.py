@@ -372,7 +372,7 @@ def build_preflight(
     return "\n".join(lines)
 
 
-def run_leg0(input_path: str, output_dir: str) -> dict:
+def run_leg0(input_path: str, output_dir: str, converter: str = "soffice") -> dict:
     """Run leg0_ingest.py for Leg 0. Returns ok/artifacts/stdout/stderr."""
     repo_root = _find_repo_root()
     cmd = [
@@ -383,6 +383,8 @@ def run_leg0(input_path: str, output_dir: str) -> dict:
         str(_resolve_safe(input_path, repo_root)),
         "--output-dir",
         str(_resolve_safe(output_dir, repo_root)),
+        "--converter",
+        converter,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(repo_root))
     if result.returncode != 0:
@@ -409,7 +411,7 @@ def run_leg0(input_path: str, output_dir: str) -> dict:
     return {"ok": True, "artifacts": artifacts, "stdout": result.stdout, "stderr": result.stderr}
 
 
-def run_leg0_scan(input_path: str, output_dir: str) -> dict:
+def run_leg0_scan(input_path: str, output_dir: str, converter: str = "soffice") -> dict:
     """Run Leg 0 in --scan mode: emit ONLY the human-fill file.
 
     Front-loads the customer handoff — the single variants.csv (covering every
@@ -427,6 +429,8 @@ def run_leg0_scan(input_path: str, output_dir: str) -> dict:
         "--output-dir",
         str(_resolve_safe(output_dir, repo_root)),
         "--scan",
+        "--converter",
+        converter,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(repo_root))
     if result.returncode != 0:
@@ -447,8 +451,14 @@ def run_leg0_scan(input_path: str, output_dir: str) -> dict:
     return {"ok": True, "artifacts": artifacts, "stdout": result.stdout, "stderr": result.stderr}
 
 
-def run_legminus1(input_path: str, registry: str, output_dir: str) -> dict:
+def run_legminus1(input_path: str, registry: str | None, output_dir: str,
+                  no_suggest: bool = False) -> dict:
     """Run Leg -1 (suggest): bare {leaf} → full accessor review + map + audit.
+
+    ``no_suggest`` blanks the path-review.csv's suggested/final columns (manual
+    fill); the .md/.path-map still carry the registry analysis. With no_suggest,
+    ``registry`` may be omitted — the blank fill files are emitted without a
+    config/registry loaded.
 
     Returns ok/artifacts/stdout/stderr. Artifacts land in ``output_dir/<stem>/``.
     """
@@ -459,11 +469,13 @@ def run_legminus1(input_path: str, registry: str, output_dir: str) -> dict:
         "velocity_converter.legminus1_resolve_paths",
         "--input",
         str(_resolve_safe(input_path, repo_root)),
-        "--registry",
-        str(_resolve_safe(registry, repo_root)),
         "--output-dir",
         str(_resolve_safe(output_dir, repo_root)),
     ]
+    if registry:
+        cmd += ["--registry", str(_resolve_safe(registry, repo_root))]
+    if no_suggest:
+        cmd.append("--no-suggest")
     result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(repo_root))
     if result.returncode != 0:
         return {"ok": False, "returncode": result.returncode, "stderr": result.stderr}
@@ -644,7 +656,7 @@ def _warn_missing_cond_registry(suggested_path: Path) -> None:
     annotated = form_dir / f"{stem}.annotated.html"
     if not annotated.exists():
         return
-    n = len(set(re.findall(r'\$doc\.cond\d+', annotated.read_text(encoding="utf-8"))))
+    n = len(set(re.findall(r'\$doc\.\w+', annotated.read_text(encoding="utf-8"))))
     if n == 0:
         return
     csv = action_needed_dir(form_dir) / f"{stem}.variants.csv"

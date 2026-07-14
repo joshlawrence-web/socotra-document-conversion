@@ -782,7 +782,7 @@ public class %(class_name)s implements DocumentDataSnapshotPlugin {
         renderingData.put("quote", quote);
         renderingData.put("pricing", enhancedPricing);
         renderingData.put("productType", "%(product)s");
-%(quote_datafetcher_extras)s%(quote_conditional_puts)s%(quote_occurrence_guards)s
+%(quote_datafetcher_extras)s%(quote_conditional_puts)s%(quote_plugin_lists)s%(quote_occurrence_guards)s
         return DocumentDataSnapshot.builder()
                 .renderingData(renderingData)
                 .build();
@@ -809,7 +809,7 @@ public class %(class_name)s implements DocumentDataSnapshotPlugin {
         renderingData.put("transaction", transaction);
         renderingData.put("segment", segment);
         renderingData.put("productType", "%(product)s");
-%(policy_datafetcher_extras)s%(policy_conditional_puts)s%(policy_occurrence_guards)s
+%(policy_datafetcher_extras)s%(policy_conditional_puts)s%(policy_plugin_lists)s%(policy_occurrence_guards)s
         return DocumentDataSnapshot.builder()
                 .renderingData(renderingData)
                 .build();
@@ -957,14 +957,21 @@ def _required_keys(suggested: dict, cond_blocks: list[dict]) -> dict[str, str]:
                 break
         result[key] = root_id
 
-    # Positional binary blocks only — named variant blocks (incl. default-only
-    # ones, which carry a placeholder) merge by name at the additive site
-    # (§1a: named keys don't collide by position, no renumber).
+    # Positional binary blocks only — named blocks (variant / default-only /
+    # coverage-presence) merge by name at the additive site (§1a: named keys
+    # don't collide by position, no renumber).
     for b in cond_blocks:
-        if not b.get("variants") and not b.get("placeholder"):
+        if not _is_named_block(b):
             result[f"cond{b['id']}"] = "cond"
 
     return result
+
+
+def _is_named_block(b: dict) -> bool:
+    """True for blocks that merge by name in additive mode (never renumbered):
+    variant blocks, default-only variants (placeholder set), and coverage-
+    presence regions. Everything else is a positional ``cond<id>`` block."""
+    return bool(b.get("variants") or b.get("placeholder") or b.get("presence"))
 
 
 def _diff_keys(
@@ -1002,6 +1009,8 @@ def _append_to_plugin(
     policy_guard_code: str = "",
     classpath: str | None = None,
     product: str | None = None,
+    quote_plugin_list_code: str = "",
+    policy_plugin_list_code: str = "",
 ) -> None:
     """Write a backup then insert missing puts before each overload's builder return.
 
@@ -1021,7 +1030,8 @@ def _append_to_plugin(
                                                classpath=classpath, product=product)
 
     if not any((quote_df_code, policy_df_code, quote_cond_code,
-                quote_guard_code, policy_guard_code)):
+                quote_guard_code, policy_guard_code,
+                quote_plugin_list_code, policy_plugin_list_code)):
         return
 
     bak = java_path.with_suffix(".java.bak")
@@ -1031,7 +1041,8 @@ def _append_to_plugin(
 
     # Insert missing dynamic imports for new DataFetcher return types.
     new_imports = _generate_dynamic_imports(missing_quote_df + missing_policy_df)
-    if "Objects.toString(" in quote_cond_code + policy_cond_code:
+    if "Objects.toString(" in (quote_cond_code + policy_cond_code
+                               + quote_plugin_list_code + policy_plugin_list_code):
         new_imports = (new_imports + "\n" if new_imports else "") + "import java.util.Objects;"
     if new_imports:
         for imp_line in new_imports.splitlines():
@@ -1061,8 +1072,10 @@ def _append_to_plugin(
         joined = "\n".join(p for p in parts if p)
         return ("\n" + joined + "\n") if joined else ""
 
-    quote_insert = _join_inserts(quote_df_code, quote_cond_code, quote_guard_code)
-    policy_insert = _join_inserts(policy_df_code, policy_cond_code, policy_guard_code)
+    quote_insert = _join_inserts(quote_df_code, quote_cond_code,
+                                 quote_plugin_list_code, quote_guard_code)
+    policy_insert = _join_inserts(policy_df_code, policy_cond_code,
+                                  policy_plugin_list_code, policy_guard_code)
 
     # Insert policy first (later in file) so positions[0] stays valid.
     if policy_insert:
@@ -1170,6 +1183,13 @@ def load_conditional_registry(yaml_path: Path) -> list[dict]:
             "operator": b.operator,
             "render": b.render,
         }
+        # Coverage-presence region ([Coverage?] at document level): carry the
+        # named key + presence metadata — no variants/conditions; the Boolean
+        # is derived from the exposure list.
+        presence = getattr(b, "presence", None)
+        if presence:
+            block["key"] = b.key
+            block["presence"] = dict(presence)
         # §1a / N-way: carry the named key + variant payload when present. A
         # binary block keeps no explicit key so block_key() falls back to
         # cond<id> (and additive offsetting can rewrite its id freely).
@@ -1362,7 +1382,41 @@ def _render_template_put(block: dict, scope: str, bid, key: str, truncated: str,
     single ``when`` AST in ``variants[0]`` (scope computed at parse time); legacy
     registries carry ``conditions[]``/``operator``. A scope-blocked or unfilled
     condition puts ``false`` (an empty string is truthy in Velocity's ``#if``).
+
+    A block carrying ``presence`` metadata (a document-level ``[Coverage?]``
+    region) needs no condition at all: the Boolean is "any exposure carries the
+    coverage", walked over ``<root>.<list_method>()`` with the coverage's
+    lowerCamel record accessor. Emitted for both overloads — the customer JAR
+    generates the coverage accessor on both the quote- and policy-side exposure
+    records.
     """
+    presence = block.get("presence") or {}
+    if presence:
+        cov = str(presence.get("coverage") or key)
+        accessor = cov[0].lower() + cov[1:]
+        list_method = str(presence.get("list_method") or "").strip()
+        if not list_method:
+            # No registry list accessor recorded — never guess (a wrong
+            # accessor fails at compile/deploy); put false with a TODO.
+            return (
+                f'        // TODO: presence region `{key}` has no list_method in its '
+                f'registry iterable — fill it and re-run Leg 0 + the parse step\n'
+                f'        renderingData.put("{key}", false);'
+            )
+        root = "segment" if scope == "policy" else "quote"
+        var = f"{accessor}Present"
+        return (
+            f'        // Conditional block {bid} (coverage presence): {cov} on any '
+            f'{presence.get("exposure") or "exposure"}\n'
+            f'        boolean {var} = false;\n'
+            f'        if ({root} != null && {root}.{list_method}() != null) {{\n'
+            f'            for (var presenceItem : {root}.{list_method}()) {{\n'
+            f'                if (presenceItem.{accessor}() != null) {{ {var} = true; break; }}\n'
+            f'            }}\n'
+            f'        }}\n'
+            f'        renderingData.put("{key}", {var});'
+        )
+
     variants = block.get("variants") or []
     if variants:  # variants-only flow: a single resolved `when` AST.
         block_scope = (block.get("scope") or "").strip()
@@ -1523,6 +1577,149 @@ def render_conditional_puts(
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# Plugin-built lists (registry iterable kind `plugin_list`)
+# ---------------------------------------------------------------------------
+
+
+def _plugin_list_loops(loops: list[dict] | None) -> list[dict]:
+    """Loops carrying a plugin_list spec (dedupe by key, first wins)."""
+    out: list[dict] = []
+    seen: set[str] = set()
+    for loop in loops or []:
+        spec = loop.get("plugin_list")
+        if not isinstance(spec, dict):
+            continue
+        key = str(spec.get("key") or loop.get("name") or "").strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(loop)
+    return out
+
+
+def _plugin_list_referenced_leaves(loop: dict) -> list[str]:
+    """Union of entry-field leaves the template references (order-preserving).
+
+    Leaf = last dot-segment of the field's data_source ($coverage.displayName →
+    displayName); falls back to the name's last segment when data_source is empty.
+    """
+    leaves: list[str] = []
+    for f in loop.get("fields") or []:
+        src = (f.get("data_source") or "").strip() or (f.get("name") or "").strip()
+        leaf = src.split(".")[-1]
+        if leaf and leaf not in leaves:
+            leaves.append(leaf)
+    return leaves
+
+
+def _java_str(s: str) -> str:
+    return '"' + str(s).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def render_plugin_list_puts(loops: list[dict] | None, scope: str) -> str:
+    """Generate the plugin-built list builder blocks for one overload.
+
+    One entry Map per (item × coverage present on that item); the entry always
+    carries every referenced key so Velocity never prints a bare $coverage.<f>.
+    """
+    root = "quote" if scope == "quote" else "segment"
+    blocks: list[str] = []
+    for loop in _plugin_list_loops(loops):
+        spec = loop["plugin_list"]
+        key = str(spec.get("key") or loop.get("name")).strip()
+        list_var = re.sub(r"\W", "_", key) + "List"
+        list_method = str(spec.get("list_method") or "").strip()
+        coverages = spec.get("coverages") or []
+        if not list_method or not coverages:
+            blocks.append(
+                f"        // TODO: plugin list `{key}` — spec missing list_method/coverages; "
+                f"emitting an empty list\n"
+                f'        renderingData.put("{key}", new java.util.ArrayList<>());'
+            )
+            continue
+        entry_sources = {
+            str(e.get("field") or "").strip(): str(e.get("source") or "").strip()
+            for e in (spec.get("entry_fields") or [])
+        }
+        leaves = _plugin_list_referenced_leaves(loop)
+        lines = [
+            f"        // Plugin-built list `{key}`: one entry per item x coverage present",
+            f"        java.util.List<java.util.Map<String, Object>> {list_var} = new java.util.ArrayList<>();",
+            f"        if ({root} != null && {root}.{list_method}() != null) {{",
+            f"            for (var plItem : {root}.{list_method}()) {{",
+            "                java.util.Map<String, Object> m;",
+        ]
+        for cov in coverages:
+            cname = str(cov.get("name") or "").strip()
+            if not cname:
+                continue
+            acc = cname[0].lower() + cname[1:]
+            cov_fields = set(cov.get("fields") or [])
+            lines.append(f"                if (plItem.{acc}() != null) {{")
+            lines.append("                    m = new java.util.HashMap<>();")
+            for leaf in leaves:
+                comment = ""
+                src = entry_sources.get(leaf)
+                if src is None:
+                    val = '""'
+                    comment = " // not a declared entry field"
+                elif src == "coverage_name":
+                    val = _java_str(cname)
+                elif src == "coverage_display_name":
+                    val = _java_str(cov.get("display_name") or cname)
+                elif src.startswith("item_field:"):
+                    f = src[len("item_field:"):]
+                    val = f'Objects.toString(plItem.data() == null ? null : plItem.data().{f}(), "")'
+                elif src.startswith("coverage_data:"):
+                    f = src[len("coverage_data:"):]
+                    if f in cov_fields:
+                        val = (
+                            f"Objects.toString(plItem.{acc}().data() == null ? null : "
+                            f'plItem.{acc}().data().{f}(), "")'
+                        )
+                    else:
+                        val = '""'  # coverage type lacks the field — key must still exist
+                else:
+                    val = '""'
+                    comment = f" // unknown source '{src}'"
+                lines.append(f'                    m.put("{leaf}", {val});{comment}')
+            lines.append(f"                    {list_var}.add(m);")
+            lines.append("                }")
+        lines += [
+            "            }",
+            "        }",
+            f'        renderingData.put("{key}", {list_var});',
+        ]
+        blocks.append("\n".join(lines))
+    return "\n".join(blocks)
+
+
+def plugin_list_report_rows(loops: list[dict] | None) -> list[dict]:
+    """Report rows for the 'Plugin-built lists' section (one per plugin_list loop)."""
+    rows: list[dict] = []
+    for loop in _plugin_list_loops(loops):
+        spec = loop["plugin_list"]
+        key = str(spec.get("key") or loop.get("name")).strip()
+        declared = {str(e.get("field") or "").strip() for e in (spec.get("entry_fields") or [])}
+        leaves = _plugin_list_referenced_leaves(loop)
+        warns: list[str] = []
+        if not str(spec.get("list_method") or "").strip() or not (spec.get("coverages") or []):
+            warns.append("spec missing list_method/coverages — emitted an empty list (TODO)")
+        warns += [
+            f"`{leaf}` referenced in the template but not a declared entry field — put as \"\""
+            for leaf in leaves if leaf not in declared
+        ]
+        rows.append({
+            "key": key,
+            "source_exposure": str(spec.get("source_exposure") or ""),
+            "coverages": [str(c.get("name") or "") for c in (spec.get("coverages") or [])],
+            "referenced": leaves,
+            "warns": warns,
+        })
+    return rows
+
+
 def render_java(
     product: str,
     suggested_name: str,
@@ -1532,6 +1729,7 @@ def render_java(
     field_lookup: dict[str, dict] | None = None,
     variables: list[dict] | None = None,
     classpath: str | None = None,
+    loops: list[dict] | None = None,
 ) -> str:
     quote_extras = _generate_datafetcher_extras(quote_df_calls or [])
     policy_extras = _generate_datafetcher_extras(policy_df_calls or [])
@@ -1541,9 +1739,11 @@ def render_java(
                                               classpath=classpath, product=product)
     policy_cond_puts = render_conditional_puts(cond_blocks or [], scope="policy", field_lookup=field_lookup,
                                                classpath=classpath, product=product)
+    quote_plugin_lists = render_plugin_list_puts(loops, scope="quote")
+    policy_plugin_lists = render_plugin_list_puts(loops, scope="policy")
     quote_guards = render_occurrence_guards(variables or [], field_lookup or {}, scope="quote")
     policy_guards = render_occurrence_guards(variables or [], field_lookup or {}, scope="policy")
-    if "Objects.toString(" in quote_cond_puts + policy_cond_puts:
+    if "Objects.toString(" in quote_cond_puts + policy_cond_puts + quote_plugin_lists + policy_plugin_lists:
         dyn_imports = (dyn_imports + "\n" if dyn_imports else "") + "import java.util.Objects;"
     if dyn_imports:
         dyn_imports = dyn_imports + "\n"
@@ -1560,6 +1760,8 @@ def render_java(
         "policy_datafetcher_extras": ("\n" + policy_extras) if policy_extras else "",
         "quote_conditional_puts": ("\n" + quote_cond_puts) if quote_cond_puts else "",
         "policy_conditional_puts": ("\n" + policy_cond_puts) if policy_cond_puts else "",
+        "quote_plugin_lists": ("\n" + quote_plugin_lists) if quote_plugin_lists else "",
+        "policy_plugin_lists": ("\n" + policy_plugin_lists) if policy_plugin_lists else "",
         "quote_occurrence_guards": ("\n" + quote_guards) if quote_guards else "",
         "policy_occurrence_guards": ("\n" + policy_guards) if policy_guards else "",
         "dynamic_imports": dyn_imports,
@@ -1587,6 +1789,7 @@ def write_report(
     additive_summary: dict | None = None,
     cond_field_rows: list[dict] | None = None,
     occurrence_rows: list[dict] | None = None,
+    plugin_list_rows: list[dict] | None = None,
 ) -> None:
     seg = f"{product}Segment"
     quote = f"{product}Quote"
@@ -1688,7 +1891,12 @@ def write_report(
 
     if additive_summary is not None:
         added_keys = sorted(additive_summary.get("keys_added") or [])
-        new_cond_ids = sorted(additive_summary.get("new_cond_ids") or [])
+        # Positional blocks contribute int cond ids, named blocks (variant /
+        # presence keys) contribute strings — sort ints first, then names.
+        new_cond_ids = sorted(
+            additive_summary.get("new_cond_ids") or [],
+            key=lambda v: (isinstance(v, str), str(v)),
+        )
         cond_range = (
             f"{new_cond_ids[0]}–{new_cond_ids[-1]}"
             if len(new_cond_ids) > 1
@@ -1799,6 +2007,34 @@ def write_report(
             lines.append(
                 f"| {r['name']} | {r['occurrence']} | `{r['data_source'] or '(empty)'}` | {status} |"
             )
+        lines += [""]
+
+    plugin_list_rows = plugin_list_rows or []
+    if plugin_list_rows:
+        warn_count = sum(len(r["warns"]) for r in plugin_list_rows)
+        lines += [
+            "---",
+            "",
+            f"## Plugin-built lists ({len(plugin_list_rows)})",
+            "",
+            "Lists the plugin builds for the template's `plugin_list` loops — one",
+            "`Map<String, Object>` entry per (item × coverage present on that item),",
+            "put under the renderingData key below.",
+            "",
+            "| Key | Source exposure | Coverages | Referenced fields |",
+            "|---|---|---|---|",
+        ]
+        for r in plugin_list_rows:
+            lines.append(
+                f"| `{r['key']}` | {r['source_exposure'] or '(unknown)'} | "
+                f"{', '.join(r['coverages']) or '(none)'} | "
+                f"{', '.join(f'`{x}`' for x in r['referenced']) or '(none)'} |"
+            )
+        if warn_count:
+            lines += [""]
+            for r in plugin_list_rows:
+                for w in r["warns"]:
+                    lines.append(f"> ⚠ **WARN** `{r['key']}`: {w}")
         lines += [""]
 
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -2088,6 +2324,11 @@ def _process_form(
     additive_mode = java_path.exists()
     additive_summary: dict | None = None
     occurrence_rows = occurrence_report_rows(suggested.get("variables") or [], field_lookup)
+    all_loops = suggested.get("loops") or []
+    plugin_list_rows = plugin_list_report_rows(all_loops)
+    for r in plugin_list_rows:
+        for w in r["warns"]:
+            print(f"WARNING: plugin list '{r['key']}': {w}", file=sys.stderr)
 
     if additive_mode:
         preflight = parse_plugin_keys(java_path)
@@ -2107,14 +2348,15 @@ def _process_form(
         offset_cond_blocks = [
             {**b, "id": local_to_global[b["id"]]}
             for b in cond_blocks
-            if not b.get("variants") and not b.get("placeholder") and b["id"] in local_to_global
+            if not _is_named_block(b) and b["id"] in local_to_global
         ]
-        # Named variant blocks merge by name (set-union, no positional offset) —
-        # this includes default-only variants (placeholder set, no conditioned
-        # rows). A name already in the plugin is a conflict to report, not a renumber.
+        # Named blocks merge by name (set-union, no positional offset) — variant
+        # blocks, default-only variants (placeholder set, no conditioned rows),
+        # and coverage-presence regions. A name already in the plugin is a
+        # conflict to report, not a renumber.
         named_cond_keys: list[str] = []
         for b in cond_blocks:
-            if not b.get("variants") and not b.get("placeholder"):
+            if not _is_named_block(b):
                 continue
             bkey = block_key(b)
             if bkey in existing_keys:
@@ -2145,13 +2387,37 @@ def _process_form(
             list_var=list_var, skip_names=guarded_names,
         )
 
+        # Plugin-built lists merge by key like named variant blocks: a key
+        # already in the plugin is a conflict to report, never a duplicate put.
+        new_pl_loops: list[dict] = []
+        for loop in _plugin_list_loops(all_loops):
+            pl_key = str(loop["plugin_list"].get("key") or loop.get("name")).strip()
+            if pl_key in existing_keys:
+                print(
+                    f"Additive: plugin-list key '{pl_key}' already in the plugin — "
+                    "skipped (plugin-list keys are not renumbered)",
+                    file=sys.stderr,
+                )
+                for r in plugin_list_rows:
+                    if r["key"] == pl_key:
+                        r["warns"].append("key already present in the plugin — skipped (additive)")
+            else:
+                new_pl_loops.append(loop)
+        quote_pl_code = render_plugin_list_puts(new_pl_loops, scope="quote")
+        policy_pl_code = render_plugin_list_puts(new_pl_loops, scope="policy")
+
         _append_to_plugin(java_path, missing_quote_df, missing_policy_df, offset_cond_blocks,
                           field_lookup=field_lookup,
                           quote_guard_code=quote_guard_code,
                           policy_guard_code=policy_guard_code,
-                          classpath=classpath, product=product)
+                          classpath=classpath, product=product,
+                          quote_plugin_list_code=quote_pl_code,
+                          policy_plugin_list_code=policy_pl_code)
 
         added_keys = {c["key"] for c in missing_quote_df + missing_policy_df}
+        added_keys |= {
+            str(l["plugin_list"].get("key") or l.get("name")).strip() for l in new_pl_loops
+        }
         additive_summary = {
             "keys_already_present": len(existing_keys),
             "keys_added": added_keys,
@@ -2170,7 +2436,7 @@ def _process_form(
                         quote_df_calls=quote_df_calls, policy_df_calls=policy_df_calls,
                         cond_blocks=cond_blocks, field_lookup=field_lookup,
                         variables=suggested.get("variables") or [],
-                        classpath=classpath),
+                        classpath=classpath, loops=all_loops),
             encoding="utf-8",
         )
 
@@ -2223,6 +2489,7 @@ def _process_form(
         additive_summary=additive_summary,
         cond_field_rows=cond_field_rows,
         occurrence_rows=occurrence_rows,
+        plugin_list_rows=plugin_list_rows,
     )
 
     print(f"Wrote {_rel(java_path, repo_root)}")

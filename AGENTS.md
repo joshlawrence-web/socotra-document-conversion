@@ -2,6 +2,8 @@
 
 **Repository:** [github.com/joshlawrence-web/socotra-document-conversion](https://github.com/joshlawrence-web/socotra-document-conversion)
 
+!!!!IF you are not claude please make sure to read CLAUDE.md
+
 ## Architecture overview
 
 This tool is a **five-leg document pipeline** for authoring Socotra Velocity templates.
