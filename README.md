@@ -4,6 +4,11 @@
 
 Update a Socotra document template without redeploying your product config — author in Word or HTML, run the pipeline, deploy the `.vm`.
 
+## 🎬 Demo video
+
+**[▶ Watch the 10-minute walkthrough](docs/media/DocumentConversionDemo1.mp4)** — a Word
+document going through the pipeline end to end (GitHub opens it in a built-in player).
+
 ## Pipeline overview
 
 ```mermaid
