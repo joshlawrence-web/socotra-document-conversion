@@ -105,6 +105,19 @@ then `--parse-variants-csv`, then Leg 2+3+4.
 
 ---
 
+## Config-agnostic, template-only mode (no registry, no plugin)
+
+When the product config doesn't exist yet — or the user says "no config", "just the
+template", "don't need the plugin yet" — use the **template-lite** skill
+(`.claude/skills/template-lite/SKILL.md`). It runs conversationally in the Claude
+session (no run_demo wrapper): Leg 0 + variants parse with the `--no-registry` flag,
+manual `data_source` mapping (the agent plays the registry, using the renderingData
+table), Leg 3, and a shape-band-only done-gate. Conditionals still promote to
+`${data.<token>}` + the conditional-registry, so Leg 4 can be run later, unchanged,
+once the user *willingly* provides config — never push config/plugin on them early.
+
+---
+
 ## Resolving bare field names to accessor paths (Leg -1)
 
 Authors should not have to know the exact accessor path. Leg -1 lets them write a

@@ -1870,6 +1870,14 @@ def main() -> int:
         "sibling <stem>.variants.csv)",
     )
     parser.add_argument(
+        "--no-registry",
+        action="store_true",
+        help="Config-agnostic mode: skip registry auto-discovery everywhere "
+        "(ingest classification and variants-CSV parse). Condition validation "
+        "degrades to syntax-only; loop/region classification uses the "
+        "registry-less fallbacks.",
+    )
+    parser.add_argument(
         "--customer-jar",
         default=None,
         metavar="customer-config.jar",
@@ -1920,7 +1928,9 @@ def main() -> int:
 
         from velocity_converter.condition_dsl import load_registry_dict  # noqa: PLC0415
 
-        reg_path = _discover_registry(csv_path.parent) or _discover_registry(machine_dir)
+        reg_path = None if args.no_registry else (
+            _discover_registry(csv_path.parent) or _discover_registry(machine_dir)
+        )
         registry = load_registry_dict(reg_path) if reg_path else None
         # Resolve bare-leaf conditions against the document's rendering root, so a
         # (quote) document conditions on quote.data.<f>, not the policy.data home.
@@ -1961,7 +1971,7 @@ def main() -> int:
 
         from velocity_converter.condition_dsl import load_registry_dict  # noqa: PLC0415
 
-        reg_path = _discover_registry(form_path.parent)
+        reg_path = None if args.no_registry else _discover_registry(form_path.parent)
         registry = load_registry_dict(reg_path) if reg_path else None
         try:
             blocks = parse_conditional_form(
@@ -2011,7 +2021,7 @@ def main() -> int:
     stem = input_path.stem
 
     # Find registry for explicit path resolution (walk up from input dir)
-    registry_path = _discover_registry(input_path.parent)
+    registry_path = None if args.no_registry else _discover_registry(input_path.parent)
 
     # Validate the optional Leg -1 path-map before parsing. Source doc is untouched.
     path_map: Path | None = None
