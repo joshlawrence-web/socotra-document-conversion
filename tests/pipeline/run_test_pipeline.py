@@ -390,6 +390,10 @@ def run_leg4(mapping_paths: list[str]) -> bool:
         cond_reg = Path(mp).parent / f"{Path(mp).parent.name}.conditional-registry.yaml"
         if cond_reg.exists():
             for blk in yaml.safe_load(cond_reg.read_text(encoding="utf-8")) or []:
+                if blk.get("loop_scope"):
+                    # In-loop value region: condition renders in the template
+                    # (per-item) — deliberately no plugin key.
+                    continue
                 expected_keys.add(str(blk.get("key") or f"cond{blk.get('id')}"))
     missing_keys = {k for k in expected_keys if f'renderingData.put("{k}"' not in plugin_text}
     if missing_keys:

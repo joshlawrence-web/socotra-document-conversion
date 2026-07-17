@@ -455,6 +455,12 @@ def validate_condition(
                     f"{cmp.path!r}: {info['base_type']!r} field compared to numeric "
                     f"value {cmp.value!r}"
                 )
+            elif leaf_kind in ("string", "date") and lit_kind == "boolean":
+                errors.append(
+                    f"{cmp.path!r}: {info['base_type']!r} field compared to bare "
+                    f"{str(cmp.value).lower()} — quote it "
+                    f'("{str(cmp.value).lower()}") if the field stores true/false as text'
+                )
         elif cmp.op == _IN_OP and leaf_kind == "number":
             if any(_literal_kind(v) != "number" for v in (cmp.value or [])):
                 errors.append(f"{cmp.path!r}: numeric field with a non-numeric value in 'in' list")
@@ -665,6 +671,60 @@ def condition_to_java(ast: ConditionAST, scope: str, leaf_types: dict[str, str] 
 
 
 # ---------------------------------------------------------------------------
+# Velocity codegen — in-loop value conditions render in the template, not Java
+# ---------------------------------------------------------------------------
+
+
+def _velocity_literal(value: object) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    # VTL escapes a double quote inside a "…" string by doubling it.
+    return '"' + str(value).replace('"', '""') + '"'
+
+
+def _comparison_to_velocity(cmp: Comparison) -> str:
+    segs = cmp.path.split(".")
+    ref = "$" + cmp.path
+    # Guard every intermediate hop — the strict renderer errors on a null hop
+    # (e.g. $item.<Cov>.data.<f> when the item doesn't carry the coverage).
+    hops = ["$" + ".".join(segs[:i]) for i in range(2, len(segs))]
+    guard = " && ".join(hops)
+
+    def guarded(expr: str) -> str:
+        return f"({guard} && {expr})" if guard else f"({expr})"
+
+    if cmp.op == "present":
+        # ponytail: VTL truthiness — a Boolean false leaf reads as absent
+        return guarded(ref)
+    if cmp.op == "absent":
+        return f"!{guarded(ref)}"
+    if cmp.op == _IN_OP:
+        eqs = " || ".join(f"{ref} == {_velocity_literal(v)}" for v in (cmp.value or []))
+        return guarded(f"({eqs})")
+    if cmp.op == "!=":
+        # Absent counts as != (mirrors the Java codegen's null semantics).
+        return f"!{guarded(f'{ref} == {_velocity_literal(cmp.value)}')}"
+    return guarded(f"{ref} {cmp.op} {_velocity_literal(cmp.value)}")
+
+
+def condition_to_velocity(ast: ConditionAST) -> str:
+    """Render an AST to a single boolean Velocity expression.
+
+    Used by Leg 3 for in-loop ``[Name?]`` value regions, whose condition is
+    per-item and therefore must evaluate in the template (inside the loop) —
+    the plugin can only compute document-scoped values. Every intermediate hop
+    is truthiness-guarded so the strict renderer never dies on a null step.
+    """
+    if not ast.comparisons:
+        return "true"
+    joiner = " || " if ast.join == "OR" else " && "
+    parts = [_comparison_to_velocity(c) for c in ast.comparisons]
+    return parts[0] if len(parts) == 1 else joiner.join(parts)
+
+
+# ---------------------------------------------------------------------------
 # Convenience: load a registry dict for validation
 # ---------------------------------------------------------------------------
 
@@ -822,6 +882,7 @@ def parse_variants_csv(
     product: str | None = None,
     template_placeholders: set[str] | None = None,
     doc_scope: str | None = None,
+    loop_scoped: dict[str, str] | None = None,
 ) -> VariantParseResult:
     """Normalise a customer ``<stem>.variants.csv`` into structured variants.
 
@@ -842,8 +903,16 @@ def parse_variants_csv(
     field in a ``(quote)`` document resolves to ``quote.data.<f>`` rather than the
     ``policy.data.<f>`` home, keeping the conditional in the quote overload. When
     omitted, resolution stays scope-blind (single ``policy.data.<f>`` candidate).
+
+    ``loop_scoped`` maps a placeholder to its loop's iterator name (e.g.
+    ``{"LabourNoteRow": "item"}``) — an in-loop ``[Name?]`` value region. Its
+    ``when`` is **per-item**: every path must be rooted at the iterator
+    (``item.data.<f>``, ``item.<Coverage>.data.<f>``); registry/scope
+    resolution is skipped (the condition renders as an in-template ``#if``,
+    validated by the live render, not the plugin compile).
     """
     template_placeholders = template_placeholders or set()
+    loop_scoped = loop_scoped or {}
     result = VariantParseResult()
     p = Path(path)
     if not p.is_file():
@@ -886,6 +955,20 @@ def parse_variants_csv(
                 ast = parse_condition(when)
             except ConditionError as exc:
                 errors.append(f"{ph}: bad condition {when!r}: {exc}")
+                continue
+            # In-loop value region: paths are per-item (rooted at the loop's
+            # iterator), never registry accessors — skip resolution entirely.
+            loop_iter = loop_scoped.get(ph)
+            if loop_iter:
+                bad = [c.path for c in ast.comparisons if c.path.split(".", 1)[0] != loop_iter]
+                if bad:
+                    errors.append(
+                        f"{ph}: an in-loop region conditions on the loop item — root every "
+                        f"path at the iterator `{loop_iter}` (e.g. `{loop_iter}.data.<field>` or "
+                        f"`{loop_iter}.<Coverage>.data.<field>`); got: {', '.join(bad)}"
+                    )
+                    continue
+                variants.append({"when": ast_to_dict(ast), "text": text, "_ast": ast})
                 continue
             # Resolve bare leaves → full accessors; track scope.
             resolved_ok = True

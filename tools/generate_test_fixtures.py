@@ -419,8 +419,9 @@ def _build_nested_variant_label(doc):
 # ---------------------------------------------------------------------------
 # Document 10: TestCoverageGrid(segment) — the "giant table" pattern: one table
 # where whole rows appear per coverage. Exercises [Name?] conditional regions
-# in all three shapes (inside a loop / doc-level coverage presence / doc-level
-# generic) plus coverage-hop dotted fields (always-guarded by Leg 3).
+# in all four shapes (in-loop coverage presence / in-loop VALUE condition
+# [BreakdownLabourRow?] / doc-level coverage presence / doc-level generic)
+# plus coverage-hop dotted fields (always-guarded by Leg 3).
 # ---------------------------------------------------------------------------
 
 def _build_coverage_grid(doc):
@@ -446,6 +447,10 @@ def _build_coverage_grid(doc):
     row.cells[0].text = "Breakdown"
     row.cells[1].text = "{item.Breakdown.data.labourCovered}"
     row.cells[2].text = "{item.Breakdown.data.partsCovered}"
+    tbl.add_row().cells[0].text = "[BreakdownLabourRow?]"
+    row = tbl.add_row()
+    row.cells[0].text = "Breakdown labour is covered for this item."
+    tbl.add_row().cells[0].text = "[/BreakdownLabourRow]"
     tbl.add_row().cells[0].text = "[/Item]"
     tbl.add_row().cells[0].text = "[Theft?]"
     row = tbl.add_row()

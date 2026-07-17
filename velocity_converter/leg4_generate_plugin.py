@@ -1190,6 +1190,13 @@ def load_conditional_registry(yaml_path: Path) -> list[dict]:
         if presence:
             block["key"] = b.key
             block["presence"] = dict(presence)
+        # In-loop value region ([Name?] inside a loop, non-coverage): the
+        # condition is per-item and renders in the template (Leg 3) — the
+        # plugin contributes nothing for it.
+        loop_scope = getattr(b, "loop_scope", None)
+        if loop_scope:
+            block["key"] = b.key
+            block["loop_scope"] = dict(loop_scope)
         # §1a / N-way: carry the named key + variant payload when present. A
         # binary block keeps no explicit key so block_key() falls back to
         # cond<id> (and additive offsetting can rewrite its id freely).
@@ -1327,7 +1334,7 @@ def _render_variant_puts(block: dict, scope: str, field_lookup: dict[str, dict] 
         return (
             f'        // Conditional block {bid} (variant ${placeholder}): '
             f'{block_scope}-scoped, n/a in {scope} context\n'
-            f'        renderingData.put("{key}", "");'
+            f'        renderingData.put("{key}", " ");'
         )
 
     todo_all: list[tuple[str, str]] = []
@@ -1366,7 +1373,9 @@ def _render_variant_puts(block: dict, scope: str, field_lookup: dict[str, dict] 
         f'        // Conditional block {bid} (variant ${placeholder}): '
         f'{len(variants)} variant(s) + default\n'
         f'{todo_comment}'
-        f'        String {key} = "";\n'
+        # " " not "": the platform JSON round-trip strips empty-string values
+        # from renderingData, and strict Velocity then errors on the missing key.
+        f'        String {key} = " ";\n'
         f'{chain}\n'
         f'{close}\n'
         f'        renderingData.put("{key}", {key});'
@@ -1499,6 +1508,10 @@ def render_conditional_puts(
         # Checked before the variants branch — the new flow carries the single
         # `when` as a one-entry variants payload, so order matters.
         if b.get("render") == "template":
+            if b.get("loop_scope"):
+                # In-loop value region: the condition is per-item, compiled by
+                # Leg 3 into a template #if inside the loop — no plugin key.
+                continue
             lines.append(_render_template_put(b, scope, bid, key, truncated, leaf_types))
             continue
 
@@ -1556,7 +1569,7 @@ def render_conditional_puts(
             lines.append(
                 f'        // Conditional block {bid}: {truncated}\n'
                 f'{todo_comment}'
-                f'        String {key} = "";\n'
+                f'        String {key} = " ";\n'
                 f'        if ({java_cond}) {{\n'
                 f'            {key} = {java_val};\n'
                 f'        }}\n'
@@ -1565,14 +1578,14 @@ def render_conditional_puts(
         elif raw_conds:
             lines.append(
                 f'        // Conditional block {bid}: {blocked_reason}\n'
-                f'        renderingData.put("{key}", "");'
+                f'        renderingData.put("{key}", " ");'
             )
         else:
             parent_note = f" — child of cond{b['parent_id']}, guard inside parent if-block" if b.get("parent_id") else ""
             lines.append(
                 f'        // TODO: fill conditions for {key} in conditional-registry.yaml{parent_note}\n'
                 f'        // {truncated}\n'
-                f'        renderingData.put("{key}", "");'
+                f'        renderingData.put("{key}", " ");'
             )
     return "\n".join(lines)
 
@@ -2356,7 +2369,7 @@ def _process_form(
         # conflict to report, not a renumber.
         named_cond_keys: list[str] = []
         for b in cond_blocks:
-            if not _is_named_block(b):
+            if not _is_named_block(b) or b.get("loop_scope"):
                 continue
             bkey = block_key(b)
             if bkey in existing_keys:

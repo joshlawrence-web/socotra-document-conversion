@@ -330,11 +330,17 @@ show/hide, not N-way.
 whole table rows (or paragraphs) that render only under a condition. `[[$token]]`
 text lives in CSV cells so it can never carry table rows; a region marker keeps the
 rows in the document and wraps them in a guard. Same placement rules as loop
-markers (standalone paragraph or table row). Three shapes, resolved automatically:
-- **Inside a `[Name/]` loop** → Leg 0 emits `#if($<iterator>.<Name>)`…`#end`
-  directly (per-item coverage presence, e.g. `[AccidentalDamage?]` rows inside
-  `[Item/]`). No customer fill, no plugin key; warned when `Name` isn't a registry
-  coverage of that exposure.
+markers (standalone paragraph or table row). Four shapes, resolved automatically:
+- **Inside a `[Name/]` loop, `Name` = a coverage of that exposure** → Leg 0 emits
+  `#if($<iterator>.<Name>)`…`#end` directly (per-item coverage presence, e.g.
+  `[AccidentalDamage?]` rows inside `[Item/]`). No customer fill, no plugin key.
+- **Inside a `[Name/]` loop, any other `Name`** → an in-loop **value** region: a
+  `when`-only `variants.csv` row whose condition is **per-item** — every path must
+  root at the loop's iterator (e.g. `item.Breakdown.data.labourCovered == "true"`;
+  blank = always render). Leg 3 compiles the condition to an in-template `#if`
+  inside the loop (every hop truthiness-guarded); the plugin never sees it —
+  per-item conditions can't be doc-scoped Booleans. (Registry required to
+  classify; registry-less runs keep the old bare presence-guard fallback.)
 - **Document level, `Name` = a registry coverage** → a `render: template` block
   with `presence` metadata: skipped in `variants.csv` (nothing to fill), the
   conditional-registry carries it automatically, and Leg 4 emits a Boolean that is
@@ -356,6 +362,26 @@ fields against the declared entry fields; Leg 4 generates the list-builder Java
 fields, `""` when a coverage type lacks a field). Known limit: per-coverage
 **charge amounts** (premium) are not reachable from the snapshot records — don't
 declare them as entry fields.
+
+**Splicing a table from another docx (`tools/splice_docx_table.py`)** — copying a
+`<w:tbl>` between documents byte-for-byte silently restyles it: paragraphs/runs with
+no explicit spacing/font inherit the *host* document's docDefaults (row heights double,
+fonts swap). Never hand-edit the XML — use the splicer, which bakes the source doc's
+effective defaults (spacing/jc/font/size) into every paragraph and run, copies
+referenced style definitions (renaming on collision), drops the source-context table
+indent when it would overflow the target page, rejects unsupported content
+(images, lists, hyperlinks, footnotes), and verifies its own output:
+
+```
+python3 tools/splice_docx_table.py --source <src.docx> --table-contains "<unique text>" \
+  --target <dst.docx> [--before-text "<target anchor>"] [--heading "<bold title>"]
+```
+
+The target is modified in place (git is the undo) — re-run Leg 0 afterwards. Static
+tables flow straight through Leg 0→3; a table carrying `{field}`/`[[$token]]`/`[Name/]`
+markers goes through the normal conditional/loop flow. **Trigger phrases:** "copy the
+table from X into Y", "splice this table", "add that table to my doc", "reuse the table
+from another document".
 
 **Conditions use the condition DSL** — every block's `when` (`[[$token]]` variant
 and `[Name/]` loop when-row alike) is parsed by `condition_dsl`. Use `present`/`absent`

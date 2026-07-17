@@ -126,6 +126,9 @@
 # conditional-region shape: a template block with a when-only row, like a loop.
 "TestCoverageGrid(segment)":
   CoolingOffRow: "policy.data.coolingOffPeriod present"
+  # In-loop value region: per-item condition rooted at the loop iterator,
+  # compiled by Leg 3 to a template #if inside the loop (no plugin key).
+  BreakdownLabourRow: 'item.Breakdown.data.labourCovered == "true"'
 
 # [Coverage/] plugin-list loop: unconditional (blank when), like any loop.
 "TestCoverageSchedule(segment)": {}

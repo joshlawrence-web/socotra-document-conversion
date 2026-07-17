@@ -79,10 +79,14 @@ class TestVariantDetection(unittest.TestCase):
         with self.assertRaises(ValueError):
             extract_conditionals("<p>[[$state clause]]</p>")
 
-    def test_duplicate_variant_key_raises(self):
-        with self.assertRaises(ValueError) as ctx:
-            extract_conditionals("<p>[[$dup]]</p><p>[[$dup]]</p>")
-        self.assertIn("more than once", str(ctx.exception))
+    def test_duplicate_variant_key_dedupes_to_one_block(self):
+        # A block's text lives in the CSV keyed by name — a repeated marker is
+        # the same content by definition (e.g. a shared label reused across
+        # benefit blocks). One block registers; every occurrence annotates.
+        blocks = extract_conditionals("<p>[[$dup]]</p><p>[[$dup]]</p>")
+        self.assertEqual([b["key"] for b in blocks], ["dup"])
+        annotated = annotate_conditionals("<p>[[$dup]]</p><p>[[$dup]]</p>", blocks)
+        self.assertEqual(annotated.count("[[$dup]]$doc.dup"), 2)
 
     def test_bare_block_with_table_adds_hint(self):
         html = (

@@ -253,7 +253,13 @@ def _flatten_token_runs(paragraph) -> None:
 
 
 def _normalize_docx_runs(src: Path, dst: Path) -> None:
-    """Write a copy of ``src`` with token-spanning runs flattened (Stage A)."""
+    """Write a copy of ``src`` with token-spanning runs flattened (Stage A).
+
+    Also strips ``w:embedTrueTypeFonts`` from settings.xml: LibreOffice honors
+    it on XHTML export and base64-embeds local system fonts — one oversized
+    font blows libxml's text-node limit and the whole conversion hard-fails
+    ("huge text node"). Embedding is a Word save preference, never content.
+    """
     from docx import Document  # noqa: PLC0415
 
     doc = Document(str(src))
@@ -264,6 +270,11 @@ def _normalize_docx_runs(src: Path, dst: Path) -> None:
             for cell in row.cells:
                 for para in cell.paragraphs:
                     _flatten_token_runs(para)
+    settings = doc.settings.element
+    for tag in ("embedTrueTypeFonts", "saveSubsetFonts"):
+        for el in settings.findall(
+                f"{{http://schemas.openxmlformats.org/wordprocessingml/2006/main}}{tag}"):
+            settings.remove(el)
     doc.save(str(dst))
 
 
@@ -737,7 +748,16 @@ def extract_conditionals(html: str) -> list[dict]:
             )
             continue
         if ph in seen:
-            errors.append(f"[[${ph}]] appears more than once — each [[$token]] must be unique")
+            # A block's text lives in the CSV keyed by name, so a repeated
+            # marker is by definition the same content — legitimate reuse
+            # (e.g. a shared state-label inside many benefit blocks). One
+            # block is registered; the annotator's literal-replace path
+            # annotates every occurrence with the same $doc.<token>.
+            print(
+                f"NOTE: [[${ph}]] appears more than once — every occurrence "
+                "renders the same CSV-defined text",
+                file=sys.stderr,
+            )
             continue
         seen.add(ph)
         blocks.append({
@@ -841,21 +861,23 @@ _DIRECTIVE_LINE_CLEANUP = [
 ]
 
 
-def _registry_coverage_map(registry_path) -> dict:
-    """``{coverage_name: {exposure, list_method}}`` from the registry, or {}.
+def _registry_coverage_map(registry_path) -> tuple[dict, dict]:
+    """``({coverage_name: {exposure, list_method}}, {iterable_name: iterator})``.
 
     Used to classify a ``[Name?]`` conditional-region marker: a name matching a
     coverage gets automatic presence wiring (``list_method`` is the exposure
     list's Java accessor, e.g. ``items`` from ``$data.items`` — Leg 4 walks
     ``<root>.<list_method>()`` to test presence); anything else is a generic
-    conditional region the customer conditions via variants.csv.
+    conditional region the customer conditions via variants.csv. The second
+    map gives each iterable's registry iterator (e.g. ``Item → item``) for
+    in-loop value regions, whose ``when`` paths must root at that iterator.
     """
     if not registry_path:
-        return {}
+        return {}, {}
     try:
         reg = yaml.safe_load(Path(registry_path).read_text(encoding="utf-8")) or {}
     except Exception:
-        return {}
+        return {}, {}
     iter_methods: dict = {}
     iterators: dict = {}
     for it in reg.get("iterables") or []:
@@ -879,7 +901,7 @@ def _registry_coverage_map(registry_path) -> dict:
                     # splices into the #foreach, not a name.lower() guess
                     "iterator": iterators.get(exp_name, ""),
                 })
-    return cov_map
+    return cov_map, iterators
 
 
 def extract_loops(
@@ -982,9 +1004,10 @@ def extract_loops(
     # document level → #if($doc.<Name>) + a render: template block, carrying
     # presence metadata when the name is a registry coverage (auto-wired by
     # Leg 4, skipped in the variants.csv).
-    cov_map = _registry_coverage_map(registry_path) if region_pairs else {}
+    cov_map, loop_iters = _registry_coverage_map(registry_path) if region_pairs else ({}, {})
     region_guards: dict[tuple[int, int], str] = {}  # (o_start, c_start) -> guard ref
     doc_level_regions: list[tuple[str, dict | None]] = []  # (name, coverage info|None)
+    loop_value_regions: list[tuple[str, str, str]] = []  # (name, loop_name, iterator)
     for ro_start, _ro_end, rc_start, _rc_end, name in region_pairs:
         enclosing = None  # innermost loop containing this region
         for o_start, o_end, c_start, _c_end, lname in pairs:
@@ -1000,16 +1023,25 @@ def extract_loops(
             # only as the registry-less fallback.
             it_var = (
                 info["iterator"] if is_loop_coverage and info.get("iterator")
-                else loop_name.lower()
+                else loop_iters.get(loop_name) or loop_name.lower()
             )
             if cov_map and not is_loop_coverage:
+                # In-loop VALUE region: not a coverage of this exposure, so the
+                # rows show/hide on a per-item condition the customer fills as a
+                # when-only variants.csv row (paths rooted at the iterator).
+                # Leg 3 compiles the condition to an in-template #if inside the
+                # loop; the plugin never sees it (per-item, not doc-scoped).
                 print(
-                    f"WARNING: [{name}?] inside loop [{loop_name}/] — `{name}` is not a "
-                    f"registry coverage of `{loop_name}`; the rows render only when "
-                    f"${it_var}.{name} is non-null",
+                    f"NOTE: [{name}?] inside loop [{loop_name}/] — `{name}` is not a "
+                    f"registry coverage of `{loop_name}`; fill its variants.csv `when` "
+                    f"with a per-item condition rooted at `{it_var}` (blank = always render)",
                     file=sys.stderr,
                 )
-            region_guards[(ro_start, rc_start)] = f"${it_var}.{name}"
+                region_guards[(ro_start, rc_start)] = f"$doc.{name}"
+                loop_value_regions.append((name, loop_name, it_var))
+            else:
+                # Coverage presence (or registry-less fallback): guard directly.
+                region_guards[(ro_start, rc_start)] = f"${it_var}.{name}"
         else:
             region_guards[(ro_start, rc_start)] = f"$doc.{name}"
             doc_level_regions.append((name, cov_map.get(name)))
@@ -1023,8 +1055,11 @@ def extract_loops(
         next_id = max((b.get("id") or 0 for b in cond_blocks), default=0) + 1
         block_specs = [(p[4], None, "loop") for p in pairs] + [
             (name, cov_info, "region") for name, cov_info in doc_level_regions
+        ] + [
+            (name, {"loop": loop_name, "iterator": it_var}, "loop_region")
+            for name, loop_name, it_var in loop_value_regions
         ]
-        for name, cov_info, kind in block_specs:
+        for name, meta, kind in block_specs:
             if name in taken:
                 marker = f"[{name}/]" if kind == "loop" else f"[{name}?]"
                 raise ValueError(
@@ -1041,8 +1076,10 @@ def extract_loops(
                 "source_text": "",
                 "top_level": True,
             }
-            if kind == "region" and cov_info:
-                block["presence"] = {"coverage": name, **cov_info}
+            if kind == "region" and meta:
+                block["presence"] = {"coverage": name, **meta}
+            elif kind == "loop_region":
+                block["loop_scope"] = meta
             cond_blocks.append(block)
             next_id += 1
 
@@ -1197,9 +1234,7 @@ def write_variants_csv(blocks: list[dict], stem: str, output_path: Path) -> None
     import io  # noqa: PLC0415
     if not blocks:
         return
-    buf = io.StringIO()
-    w = csv.writer(buf)
-    w.writerow(["placeholder", "when", "text"])
+    rows: list[list[str]] = []
     for b in blocks:
         key = block_key(b)
         if b.get("presence"):
@@ -1209,25 +1244,48 @@ def write_variants_csv(blocks: list[dict], stem: str, output_path: Path) -> None
         if b.get("render") == "template":
             # [Name/] loop section or [Name?] conditional region: a single
             # `when`-only row (blank = unconditional / always render).
-            w.writerow([key, "", ""])
+            rows.append([key, "", ""])
         else:
             # N-way [[$token]]: one conditioned row to fill + the default row.
-            w.writerow([key, "", ""])
-            w.writerow([key, "", ""])
+            rows.append([key, "", ""])
+            rows.append([key, "", ""])
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["placeholder", "when", "text"])
+    w.writerows(rows)
     content = buf.getvalue()
 
     # Clobber guard (human-fill friction Gap 2): a full re-ingest must not destroy
     # a customer's filled conditions. If the file already exists and differs from
-    # the freshly-generated stub, it has been hand-edited — skip the write and
-    # warn rather than overwrite. (Identical content is a harmless no-op rewrite.)
+    # the freshly-generated stub, it has been hand-edited — keep it, but MERGE in
+    # stub rows for any block keys the edited file doesn't know about yet (a
+    # re-ingested document may have gained new conditional blocks).
     if output_path.exists():
         existing = output_path.read_text(encoding="utf-8")
         if existing != content:
-            print(
-                f"WARN: {output_path.name} already exists with edits — keeping it, "
-                "NOT overwriting (delete it first to regenerate the blank stub).",
-                file=sys.stderr,
-            )
+            existing_keys = {
+                row[0] for row in csv.reader(io.StringIO(existing)) if row
+            }
+            new_rows = [r for r in rows if r[0] not in existing_keys]
+            if new_rows:
+                buf = io.StringIO()
+                csv.writer(buf).writerows(new_rows)
+                if not existing.endswith("\n"):
+                    existing += "\n"
+                output_path.write_text(existing + buf.getvalue(),
+                                       encoding="utf-8")
+                print(
+                    f"NOTE: {output_path.name} has hand-edits — kept them and "
+                    f"appended stub row(s) for new block(s): "
+                    f"{sorted({r[0] for r in new_rows})}",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    f"WARN: {output_path.name} already exists with edits — keeping it, "
+                    "NOT overwriting (delete it first to regenerate the blank stub).",
+                    file=sys.stderr,
+                )
             return
     output_path.write_text(content, encoding="utf-8")
 
@@ -1252,6 +1310,7 @@ def write_conditional_blocks(blocks: list[dict], output_path: Path) -> None:
             "parent_id": b.get("parent_id"),
             "depth": b.get("depth", 0),
             **({"presence": b["presence"]} if b.get("presence") else {}),
+            **({"loop_scope": b["loop_scope"]} if b.get("loop_scope") else {}),
         }
         for b in blocks
     ]
@@ -1458,9 +1517,15 @@ def parse_variants_csv_to_blocks(
 
     template_phs = {block_key(b) for b in blocks_meta if b.get("render") == "template"}
     by_key = {block_key(b): b for b in blocks_meta}
+    loop_scoped = {
+        block_key(b): str((b.get("loop_scope") or {}).get("iterator") or "")
+        for b in blocks_meta
+        if b.get("loop_scope")
+    }
     result = parse_variants_csv(
         csv_path, registry, classpath=classpath, product=product,
         template_placeholders=template_phs, doc_scope=doc_scope,
+        loop_scoped=loop_scoped or None,
     )
     errors = list(result.errors)
 
@@ -1525,6 +1590,10 @@ def parse_variants_csv_to_blocks(
             # Leg 4's template branch reads variants[0].when and emits a Boolean.
             block["variants"] = data["variants"]
             block["default"] = None
+            if b.get("loop_scope"):
+                # In-loop value region: Leg 3 compiles the `when` to an
+                # in-template #if inside the loop; Leg 4 skips it (per-item).
+                block["loop_scope"] = b["loop_scope"]
         else:
             block["placeholder"] = b.get("placeholder")
             block["scope"] = data["scope"]

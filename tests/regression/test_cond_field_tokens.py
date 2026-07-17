@@ -228,7 +228,7 @@ class TestRenderConditionalPuts(unittest.TestCase):
     def test_policy_condition_empty_put_in_quote_scope(self):
         blocks = [_block(1, "static text")]
         out = render_conditional_puts(blocks, scope="quote", field_lookup=_lookup())
-        self.assertIn('renderingData.put("cond1", "");', out)
+        self.assertIn('renderingData.put("cond1", " ");', out)
         self.assertIn("policy-scoped condition(s)", out)
 
     def test_policy_field_empty_put_in_quote_scope(self):
@@ -236,14 +236,14 @@ class TestRenderConditionalPuts(unittest.TestCase):
         blocks = [_block(1, "A discount of $TBD_policy.data.discountAmount applies.",
                          conditions=["quote.quoteNumber != null"])]
         out = render_conditional_puts(blocks, scope="quote", field_lookup=_lookup())
-        self.assertIn('renderingData.put("cond1", "");', out)
+        self.assertIn('renderingData.put("cond1", " ");', out)
         self.assertIn("policy-scoped field(s)", out)
         self.assertNotIn("Objects.toString", out)
 
     def test_quote_field_empty_put_in_policy_scope(self):
         blocks = [_block(1, "ref $TBD_quoteNumber here", conditions=["policy.data.x != null"])]
         out = render_conditional_puts(blocks, scope="policy", field_lookup=_lookup())
-        self.assertIn('renderingData.put("cond1", "");', out)
+        self.assertIn('renderingData.put("cond1", " ");', out)
         self.assertIn("quote-scoped field(s)", out)
 
     def test_unsupported_field_todo_and_literal_kept(self):

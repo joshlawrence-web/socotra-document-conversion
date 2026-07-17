@@ -29,6 +29,7 @@ from pathlib import Path
 
 import yaml
 
+from velocity_converter.condition_dsl import ast_from_dict, condition_to_velocity
 from velocity_converter.models import (
     ConditionalRegistry,
     ContractError,
@@ -506,6 +507,36 @@ def process_vm(
 
 
 # ---------------------------------------------------------------------------
+# Font scan — flag fonts the tenant must carry as customFonts resources.
+# Socotra falls back to standard fonts SILENTLY when a font is missing
+# (docs: features/documents/dynamic-documents "Custom Fonts"), so the only
+# warning the author ever gets is this one.
+# ---------------------------------------------------------------------------
+
+# PDF base families + CSS generics; anything else needs a customFonts upload.
+_STANDARD_FONTS = {
+    "arial", "helvetica", "times", "times new roman", "courier", "courier new",
+    "serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui",
+}
+
+_FONT_FAMILY_RE = re.compile(r"font-family\s*:\s*([^;{}<>]+)", re.IGNORECASE)
+
+
+def custom_fonts_needed(vm_text: str) -> list[str]:
+    """Return non-standard first-choice font families used in the template.
+
+    Only the first family of each font-family stack is checked — that is the
+    font the author intends; the rest are fallbacks.
+    """
+    found: dict[str, str] = {}  # lower → display form
+    for m in _FONT_FAMILY_RE.finditer(vm_text):
+        first = m.group(1).split(",")[0].strip().strip("'\"").strip()
+        if first and first.lower() not in _STANDARD_FONTS:
+            found.setdefault(first.lower(), first)
+    return sorted(found.values(), key=str.lower)
+
+
+# ---------------------------------------------------------------------------
 # Report writer
 # ---------------------------------------------------------------------------
 
@@ -573,8 +604,10 @@ def write_report(
     generated_at: str,
     repo_root: Path,
     cond_blocks: list[dict] | None = None,
+    custom_fonts: list[str] | None = None,
 ) -> None:
     delegated_vars = delegated_vars or []
+    custom_fonts = custom_fonts or []
     cond_blocks = cond_blocks or []
     cond_count = len(cond_blocks)
     total_all = (
@@ -618,6 +651,24 @@ def write_report(
         "---",
         "",
     ]
+
+    # ---- §0a Custom fonts ------------------------------------------------------
+    if custom_fonts:
+        lines += [
+            f"## ⚠ Custom fonts required ({len(custom_fonts)})",
+            "",
+            "The template styles text with fonts that are not PDF-standard. Socotra",
+            "falls back to standard fonts **silently** when a font is missing — the PDF",
+            "renders, just off-brand. Before rendering on a tenant, for each font:",
+            "",
+            "1. Add its name to the top-level configuration `customFonts` array",
+            "2. Add it to this document's `DocumentConfig` `customFonts` array and deploy",
+            "3. Upload the font file (TTF/OTF, one font per file) via the `addFont`",
+            "   endpoint and assign it to a resource group",
+            "",
+        ]
+        lines += [f"- `{f}`" for f in custom_fonts]
+        lines += ["", "---", ""]
 
     # ---- §0 Conditional blocks -----------------------------------------------
     if cond_count > 0:
@@ -861,10 +912,21 @@ def main() -> int:
     foreach_map = build_foreach_map(suggested)
     cond_registry_path = out_dir / f"{stem}.conditional-registry.yaml"
     cond_blocks = _load_cond_registry(cond_registry_path)
-    cond_map = build_cond_map(cond_blocks)
+    # In-loop value regions render their condition in the template (per-item —
+    # the plugin can only compute doc-scoped values), so they are excluded from
+    # the $doc→$data cond map and their guard is compiled to Velocity below.
+    loop_scoped_blocks = [b for b in cond_blocks if b.get("loop_scope")]
+    cond_map = build_cond_map([b for b in cond_blocks if not b.get("loop_scope")])
 
     # --- Process -------------------------------------------------------------
     final_vm = process_vm(vm_text, smap, foreach_map)
+    for b in loop_scoped_blocks:
+        variants = b.get("variants") or []
+        when = (variants[0] or {}).get("when") if variants else None
+        if not when:
+            continue  # blank-when regions never reach the registry
+        vel = condition_to_velocity(ast_from_dict(dict(when)))
+        final_vm = final_vm.replace(f"#if($doc.{block_key(b)})", f"#if({vel})")
     final_vm = apply_cond_substitutions(final_vm, cond_map)
 
     # --- Categorise entries ---------------------------------------------------
@@ -903,6 +965,7 @@ def main() -> int:
         generated_at=generated_at,
         repo_root=repo_root,
         cond_blocks=cond_blocks,
+        custom_fonts=custom_fonts_needed(final_vm),
     )
 
     print(f"Wrote {out_vm_path}")

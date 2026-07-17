@@ -227,5 +227,78 @@ class Leg4PresenceBooleanTests(unittest.TestCase):
         self.assertIn("quote.items()", code)
 
 
+class InLoopValueConditionTests(unittest.TestCase):
+    """[Name?] inside a loop, non-coverage name → per-item template #if."""
+
+    BLOCK = {
+        "id": 3,
+        "key": "BreakdownLabourRow",
+        "source_text": "",
+        "render": "template",
+        "loop_scope": {"loop": "Item", "iterator": "item"},
+        "variants": [{
+            "when": {"path": "item.Breakdown.data.labourCovered", "op": "==",
+                     "value": "true", "raw": 'item.Breakdown.data.labourCovered == "true"'},
+            "text": "",
+        }],
+    }
+
+    def test_velocity_codegen_guards_every_hop(self):
+        from velocity_converter.condition_dsl import ast_from_dict, condition_to_velocity
+        vel = condition_to_velocity(ast_from_dict(dict(self.BLOCK["variants"][0]["when"])))
+        self.assertEqual(
+            vel,
+            '($item.Breakdown && $item.Breakdown.data && '
+            '$item.Breakdown.data.labourCovered == "true")',
+        )
+
+    def test_velocity_codegen_present_absent_in(self):
+        from velocity_converter.condition_dsl import condition_to_velocity, parse_condition
+        self.assertEqual(
+            condition_to_velocity(parse_condition("item.data.giftFlag present")),
+            "($item.data && $item.data.giftFlag)",
+        )
+        self.assertEqual(
+            condition_to_velocity(parse_condition("item.data.giftFlag absent")),
+            "!($item.data && $item.data.giftFlag)",
+        )
+        self.assertEqual(
+            condition_to_velocity(parse_condition('item.data.kind in ["a", "b"]')),
+            '($item.data && ($item.data.kind == "a" || $item.data.kind == "b"))',
+        )
+
+    def test_leg4_emits_no_plugin_key(self):
+        code = render_conditional_puts([dict(self.BLOCK)], scope="policy")
+        self.assertNotIn("BreakdownLabourRow", code)
+
+    def test_parse_rejects_non_iterator_root(self):
+        import tempfile
+        from velocity_converter.condition_dsl import parse_variants_csv
+        with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False) as f:
+            f.write("placeholder,when,text\n")
+            f.write('BreakdownLabourRow,policy.data.coolingOffPeriod present,\n')
+            path = f.name
+        result = parse_variants_csv(
+            path, None,
+            template_placeholders={"BreakdownLabourRow"},
+            loop_scoped={"BreakdownLabourRow": "item"},
+        )
+        self.assertTrue(any("rooted" in e or "iterator" in e for e in result.errors))
+
+    def test_parse_accepts_iterator_root(self):
+        import tempfile
+        from velocity_converter.condition_dsl import parse_variants_csv
+        with tempfile.NamedTemporaryFile("w", suffix=".csv", delete=False) as f:
+            f.write("placeholder,when,text\n")
+            f.write('BreakdownLabourRow,"item.Breakdown.data.labourCovered == ""true""",\n')
+            path = f.name
+        result = parse_variants_csv(
+            path, None,
+            template_placeholders={"BreakdownLabourRow"},
+            loop_scoped={"BreakdownLabourRow": "item"},
+        )
+        self.assertEqual(result.errors, [])
+        self.assertEqual(len(result.placeholders["BreakdownLabourRow"]["variants"]), 1)
+
 if __name__ == "__main__":
     unittest.main()
