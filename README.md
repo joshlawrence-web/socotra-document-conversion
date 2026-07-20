@@ -4,6 +4,11 @@
 
 Update a Socotra document template without redeploying your product config — author in Word or HTML, run the pipeline, deploy the `.vm`.
 
+## 🎬 Demo video
+
+**[▶ Watch the 10-minute walkthrough](docs/media/DocumentConversionDemo1.mp4)** — a Word
+document going through the pipeline end to end (GitHub opens it in a built-in player).
+
 ## Pipeline overview
 
 ```mermaid
@@ -178,6 +183,10 @@ If you say *"only fill the high confidence fields"*, the server substitutes only
 
 - Python 3.10+
 - `pip3 install -e ".[dev]"` (installs the velocity_converter package + beautifulsoup4, pyyaml, mcp, pdfplumber, python-docx, pytest)
+- **LibreOffice** — required for `.docx` conversion (Leg 0 uses `soffice --headless`
+  to preserve the document's styling): `brew install --cask libreoffice` (macOS) or
+  `apt install libreoffice` (Linux). The style-less fallback converter is available
+  via `--converter legacy`.
 - [Claude Code](https://claude.ai/code) for MCP usage — or [Cursor](https://www.cursor.com/) for the script-based workflow below
 
 ## Quick start (script-based)

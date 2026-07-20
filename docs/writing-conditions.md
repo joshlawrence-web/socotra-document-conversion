@@ -37,6 +37,9 @@ disclosureClause,,No new-business waiting period applies to this policy.
   placeholder needs **exactly one** default — it renders when nothing else
   matches, so the block never renders empty.
 - Every other row's `when` is a condition in the grammar below.
+- **A placeholder may carry any number of conditioned rows** (an N-way block —
+  e.g. one row per state, first match wins) — you are never limited to one
+  condition + default. Add rows; keep the single default last.
 - Quote the whole `when` cell if it contains a comma (e.g. an `in [...]` list).
 
 ---
@@ -98,6 +101,14 @@ A path's **root** picks the scope, and a block is single-scoped:
   in a policy document. Use the root that matches the document you are authoring
   (`ZenCoverDemoLetter(quote)` → `quote.data.coolingOffPeriod`).
 
+> **A field's registry category limits which documents can condition on it.** A
+> quote-only field (registry category `quote_system`, e.g. `region`) is only
+> reachable as `quote.<field>` — a `(segment)` document's conditions cannot use
+> it at all (`policy.region` is rejected as an unknown accessor). Before
+> building a condition around a field, check it exists under the root your
+> document renders against; if it is quote-only and you are writing a policy
+> letter, pick a policy-level field as the discriminator instead.
+
 ### Bare leaves
 
 You may write just the leaf name when it is unambiguous — `state == "CA"`
@@ -107,6 +118,15 @@ instead of `quote.data.state == "CA"`. Resolution rules:
   scope). If two fields share a leaf name, you get an *ambiguous* error — write
   the full accessor.
 - All comparisons in one `when` must resolve to the **same scope**.
+
+### Per-item conditions — the one `item.*` exception
+
+Conditions are **document-scoped**: `item.*` paths are rejected for `[[$token]]`
+blocks and document-level regions (there is no single item to test). The one
+exception is the `when`-only row of a **`[Name?]` region inside a `[Name/]`
+loop** (an in-loop value region): its condition is evaluated **per item**, and
+every path must root at the loop's iterator —
+`item.Breakdown.data.labourCovered == "true"`. Blank still means always render.
 
 ---
 

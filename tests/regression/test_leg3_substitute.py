@@ -199,13 +199,16 @@ class TestOptionalCoverageGuard(unittest.TestCase):
         # A plain item field is never guarded.
         self.assertEqual(smap["$TBD_item.data.purchasePrice"], "$item.data.purchasePrice")
 
-    def test_mandatory_coverage_field_not_guarded(self):
+    def test_mandatory_coverage_field_also_guarded(self):
+        # Every coverage hop is guarded regardless of quantifier: live tenant
+        # data can lack an exactly_one_auto coverage (unrated quote, config
+        # drift) and the strict renderer 500s on a null hop (error 216041).
         smap = build_substitution_map(self._loop(
             [{"name": "AccidentalDamage", "velocity": "$item.AccidentalDamage",
               "quantifier": "!", "cardinality": "exactly_one_auto"}]))
         self.assertEqual(
             smap["$TBD_item.AccidentalDamage.data.labourCovered"],
-            "$item.AccidentalDamage.data.labourCovered")
+            "#if($item.AccidentalDamage)$item.AccidentalDamage.data.labourCovered#end")
 
     def test_no_coverage_metadata_not_guarded(self):
         # Defensive: missing available_coverages must not crash or guard.

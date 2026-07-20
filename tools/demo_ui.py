@@ -199,11 +199,12 @@ def list_forms() -> list[dict]:
     return [f for f in forms if f["files"]]
 
 
-def do_intake(rel_path: str) -> dict:
+def do_intake(rel_path: str, no_suggest: bool = False) -> dict:
     """Run the intake front door: Leg -1 (suggest) + Leg 0 (scan).
 
     Produces the two human-fill files at once — path-review.csv and variants.csv.
-    Mirrors the ``RUN_PIPELINE intake`` operation in agent.py.
+    Mirrors the ``RUN_PIPELINE intake`` operation in agent.py. ``no_suggest``
+    blanks the CSV's suggested/final columns (``suggestions=off``).
     """
     src = (REPO_ROOT / rel_path).resolve()
     if not str(src).startswith(str(INPUT_DIR.resolve())) or not src.is_file():
@@ -217,6 +218,7 @@ def do_intake(rel_path: str) -> dict:
         input_path=_rel(src),
         registry=PATH_REGISTRY,
         output_dir="workspace/output",
+        no_suggest=no_suggest,
     )
     if not r1.get("ok"):
         return {"ok": False, "error": f"Leg -1 (suggest) failed.\n{r1.get('stderr', '')}", "stem": stem}

@@ -18,6 +18,7 @@ from velocity_converter.legminus1_resolve_paths import (
     collect_placeholders,
     parse_path_review,
     resolve_fields,
+    write_path_review_csv,
 )
 from velocity_converter.registry_match import build_candidate_index, match_leaf
 
@@ -130,7 +131,7 @@ class TestMatchLeaf(unittest.TestCase):
 class TestPlaceholderExtraction(unittest.TestCase):
     def test_loop_membership(self):
         text = (
-            "Dear {firstName}, [Item] type {itemTypeCode} price {purchasePrice} [/Item]"
+            "Dear {firstName}, [Item/] type {itemTypeCode} price {purchasePrice} [/Item]"
         )
         fields = collect_placeholders(text)
         by_leaf = {f["leaf"]: f for f in fields}
@@ -139,7 +140,7 @@ class TestPlaceholderExtraction(unittest.TestCase):
         self.assertEqual(by_leaf["purchasePrice"]["loop"], "Item")
 
     def test_field_in_and_out_of_loop_is_document_level(self):
-        text = "Total {premium}. [Item] cover {premium} [/Item]"
+        text = "Total {premium}. [Item/] cover {premium} [/Item]"
         fields = collect_placeholders(text)
         self.assertIsNone(fields[0]["loop"])
 
@@ -196,6 +197,81 @@ class TestLeg0ApplyPathMap(unittest.TestCase):
         self.assertIn("{account.data.firstName}", out)
         self.assertIn("{+item.data.itemTypeCode}", out)  # occurrence symbol kept
         self.assertIn("{unresolved}", out)  # empty chosen left untouched
+
+
+class TestPathReviewCsvAppend(unittest.TestCase):
+    """Pass-2 must APPEND net-new variant-text leaves onto the full pass-1 CSV,
+    not overwrite it with just the delta (the customer keeps seeing every field)."""
+
+    def _result(self, leaf: str, acc: str) -> dict:
+        return {"leaf": leaf, "chosen": acc, "alternatives": []}
+
+    def test_append_keeps_pass1_rows_and_adds_delta(self):
+        import csv
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            csv_path = Path(d) / "X.path-review.csv"
+            # pass-1: full body review, with one customer-edited `final`.
+            write_path_review_csv(
+                [self._result("firstName", "account.data.firstName"),
+                 self._result("policyNumber", "policy.policyNumber")],
+                csv_path)
+            rows = list(csv.reader(csv_path.open(encoding="utf-8-sig")))
+            rows[2][2] = "quote.reservedPolicyNumber"  # human override
+            with csv_path.open("w", encoding="utf-8", newline="") as fh:
+                csv.writer(fh).writerows(rows)
+
+            # pass-2: append the net-new variant-text leaf.
+            write_path_review_csv(
+                [self._result("discountAmount", "policy.data.discountAmount")],
+                csv_path, append=True)
+
+            out = list(csv.reader(csv_path.open(encoding="utf-8-sig")))
+        fields = [r[0] for r in out[1:]]
+        self.assertEqual(fields,
+                         ["{firstName}", "{policyNumber}", "{discountAmount}"])
+        self.assertEqual(out.count(out[0]), 1)  # exactly one header row
+        # the human-edited final survived the append
+        self.assertEqual(out[2][2], "quote.reservedPolicyNumber")
+
+    def test_append_does_not_duplicate_existing_field(self):
+        import csv
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            csv_path = Path(d) / "X.path-review.csv"
+            write_path_review_csv(
+                [self._result("discountAmount", "policy.data.discountAmount")],
+                csv_path)
+            # a field already on the sheet must not be re-added.
+            write_path_review_csv(
+                [self._result("discountAmount", "policy.data.discountAmount")],
+                csv_path, append=True)
+            out = list(csv.reader(csv_path.open(encoding="utf-8-sig")))
+        self.assertEqual([r[0] for r in out[1:]], ["{discountAmount}"])
+
+
+class TestNoSuggestCsv(unittest.TestCase):
+    """--no-suggest blanks both `suggested` and `final` so the customer maps
+    every leaf by hand (used when no config/registry is loaded)."""
+
+    def test_blank_suggested_and_final(self):
+        import csv
+        import tempfile
+        results = [
+            {"leaf": "firstName", "chosen": "account.data.firstName", "alternatives": []},
+            {"leaf": "premium", "chosen": "", "alternatives":
+                ["item.data.premium", "charges.premium.amount"]},
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            csv_path = Path(d) / "X.path-review.csv"
+            write_path_review_csv(results, csv_path, no_suggest=True)
+            out = list(csv.reader(csv_path.open(encoding="utf-8-sig")))
+        self.assertEqual(out[0], ["field", "suggested", "final"])
+        # every field row is present, but suggested + final are blank
+        self.assertEqual([r[0] for r in out[1:]], ["{firstName}", "{premium}"])
+        for r in out[1:]:
+            self.assertEqual(r[1], "")
+            self.assertEqual(r[2], "")
 
 
 if __name__ == "__main__":

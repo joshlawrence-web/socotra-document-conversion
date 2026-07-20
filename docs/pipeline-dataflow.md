@@ -31,7 +31,7 @@ sequenceDiagram
     participant Pipe as ⚙️ Pipeline
 
     Note over Priya: ① AUTHOR THE DOC
-    Priya->>Priya: Write the letter in Word with 4 markers:<br/>{field} · [[text]] · [Name]…[/Name] · [[$token]]
+    Priya->>Priya: Write the letter in Word with 3 markers:<br/>{field} · [Name/]…[/Name] · [[$token]]
     Priya->>Sam: Hand over the .docx
 
     Sam->>Pipe: RUN_PIPELINE intake<br/>(Leg -1 suggest + Leg 0 scan)
@@ -40,7 +40,7 @@ sequenceDiagram
     Note over Priya,Sam: ② ANSWER THE FORMS (no code)
     Sam->>Priya: "Here are your 2 fill-in files"
     Priya->>Priya: path-review.csv — confirm each {field} → real path (final column)
-    Priya->>Priya: variants.csv — write the "when" for each block,<br/>+ version rows for each [[$token]]
+    Priya->>Priya: variants.csv — write the "when" + text for each [[$token]] block<br/>and the "when" for each [Name/] loop,<br/>+ version rows for N-way [[$token]]s
     Priya->>Sam: Return both files, filled
 
     Sam->>Pipe: legminus1_apply → Leg 0 → Leg 2+3+4
@@ -62,7 +62,7 @@ flowchart LR
     classDef get fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20,stroke-width:2px;
     classDef wait fill:#eceff1,stroke:#607d8b,color:#37474f,stroke-dasharray:4 3;
 
-    A["✍️ ① Write the letter in Word<br/>drop in the 4 markers"]:::do
+    A["✍️ ① Write the letter in Word<br/>drop in the 3 markers"]:::do
     B["📨 Hand the .docx over"]:::do
     W1["⏳ pipeline runs intake"]:::wait
     C["📋 ② Get 2 fill-in files back"]:::get
@@ -75,18 +75,17 @@ flowchart LR
     A --> B --> W1 --> C --> D --> E --> F --> W2 --> G
 ```
 
-**The four markers the author writes** (full cheat-sheet in [demo-story.md](demo-story.md)):
+**The three markers the author writes** (full cheat-sheet in [demo-story.md](demo-story.md)):
 
 | Marker | Means |
 |--------|-------|
 | `{field}` | drop a real value in here (`{$field}`/`{+field}`/`{*field}` = optional / one-or-more / zero-or-more) |
-| `[[ text ]]` | show this only when a condition holds |
-| `[Name]…[/Name]` | repeat this region once per item in a list |
-| `[[$token]]` | pick one of several versions (fill them in the CSV) |
+| `[Name/]…[/Name]` | repeat this region once per item in a list (trailing slash on the opener) |
+| `[[$token]]` | a named block — show/hide it (write the condition + text in the CSV), or pick one of several versions |
 
 **The two forms the author fills** (both land in `workspace/action-needed/`):
 - `<stem>.path-review.csv` — one row per `{field}` (columns `field` / `suggested` / `final`); confirm or fix the accessor in the `final` column. The canonical `<stem>.path-review.md` (in `output/<stem>/`) is the system copy the CSV folds onto.
-- `<stem>.variants.csv` — one file for **all** conditional text: write the `when` for each `[[…]]` block (its text is pre-filled), and the version rows for each `[[$token]]`.
+- `<stem>.variants.csv` — one file for **all** conditional text: write the `when` **and** `text` for each `[[$token]]` block (more rows for an N-way token), and just the `when` for each `[Name/]` loop (blank = always show it).
 
 > The author only ever touches the Word doc and these two files. Everything in the next two
 > sections is what the operator and the pipeline handle on their behalf.
@@ -315,23 +314,26 @@ registry-matched, not JAR-verified; Leg 2 still verifies them against the render
 
 Leg 0 (`leg0_ingest.py`) converts a `.docx` or `.pdf` into five artifacts: `.raw.html` (the
 unmodified extracted HTML), `.annotated.html` (HTML with `{field}` placeholders replaced by
-`$TBD_field` tokens and conditional blocks tagged as `$doc.condN`), `.mapping.yaml` (the
+`$TBD_field` tokens and `[[$token]]` blocks tagged as `$doc.<token>`), `.mapping.yaml` (the
 Leg 2 input, pre-populated with TBD placeholders), `.variants.csv` (the **single human-fill
 file for ALL conditional text** — one row group per detected block, to be filled in by the
 customer or document owner), and `.conditional-blocks.yaml` (a machine sidecar carrying the
 per-block metadata the 3-column CSV can't: `id`, `key`, `placeholder`, `variant`, `render`,
 `source_text`, `top_level`, `parent_id`, `depth`). The CSV columns are always
-`placeholder,when,text`. Every block kind folds into the same CSV:
+`placeholder,when,text`. Every `[[…]]` block in the document must be a uniquely-named
+`[[$token]]` — a bare `[[literal text]]` block or a duplicate token is a **hard error at
+Leg 0** (listing every offender, nothing written). Two block kinds fold into the CSV:
 
-- a **binary** `[[text]]` block → a conditioned row whose `text` is pre-filled from the
-  document, plus an empty-default row; the customer fills only the `when`.
-- a **template** (loop-inside-conditional, `render: template`) block → a single `when`-only
-  row, `text` blank because the section's wording stays in the document.
-- an **N-way** `[[$token]]` variant block → one row per condition + a default row.
+- a **`[[$token]]` variant** block → a conditioned row + an empty-default row; the customer
+  fills the `when` (single condition) and the `text`, or adds more conditioned rows for an
+  N-way pick.
+- a **`[Name/]` loop** (a `render: template` block, keyed by the loop name) → a single
+  `when`-only row, `text` blank because the section's wording stays in the document; a
+  blank `when` leaves the loop unconditional.
 
 **Front-loading the customer handoff (`leg0 --scan`).** The human-fill file
 (`.variants.csv`) and its machine sidecar (`.conditional-blocks.yaml`) depend only on the
-document's *markup* (the `[[…]]` blocks and `[Name]` loops), not on the registry, path
+document's *markup* (the `[[$token]]` blocks and `[Name/]` loops), not on the registry, path
 resolution, or the mapping. Scan mode runs the same document parse but writes *only* the
 CSV (plus the sidecar), deferring `.raw.html`/`.annotated.html`/`.mapping.yaml` to a later
 full ingest. This lets you hand the customer their CSV up front — ideally bundled with
@@ -342,7 +344,7 @@ requires the doc-to-text conversion, so it runs at the *front* of Leg 0, not bef
 the block set can't be known without parsing the doc.
 
 A conditional block may contain `{field}` placeholders. Because the Leg 4 plugin owns
-conditional text (the template only outputs `${data.condN}`), those fields are resolved
+conditional text (the template only outputs `${data.<token>}`), those fields are resolved
 **in Java**: Leg 4 concatenates the field's accessor into the conditional string
 (quote system fields in the quote overload; policy system/custom fields in the policy
 overload, custom fields via the segment type). Leg 3 reports such tokens as
@@ -350,12 +352,13 @@ overload, custom fields via the segment type). Leg 3 reports such tokens as
 a block has no `data_source` (run Leg 2 first); per-exposure, account, and
 DataFetcher-sourced fields are TODO-flagged in the plugin report instead of wired.
 
-**N-way variant blocks (the 50-state feature).** Instead of a binary present/absent
-block, an author can write a single token — `[[$disclosureClause]]` — to mean "pick one of
-N text variants by data at render time" (e.g. a different disclosure per state). The token
-name becomes the block's stable join key end-to-end (`$doc.<token>` → `${data.<token>}` →
-`put("<token>", …)`), replacing the positional `condN` for that block. Each such token gets
-one row per condition + a default row in the same `.variants.csv` (`placeholder, when, text`
+**N-way variant blocks (the 50-state feature).** Instead of a plain show/hide block, an
+author can write a single token — `[[$disclosureClause]]` — to mean "pick one of N text
+variants by data at render time" (e.g. a different disclosure per state). The token name
+is the block's stable join key end-to-end (`$doc.<token>` → `${data.<token>}` →
+`put("<token>", …)`) — the same key a single-condition `[[$token]]` block uses; only the
+row count in the CSV differs. Each such token gets one row per condition + a default row
+in the same `.variants.csv` (`placeholder, when, text`
 — row order is priority, a blank/`*`/`else` `when` is the default row). The customer fills it
 in Excel ("Save As → CSV UTF-8"). At `--parse-variants-csv` time the CSV is read alongside
 its `.conditional-blocks.yaml` sidecar and normalised: each `when` is parsed by the condition
@@ -366,8 +369,8 @@ reference quote/account/policy(segment) accessors, never per-exposure `item.*` (
 rejects per-exposure accessors at document scope). A validation error (bad condition, missing
 default, mixed scope, type mismatch) is reported and the registry is **not** written. Leg 4
 then emits an `if`/`else if`/`else` chain (first match wins, `Objects.equals`/`compareTo`,
-null-safe) selecting the variant text — field placeholders inside each variant are wired the
-same way as binary blocks.
+null-safe) selecting the variant text — field placeholders inside each variant are wired
+the same way as a single-condition block.
 
 The one genuinely-unsupported edge: an N-way `[[$token]]` block whose variants each carry
 their **own** loop (different loop-bearing wording per condition) — loop bodies can't live in
@@ -377,7 +380,7 @@ When the variants CSV is returned, run `leg0_ingest.py --parse-variants-csv` to 
 `.conditional-registry.yaml`. (The legacy `--parse-conditional-form <form.md>` flag is
 retained only for reading in-flight `conditional-form.md` files.) Leg 2 reads this registry
 automatically if it exists alongside the mapping file. If the variants CSV is skipped, Leg 2
-still runs — the `$doc.condN` placeholders in the template will remain unresolved until the
+still runs — the `$doc.<token>` placeholders in the template will remain unresolved until the
 registry is provided.
 
 ### Starting from an HTML mockup (Leg 1 path)

@@ -55,18 +55,75 @@ def _find_source(stem: str) -> Path:
     sys.exit(f"No source doc workspace/inbox/{stem}.docx|.pdf — put the doc there first.")
 
 
+def _saved_path_review_fills(stem: str) -> dict:
+    """Human-filled `final` accessors from an existing path-review.csv (re-intake
+    would otherwise clobber them; variants.csv already has its own merge guard)."""
+    pr = Path(ACTION) / f"{stem}.path-review.csv"
+    if not pr.is_file():
+        return {}
+    return {row["field"]: row["final"].strip()
+            for row in csv.DictReader(pr.open())
+            if (row.get("final") or "").strip()}
+
+
+def _restore_path_review_fills(stem: str, saved: dict):
+    pr = Path(ACTION) / f"{stem}.path-review.csv"
+    if not saved or not pr.is_file():
+        return
+    rows = list(csv.DictReader(pr.open()))
+    fieldnames = rows[0].keys() if rows else ("field", "suggested", "final")
+    restored = []
+    for row in rows:
+        prev = saved.get(row["field"])
+        if prev and prev != (row.get("final") or "").strip():
+            row["final"] = prev
+            restored.append(row["field"])
+    with pr.open("w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=fieldnames)
+        w.writeheader()
+        w.writerows(rows)
+    if restored:
+        print(f"\nPreserved your earlier `final` fills for: {', '.join(restored)}")
+
+
 def intake(doc: str):
     src = Path(doc)
     if src.suffix.lower() not in (".docx", ".pdf"):
         sys.exit("intake needs a .docx or .pdf (the scan reads the document).")
+    if src.suffix.lower() == ".docx":
+        from velocity_converter.leg0_ingest import _find_soffice_binary, _SOFFICE_HINT
+        if _find_soffice_binary() is None:
+            sys.exit(_SOFFICE_HINT)
     stem = src.stem
+    saved = _saved_path_review_fills(stem)
     run([PY, "-m", "velocity_converter.agent", "--yes",
          f"RUN_PIPELINE intake input={src} registry={REGISTRY} output={OUTPUT}"],
         "Leg -1 suggest + Leg 0 scan (intake)")
+    _restore_path_review_fills(stem, saved)
     print(f"\nNEXT — fill these two files (human judgement), then run: "
           f"python3 tools/run_demo.py finalize \"{stem}\"")
     print(f"  {ACTION}/{stem}.path-review.csv   (confirm each `final` accessor)")
     print(f"  {ACTION}/{stem}.variants.csv      (write each `when` condition)")
+
+
+def _fold_variant_text_leaves(stem: str, src: Path):
+    """Leg -1 pass 2: a {leaf} typed only inside a variants.csv `text` cell is
+    invisible to the intake scan. Fold net-new leaves into path-review.csv
+    (with registry suggestions) and stop so the human confirms them — never
+    auto-accept a new accessor. Idempotent: no new leaves → straight through."""
+    pr = Path(ACTION) / f"{stem}.path-review.csv"
+    vr = Path(ACTION) / f"{stem}.variants.csv"
+    if not pr.is_file() or not vr.is_file():
+        return
+    before = {row["field"] for row in csv.DictReader(pr.open())}
+    run([PY, "-m", "velocity_converter.legminus1_resolve_paths", "--input", str(src),
+         "--registry", REGISTRY, "--output-dir", OUTPUT, "--variants-csv", str(vr)],
+        "Leg -1 pass 2 (fold variant-text fields into path-review)")
+    new = [row["field"] for row in csv.DictReader(pr.open()) if row["field"] not in before]
+    if new:
+        sys.exit(f"\nvariants.csv text mentions new field(s): {', '.join(new)} — "
+                 f"rows appended to {pr}.\nConfirm each new `final` accessor, "
+                 f"then re-run: python3 tools/run_demo.py finalize \"{stem}\"")
 
 
 def _check_fills(stem: str):
@@ -79,10 +136,17 @@ def _check_fills(stem: str):
     if blanks:
         sys.exit(f"path-review.csv has blank `final` for: {', '.join(blanks)} — "
                  "fill every accessor (registry-grounded) before finalizing.")
+    vrows = list(csv.DictReader(vr.open()))
+    if vrows and not any((row.get("when") or "").strip() for row in vrows):
+        # ponytail: warn-only — blank `when` is legal (unconditional loop / default row)
+        print("NOTE: every `when` in variants.csv is blank, so all blocks render "
+              "unconditionally. Fine for plain loops/defaults; if a [[$token]] block "
+              "was meant to be conditional, fill its `when` before finalizing.")
 
 
 def finalize(stem: str):
     src = _find_source(stem)
+    _fold_variant_text_leaves(stem, src)
     _check_fills(stem)
     out_dir = f"{OUTPUT}/{stem}"
     path_map = f"{out_dir}/{stem}.path-map.yaml"

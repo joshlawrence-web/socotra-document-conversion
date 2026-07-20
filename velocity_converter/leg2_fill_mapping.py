@@ -1040,6 +1040,45 @@ def suggest_loop_root(
     return list_vel, step, reasoning, iterator, foreach, cov_manifest
 
 
+def _plugin_list_spec(it_entry: dict, reg: dict) -> dict:
+    """Self-contained builder spec for a ``kind: plugin_list`` iterable.
+
+    Stamped onto the mapping loop so Leg 4 can generate the list-builder Java
+    without reading the registry: the renderingData key, the source exposure's
+    list accessor, the Map's entry fields (with their value ``source``), and
+    the source exposure's coverage manifest (name, display_name, data fields).
+    """
+    list_vel = str(it_entry.get("list_velocity") or "")
+    source_exposure = str(it_entry.get("source_exposure") or "")
+    spec: dict = {
+        # $data.coverages → renderingData key "coverages"
+        "key": list_vel[len("$data."):] if list_vel.startswith("$data.") else list_vel.lstrip("$"),
+        "source_exposure": source_exposure,
+        "list_method": "",
+        "entry_fields": [
+            {"field": str(f.get("field") or ""), "source": str(f.get("source") or "")}
+            for f in it_entry.get("fields") or []
+        ],
+        "coverages": [],
+    }
+    for it in reg.get("iterables") or []:
+        if str(it.get("name") or "") == source_exposure:
+            lv = str(it.get("list_velocity") or "")
+            if lv.startswith("$data.") and "." not in lv[len("$data."):]:
+                spec["list_method"] = lv[len("$data."):]
+            break
+    for exp in reg.get("exposures") or []:
+        if str(exp.get("name") or "") == source_exposure:
+            for cov in exp.get("coverages") or []:
+                spec["coverages"].append({
+                    "name": str(cov.get("name") or ""),
+                    "display_name": str(cov.get("display_name") or cov.get("name") or ""),
+                    "fields": [str(f.get("field") or "") for f in cov.get("fields") or []],
+                })
+            break
+    return spec
+
+
 # ---------------------------------------------------------------------------
 # Coverage field matching (generic prefix decomposition)
 # ---------------------------------------------------------------------------
@@ -1364,6 +1403,55 @@ def annotate_mapping(
             "list_velocity": list_vel,
             "match_step": lstep,
         }
+
+        # Plugin-built list (registry iterable kind: plugin_list): the list does
+        # not exist on any entity, so a JAR verdict is meaningless — the
+        # generated plugin builds it under the renderingData key named by
+        # list_velocity. Stamp the full builder spec into the mapping so Leg 4
+        # is self-contained (no registry read there), keep list_velocity as-is
+        # (its key IS the renderingData key — no entity-key reprefix), and
+        # resolve each field against the iterable's declared entry fields.
+        it_entry = idx["iterables_by_name"].get(ln.lower()) or {}
+        if lstep == "exact" and str(it_entry.get("kind") or "") == "plugin_list":
+            loop["plugin_list"] = _plugin_list_spec(it_entry, reg)
+            loop["verdicts"] = {
+                r["id"]: {
+                    "data_source": list_vel,
+                    "confidence": "high",
+                    "sdk_status": "plugin",
+                    "reasoning": (
+                        f"loop `{ln}` → plugin-list iterable — the generated "
+                        f"plugin builds {list_vel}; nothing to verify on the entity"
+                    ),
+                }
+                for r in roots
+            }
+            entry_vels = {
+                str(f.get("field") or ""): str(f.get("velocity") or "")
+                for f in it_entry.get("fields") or []
+            }
+            for fld in loop.get("fields") or []:
+                if fld.get("data_source"):
+                    continue
+                leaf = str(fld.get("name") or "").rsplit(".", 1)[-1]
+                fvel = entry_vels.get(leaf, "")
+                freason = (
+                    f"plugin-list entry field `{leaf}`" if fvel else
+                    f"`{leaf}` is not a declared entry field of plugin list `{ln}` "
+                    "— next-action: add it to the registry iterable's fields"
+                )
+                fld["candidate"] = {"velocity": fvel, "match_step": "exact" if fvel else "none"}
+                fld["verdicts"] = {
+                    r["id"]: {
+                        "data_source": fvel,
+                        "confidence": "high" if fvel else "none",
+                        "sdk_status": "plugin" if fvel else "skipped",
+                        "reasoning": freason,
+                    }
+                    for r in roots
+                }
+            continue
+
         loop["verdicts"] = {
             r["id"]: loop_root_verdict_for_root(list_vel, lstep, lreason, r, classpath)
             for r in roots

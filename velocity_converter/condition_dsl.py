@@ -455,6 +455,12 @@ def validate_condition(
                     f"{cmp.path!r}: {info['base_type']!r} field compared to numeric "
                     f"value {cmp.value!r}"
                 )
+            elif leaf_kind in ("string", "date") and lit_kind == "boolean":
+                errors.append(
+                    f"{cmp.path!r}: {info['base_type']!r} field compared to bare "
+                    f"{str(cmp.value).lower()} — quote it "
+                    f'("{str(cmp.value).lower()}") if the field stores true/false as text'
+                )
         elif cmp.op == _IN_OP and leaf_kind == "number":
             if any(_literal_kind(v) != "number" for v in (cmp.value or [])):
                 errors.append(f"{cmp.path!r}: numeric field with a non-numeric value in 'in' list")
@@ -665,6 +671,60 @@ def condition_to_java(ast: ConditionAST, scope: str, leaf_types: dict[str, str] 
 
 
 # ---------------------------------------------------------------------------
+# Velocity codegen — in-loop value conditions render in the template, not Java
+# ---------------------------------------------------------------------------
+
+
+def _velocity_literal(value: object) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    # VTL escapes a double quote inside a "…" string by doubling it.
+    return '"' + str(value).replace('"', '""') + '"'
+
+
+def _comparison_to_velocity(cmp: Comparison) -> str:
+    segs = cmp.path.split(".")
+    ref = "$" + cmp.path
+    # Guard every intermediate hop — the strict renderer errors on a null hop
+    # (e.g. $item.<Cov>.data.<f> when the item doesn't carry the coverage).
+    hops = ["$" + ".".join(segs[:i]) for i in range(2, len(segs))]
+    guard = " && ".join(hops)
+
+    def guarded(expr: str) -> str:
+        return f"({guard} && {expr})" if guard else f"({expr})"
+
+    if cmp.op == "present":
+        # ponytail: VTL truthiness — a Boolean false leaf reads as absent
+        return guarded(ref)
+    if cmp.op == "absent":
+        return f"!{guarded(ref)}"
+    if cmp.op == _IN_OP:
+        eqs = " || ".join(f"{ref} == {_velocity_literal(v)}" for v in (cmp.value or []))
+        return guarded(f"({eqs})")
+    if cmp.op == "!=":
+        # Absent counts as != (mirrors the Java codegen's null semantics).
+        return f"!{guarded(f'{ref} == {_velocity_literal(cmp.value)}')}"
+    return guarded(f"{ref} {cmp.op} {_velocity_literal(cmp.value)}")
+
+
+def condition_to_velocity(ast: ConditionAST) -> str:
+    """Render an AST to a single boolean Velocity expression.
+
+    Used by Leg 3 for in-loop ``[Name?]`` value regions, whose condition is
+    per-item and therefore must evaluate in the template (inside the loop) —
+    the plugin can only compute document-scoped values. Every intermediate hop
+    is truthiness-guarded so the strict renderer never dies on a null step.
+    """
+    if not ast.comparisons:
+        return "true"
+    joiner = " || " if ast.join == "OR" else " && "
+    parts = [_comparison_to_velocity(c) for c in ast.comparisons]
+    return parts[0] if len(parts) == 1 else joiner.join(parts)
+
+
+# ---------------------------------------------------------------------------
 # Convenience: load a registry dict for validation
 # ---------------------------------------------------------------------------
 
@@ -822,6 +882,7 @@ def parse_variants_csv(
     product: str | None = None,
     template_placeholders: set[str] | None = None,
     doc_scope: str | None = None,
+    loop_scoped: dict[str, str] | None = None,
 ) -> VariantParseResult:
     """Normalise a customer ``<stem>.variants.csv`` into structured variants.
 
@@ -831,19 +892,27 @@ def parse_variants_csv(
     ``when`` parses + (with a registry) validates, and a single shared scope.
     Bare leaf names in ``when`` are resolved against the registry.
 
-    ``template_placeholders`` (variants-only plan §2.3, Decision A): keys for
-    loop-bearing ``render: template`` blocks. Such a block carries a single
-    ``when`` and **no** text/default (its wording stays in the document), so the
-    default-row and N-way validations are skipped for it; >1 conditioned row is
-    rejected (the unsupported per-variant-loop edge).
+    ``template_placeholders``: keys for ``render: template`` blocks — the
+    when-only rows of ``[Name/]`` loop sections. Such a row carries a single
+    ``when`` (show/hide the section) or a blank ``when`` (plain unconditional
+    loop) and **no** text (the section's wording stays in the document); >1
+    conditioned row is rejected (the unsupported per-variant-loop edge).
 
     ``doc_scope`` is the document's rendering-root scope (``"quote"`` or
     ``"policy"``). When given, bare leaves resolve to that scope — so a custom
     field in a ``(quote)`` document resolves to ``quote.data.<f>`` rather than the
     ``policy.data.<f>`` home, keeping the conditional in the quote overload. When
     omitted, resolution stays scope-blind (single ``policy.data.<f>`` candidate).
+
+    ``loop_scoped`` maps a placeholder to its loop's iterator name (e.g.
+    ``{"LabourNoteRow": "item"}``) — an in-loop ``[Name?]`` value region. Its
+    ``when`` is **per-item**: every path must be rooted at the iterator
+    (``item.data.<f>``, ``item.<Coverage>.data.<f>``); registry/scope
+    resolution is skipped (the condition renders as an in-template ``#if``,
+    validated by the live render, not the plugin compile).
     """
     template_placeholders = template_placeholders or set()
+    loop_scoped = loop_scoped or {}
     result = VariantParseResult()
     p = Path(path)
     if not p.is_file():
@@ -887,6 +956,20 @@ def parse_variants_csv(
             except ConditionError as exc:
                 errors.append(f"{ph}: bad condition {when!r}: {exc}")
                 continue
+            # In-loop value region: paths are per-item (rooted at the loop's
+            # iterator), never registry accessors — skip resolution entirely.
+            loop_iter = loop_scoped.get(ph)
+            if loop_iter:
+                bad = [c.path for c in ast.comparisons if c.path.split(".", 1)[0] != loop_iter]
+                if bad:
+                    errors.append(
+                        f"{ph}: an in-loop region conditions on the loop item — root every "
+                        f"path at the iterator `{loop_iter}` (e.g. `{loop_iter}.data.<field>` or "
+                        f"`{loop_iter}.<Coverage>.data.<field>`); got: {', '.join(bad)}"
+                    )
+                    continue
+                variants.append({"when": ast_to_dict(ast), "text": text, "_ast": ast})
+                continue
             # Resolve bare leaves → full accessors; track scope.
             resolved_ok = True
             for cmp in ast.comparisons:
@@ -913,14 +996,21 @@ def parse_variants_csv(
 
         is_template = ph in template_placeholders
         if is_template:
-            if default_count:
-                errors.append(f"{ph}: template (loop) block takes a single `when` only — "
-                              "remove the default/blank-when row(s)")
+            # A loop section row: one `when` (conditional section) or one blank
+            # `when` (plain unconditional loop). Never any text — the section's
+            # wording stays in the document.
             if len(variants) > 1:
-                errors.append(f"{ph}: template (loop) block has {len(variants)} conditioned rows — "
-                              "an N-way block whose variants each carry a loop is unsupported")
-            if not variants and not errors:
-                errors.append(f"{ph}: template (loop) block has no `when` row — fill the condition")
+                errors.append(f"{ph}: loop section has {len(variants)} conditioned rows — "
+                              "a loop renders on a single condition (or unconditionally)")
+            if default_count and variants:
+                errors.append(f"{ph}: loop section has both a `when` row and a blank-when row — "
+                              "keep exactly one row (fill the `when`, or leave it blank)")
+            if default_count > 1:
+                errors.append(f"{ph}: loop section has {default_count} blank-when rows (expected one row)")
+            if (default or "").strip() or any((v.get("text") or "").strip() for v in variants):
+                errors.append(f"{ph}: loop section rows take no text — the section wording "
+                              "stays in the document")
+            default = None  # loop rows carry no text; blank-when → unconditional
         else:
             if default_count == 0:
                 if len(variants) == 1:

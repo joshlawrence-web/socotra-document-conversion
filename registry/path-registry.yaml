@@ -35,6 +35,61 @@ iterables:
   foreach: '#foreach ($item in $data.items)'
   quantifier: +
   cardinality: one_or_more
+# Plugin-built list (kind: plugin_list): the collection does NOT exist on any
+# entity — the generated DocumentDataSnapshotPlugin builds it (one Map entry
+# per item × coverage present on that item) and puts it under the
+# renderingData key named by list_velocity. Leg 2 stamps the spec into the
+# mapping (no JAR verdict — there is nothing to verify on the entity); Leg 4
+# generates the list-builder Java. `fields` defines the Map's keys: `source`
+# says where each value comes from (coverage_name / coverage_display_name /
+# item_field:<f> = the owning exposure's data field / coverage_data:<f> = the
+# coverage's own data field, "" when that coverage lacks it). The `velocity`
+# keys make dotted {coverage.<field>} placeholders resolve in Leg 0/Leg -1.
+- name: Coverage
+  display_name: Coverage
+  kind: plugin_list
+  source_exposure: Item
+  list_velocity: $data.coverages
+  iterator: $coverage
+  foreach: '#foreach ($coverage in $data.coverages)'
+  quantifier: '*'
+  cardinality: any
+  fields:
+  - field: name
+    display_name: Coverage type name
+    type: string
+    source: coverage_name
+    velocity: $coverage.name
+  - field: displayName
+    display_name: Coverage display name
+    type: string
+    source: coverage_display_name
+    velocity: $coverage.displayName
+  - field: itemTypeCode
+    display_name: Owning item type code
+    type: string
+    source: item_field:itemTypeCode
+    velocity: $coverage.itemTypeCode
+  - field: labourCovered
+    display_name: Labour Covered
+    type: string
+    source: coverage_data:labourCovered
+    velocity: $coverage.labourCovered
+  - field: partsCovered
+    display_name: Parts Covered
+    type: string
+    source: coverage_data:partsCovered
+    velocity: $coverage.partsCovered
+  - field: manufacturerLabourGuaranteeEndDate
+    display_name: Manufacturer Labour Guarantee End Date
+    type: string
+    source: coverage_data:manufacturerLabourGuaranteeEndDate
+    velocity: $coverage.manufacturerLabourGuaranteeEndDate
+  - field: manufacturerPartsGuaranteeEndDate
+    display_name: Manufacturer Parts Guarantee End Date
+    type: string
+    source: coverage_data:manufacturerPartsGuaranteeEndDate
+    velocity: $coverage.manufacturerPartsGuaranteeEndDate
 system_paths:
 - field: locator
   display_name: Policy/quote locator

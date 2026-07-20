@@ -39,8 +39,9 @@ workspace/
   inbox/           source docs you feed the pipeline (.docx/.pdf/.html)
   action-needed/   FLAT — the files a human must hand-edit before continuing:
                      <stem>.variants.csv          (fill the `when` for every
-                                                    conditional block — binary,
-                                                    template, and N-way variant)
+                                                    named [[$token]] block —
+                                                    binary or N-way — and every
+                                                    [Name/] loop's when-only row)
                      <stem>.path-review.csv       (Leg -1: fill the `final`
                                                     accessor column; suggested
                                                     column lists candidates)
@@ -74,11 +75,17 @@ back on the same document and produces both human-fill files at once:
 python3 -m velocity_converter.agent --yes "RUN_PIPELINE intake input=<path.docx|path.pdf> registry=registry/path-registry.yaml output=workspace/output"
 ```
 
+Add `suggestions=off` to run intake **without predictions** — the `path-review.csv`
+arrives with blank `suggested`/`final` columns for full manual mapping (see the Leg -1
+section below; the registry audit in `output/<stem>/` is unaffected).
+
 Hand-fill files (both land in `workspace/action-needed/`):
 - `<stem>.path-review.csv` — confirm/fix each accessor in the `final` column; the
-  `suggested` column lists the registry candidates (Leg -1)
-- `<stem>.variants.csv` — the single conditional fill file: one `when` per binary/
-  template block, plus the rows for any N-way `[[$token]]` block (Leg 0)
+  `suggested` column lists the registry candidates (Leg -1). *(Blank under
+  `suggestions=off`.)*
+- `<stem>.variants.csv` — the single conditional fill file: one `when`-only row per
+  `[Name/]` loop, plus one conditioned row (+ default) per `[[$token]]` block — or
+  more rows for an N-way `[[$token]]` block (Leg 0)
 
 …plus the canonical `<stem>.path-review.md` and the machine map/audit
 (`<stem>.path-map.yaml`, `<stem>.path-changes.md`) in `workspace/output/<stem>/`. This collapses the two previously-separate human touchpoints
@@ -95,6 +102,19 @@ then `--parse-variants-csv`, then Leg 2+3+4.
 - "prep the intake package" / "get everything the customer needs to fill"
 - "front-load the customer questions" / "one package for the customer"
 - "run intake" / "start the customer intake"
+
+---
+
+## Config-agnostic, template-only mode (no registry, no plugin)
+
+When the product config doesn't exist yet — or the user says "no config", "just the
+template", "don't need the plugin yet" — use the **template-lite** skill
+(`.claude/skills/template-lite/SKILL.md`). It runs conversationally in the Claude
+session (no run_demo wrapper): Leg 0 + variants parse with the `--no-registry` flag,
+manual `data_source` mapping (the agent plays the registry, using the renderingData
+table), Leg 3, and a shape-band-only done-gate. Conditionals still promote to
+`${data.<token>}` + the conditional-registry, so Leg 4 can be run later, unchanged,
+once the user *willingly* provides config — never push config/plugin on them early.
 
 ---
 
@@ -118,10 +138,19 @@ paths against the rendering root downstream).
 python3 -m velocity_converter.agent --yes "RUN_PIPELINE legminus1 input=<path.docx|.pdf|.html> registry=registry/path-registry.yaml output=workspace/output"
 ```
 
+**"Without predictions" (`suggestions=off`)** — add `suggestions=off` to the
+`legminus1` *or* `intake` command to blank the `suggested` **and** `final` columns of
+the `path-review.csv`, so the customer maps every accessor by hand instead of confirming
+a pre-filled top pick. The registry is still consulted — the `.path-map.yaml` and
+`.path-changes.md` audit still carry the analysis; only the customer-facing CSV is left
+empty. Accepted spellings: `suggestions=off`, `suggest=off`, `no_suggest=true` (the raw
+script flag is `--no-suggest`). Use this when the author explicitly wants no machine
+guesses in the fill file.
+
 **Step 2 — the human fills** `workspace/action-needed/<stem>.path-review.csv`: three
 columns — `field` (the bare `{leaf}`), `suggested` (registry candidate accessors,
 one per line in the cell, top pick first), and `final` (the single accessor to use,
-pre-filled with the top pick). Ambiguous leaves (multiple registry candidates in the
+pre-filled with the top pick — *blank under `suggestions=off`*). Ambiguous leaves (multiple registry candidates in the
 same scope, e.g. `{premium}` across coverages) list every candidate in `suggested`;
 unmatched leaves have a blank `final` for the human to type. The canonical
 `<stem>.path-review.md` (in `output/<stem>/`) is the system record — the CSV's `final`
@@ -142,11 +171,37 @@ python3 -m velocity_converter.leg0_ingest --input <path.docx|.pdf> --path-map wo
 (Or run Leg 0 on the `<stem>.resolved.docx` directly — it carries the full
 accessors baked in.)
 
-**Loop scope is resolved automatically** — a `{leaf}` inside `[Item]…[/Item]`
+**Loop scope is resolved automatically** — a `{leaf}` inside `[Item/]…[/Item]`
 markers is matched against that exposure's fields (so `{purchasePrice}` → 
 `item.data.purchasePrice`), while the same leaf at document level matches
 policy/quote scope. A leaf used both inside and outside a loop is treated as
 document-level (mirrors Leg 0's loop-field rule).
+
+**Variant-text leaves need Pass 2 (`--variants-csv`) — and this is where the
+suggester pays off early.** A `{leaf}` that appears **only inside a `[[block]]`'s
+text** (e.g. `{coolingOffPeriod}` typed into a `variants.csv` `text` cell) is *not* a
+plain body field — Leg -1 pass 1 only scans the body, so it never collects it, and a
+plain Leg -1 re-run **drops** it from `path-review.csv`. To fold it in *with a registry
+suggestion*, re-run Leg -1 pointed at the filled variants.csv (Decision-B **pass 2**):
+```
+python3 -m velocity_converter.legminus1_resolve_paths --input <doc> --registry registry/path-registry.yaml --output-dir workspace/output --variants-csv workspace/action-needed/<stem>.variants.csv
+```
+Pass 2 *appends* only the net-new variant-text leaves onto the existing CSV (path-map
+and audit stay untouched; `legminus1_apply` unions them on apply). The suggester is at
+its most useful here: even after a non-predictive `suggestions=off` intake, drop
+`suggestions=off` (or run the pass-2 command) to get the config's accessor picks for
+leaves you added by hand, instead of mapping every one from scratch. *(The
+`--variants-csv` flag is **script-only** — `RUN_PIPELINE legminus1` and `intake` don't
+pass it yet.)*
+
+**Suggested accessors are registry-relative, NOT renderingData-final.** Leg -1's
+`final` column — and the registry `velocity:` it comes from (e.g.
+`$data.data.coolingOffPeriod`) — is the **pre-splice** form. A bare `$data.data.<f>`
+does **not** resolve at render time; the rendering-root entity lives under a named key.
+Leg 2 (`_reprefix`) / Leg 0 pre-fill splice it in: a `(segment)` custom field becomes
+`$data.segment.data.<f>` (system → `$data.policy.<f>`). Treat the path-review pick as a
+resolution anchor, not the template path — and if a `$data.data.<f>` ever survives into
+a `.final.vm`/plugin, the splice failed (the "renderingData shape" demo grep catches it).
 
 **Artifacts:**
 - `workspace/action-needed/<stem>.path-review.csv` — **editable (human-fill)**; three
@@ -169,6 +224,18 @@ any placeholder not found in the source is reported, not silently dropped.
 ## Converting Word/PDF documents to Velocity templates (Leg 0)
 
 When the user provides a `.docx` or `.pdf` file, run Leg 0 (then optionally full pipeline).
+
+> **⚠️ System dependency — LibreOffice.** `.docx` conversion runs through LibreOffice
+> headless (`soffice`) by default, preserving the document's real styling (colors,
+> fonts, sizes, alignment as a `<style>` block + inline CSS) all the way into the
+> `.final.vm`. If LibreOffice is missing, Leg 0 **hard-errors** with an install hint
+> (`brew install --cask libreoffice` / `apt install libreoffice`). The old
+> structure-only converter remains behind `--converter legacy` (script) or
+> `converter=legacy` (RUN_PIPELINE) — styling is discarded there. Before conversion,
+> Leg 0 flattens any Word runs that would split a `{field}` / `[[$token]]` / `[Name/]`
+> marker across tags, then verifies token integrity on the produced HTML (a
+> fragmented token is a hard error, never silently mis-annotated). PDF conversion is
+> unchanged (pdfplumber; no styling).
 
 **Leg 0 only** (convert doc → raw HTML + extract fields + variants CSV + sidecar):
 ```
@@ -227,15 +294,16 @@ python3 -m velocity_converter.leg0_ingest --parse-variants-csv workspace/action-
 
 **Output lands in** `workspace/output/<stem>/` (machine artifacts):
 - `<stem>.raw.html` — raw converted HTML (pre-annotation)
-- `<stem>.annotated.html` — HTML with `{field}` → `$TBD_field`, `[[cond]]` → `$doc.condN`
+- `<stem>.annotated.html` — HTML with `{field}` → `$TBD_field`, `[[$token]]` → `$doc.<token>`
 - `<stem>.mapping.yaml` — leg2-compatible mapping (enriched in-place by Leg 2)
 - `<stem>.conditional-blocks.yaml` — machine sidecar (block metadata) the parse step reads
 - `<stem>.conditional-registry.yaml` — written after the customer returns the variants CSV
 
 …and the **human-fill** file lands in `workspace/action-needed/` (flat):
 - `<stem>.variants.csv` — the single customer-facing fill file for every conditional block
-  (binary `[[text]]` → fill the `when`, text pre-filled; template/loop block → fill the
-  `when` only; N-way `[[$token]]` → rows + a default). Send this to the customer.
+  (`[[$token]]` block → fill the `when` + `text` for one conditioned row + a default; N-way
+  `[[$token]]` → more rows + a default; `[Name/]` loop → a single `when`-only row, blank =
+  unconditional loop). Send this to the customer.
 
 **Occurrence symbols** — a `{field}` placeholder may declare its occurrence with a
 prefix: `{field}` required (default), `{$field}` optional, `{+field}` one or more,
@@ -245,36 +313,95 @@ enforces it in the generated plugin: required/one_or_more fields get null/empty 
 that throw `IllegalStateException` when data is missing — see the "Occurrence guards"
 section of the plugin report. The template carries no null-safety logic.
 
-**Loop sections** — wrap a repeating region in `[Name]` … `[/Name]` markers, where
-`Name` exactly matches a registry iterable name (e.g. `[Item]` … `[/Item]` for the
-items array). Markers may be standalone paragraphs or table rows (other cells empty) —
-a marker row around a table's data row repeats just that row, keeping the header once.
-Leg 0 replaces the markers with a `#foreach ($item in $TBD_Item)` / `#end` scaffold,
-moves the enclosed `{field}` placeholders into the loop's `fields` list in the
-`.mapping.yaml`, and Leg 2+3 resolve the scaffold to the registry's real directive
-(e.g. `#foreach ($item in $data.items)`). Unmatched markers stay as literal text with
-a stderr warning.
+**Loop sections** — wrap a repeating region in `[Name/]` … `[/Name]` markers (the
+trailing slash on the opener marks a loop), where `Name` exactly matches a registry
+iterable name (e.g. `[Item/]` … `[/Item]` for the items array). Markers may be
+standalone paragraphs or table rows (other cells empty) — a marker row around a
+table's data row repeats just that row, keeping the header once. Leg 0 replaces the
+markers with a `#foreach ($item in $TBD_Item)` / `#end` scaffold, moves the enclosed
+`{field}` placeholders into the loop's `fields` list in the `.mapping.yaml`, and
+Leg 2+3 resolve the scaffold to the registry's real directive (e.g. `#foreach ($item
+in $data.items)`). Unmatched markers stay as literal text with a stderr warning; a
+legacy `[Name]` opener (no slash) with a matching `[/Name]` closer draws a migration
+warning and stays literal too — rename it `[Name/]`.
 
-**Loop inside a conditional** — a loop section fully inside a top-level `[[...]]`
-block flips that block to `render: template`: the block's content (loop included)
-stays in the `.vm` wrapped in `#if($data.condN)`…`#end`, and the plugin puts `condN`
-as a **Boolean** instead of a baked string (an exception to the "plugin owns
-conditional text" rule). In the variants-only flow the block becomes a `when`-only
-`variants.csv` row (the customer fills only the condition; the section wording stays
-in the document); the `render: template` flag travels in the `.conditional-blocks.yaml`
-sidecar → conditional-registry → Leg 4. Refused with a warning (markers left literal):
-a loop *crossing* a block boundary, or inside a *nested* block. A conditional fully
-inside a loop is allowed but warned — conditions are document-scoped, so it renders
-identically for every item. **One genuinely-unsupported edge** (documented, not
-handled): an N-way `[[$token]]` block whose variants each carry their *own* loop —
-loop bodies can't live in a CSV `text` cell and `render: template` is binary show/hide,
-not N-way.
+**Loop inside a conditional** — every `[Name/]` loop automatically gets its own
+`render: template` block (keyed by the loop name) and surfaces as a `when`-only row
+in `variants.csv`: a blank `when` is a plain unconditional loop (Leg 3 strips the
+`#if` guard around it); a filled `when` wraps the section in `#if($data.<Name>)`…`#end`
+and the plugin puts `<Name>` as a **Boolean** (an exception to the "plugin owns
+conditional text" rule). The `render: template` flag travels in the
+`.conditional-blocks.yaml` sidecar → conditional-registry → Leg 4. Loop names share a
+key space with `[[$token]]` names — a collision is an error. A `[[$token]]` block
+fully inside a loop is allowed but warned — conditions are document-scoped, so it
+renders identically for every item. **One genuinely-unsupported edge** (documented,
+not handled): an N-way `[[$token]]` block whose variants each carry their *own*
+loop — loop bodies can't live in a CSV `text` cell and `render: template` is binary
+show/hide, not N-way.
 
-**Conditions use the condition DSL** — every block's `when` (binary, template, and
-variant) is parsed by `condition_dsl`. Use `present`/`absent` for null checks (NOT
-`!= null`), `==`/`!=`/`<`/`>`/`in` for comparisons. Conditions are document-scoped, so
-they reference quote/account/policy(segment) accessors — never per-exposure `item.*`
-(rejected at document scope, since there is no single item local).
+**Conditional row regions (`[Name?]` … `[/Name]`)** — the "giant table" pattern:
+whole table rows (or paragraphs) that render only under a condition. `[[$token]]`
+text lives in CSV cells so it can never carry table rows; a region marker keeps the
+rows in the document and wraps them in a guard. Same placement rules as loop
+markers (standalone paragraph or table row). Four shapes, resolved automatically:
+- **Inside a `[Name/]` loop, `Name` = a coverage of that exposure** → Leg 0 emits
+  `#if($<iterator>.<Name>)`…`#end` directly (per-item coverage presence, e.g.
+  `[AccidentalDamage?]` rows inside `[Item/]`). No customer fill, no plugin key.
+- **Inside a `[Name/]` loop, any other `Name`** → an in-loop **value** region: a
+  `when`-only `variants.csv` row whose condition is **per-item** — every path must
+  root at the loop's iterator (e.g. `item.Breakdown.data.labourCovered == "true"`;
+  blank = always render). Leg 3 compiles the condition to an in-template `#if`
+  inside the loop (every hop truthiness-guarded); the plugin never sees it —
+  per-item conditions can't be doc-scoped Booleans. (Registry required to
+  classify; registry-less runs keep the old bare presence-guard fallback.)
+- **Document level, `Name` = a registry coverage** → a `render: template` block
+  with `presence` metadata: skipped in `variants.csv` (nothing to fill), the
+  conditional-registry carries it automatically, and Leg 4 emits a Boolean that is
+  true when **any** item carries the coverage.
+- **Document level, any other `Name`** → a plain `render: template` block with a
+  `when`-only `variants.csv` row, exactly like a loop's (blank = always render).
+Every coverage-hop field (`$item.<Cov>.data.<f>`) is additionally cell-guarded by
+Leg 3 with `#if($item.<Cov>)` **regardless of quantifier** — live data can lack
+even an `exactly_one_auto` coverage and the strict renderer errors on null hops.
+
+**Plugin-built lists (`kind: plugin_list` iterables)** — a `[Coverage/]` …
+`[/Coverage]` loop renders one row per (item × coverage present) even though no
+such collection exists on any entity. The registry iterable declares the spec
+(renderingData key from `list_velocity`, `source_exposure`, the Map's `fields`
+with their value `source`); Leg 2 stamps it into the mapping (`plugin_list:` on
+the loop — no JAR verdict, the list is plugin-built) and resolves `{coverage.<f>}`
+fields against the declared entry fields; Leg 4 generates the list-builder Java
+(`List<Map<String,Object>>` under the `coverages` key, only template-referenced
+fields, `""` when a coverage type lacks a field). Known limit: per-coverage
+**charge amounts** (premium) are not reachable from the snapshot records — don't
+declare them as entry fields.
+
+**Splicing a table from another docx (`tools/splice_docx_table.py`)** — copying a
+`<w:tbl>` between documents byte-for-byte silently restyles it: paragraphs/runs with
+no explicit spacing/font inherit the *host* document's docDefaults (row heights double,
+fonts swap). Never hand-edit the XML — use the splicer, which bakes the source doc's
+effective defaults (spacing/jc/font/size) into every paragraph and run, copies
+referenced style definitions (renaming on collision), drops the source-context table
+indent when it would overflow the target page, rejects unsupported content
+(images, lists, hyperlinks, footnotes), and verifies its own output:
+
+```
+python3 tools/splice_docx_table.py --source <src.docx> --table-contains "<unique text>" \
+  --target <dst.docx> [--before-text "<target anchor>"] [--heading "<bold title>"]
+```
+
+The target is modified in place (git is the undo) — re-run Leg 0 afterwards. Static
+tables flow straight through Leg 0→3; a table carrying `{field}`/`[[$token]]`/`[Name/]`
+markers goes through the normal conditional/loop flow. **Trigger phrases:** "copy the
+table from X into Y", "splice this table", "add that table to my doc", "reuse the table
+from another document".
+
+**Conditions use the condition DSL** — every block's `when` (`[[$token]]` variant
+and `[Name/]` loop when-row alike) is parsed by `condition_dsl`. Use `present`/`absent`
+for null checks (NOT `!= null`), `==`/`!=`/`<`/`>`/`in` for comparisons. Conditions are
+document-scoped, so they reference quote/account/policy(segment) accessors — never
+per-exposure `item.*` (rejected at document scope, since there is no single item
+local).
 
 **Nested `[[$label]]` inside a variant's text** — a variant's `text` cell may embed
 `[[$other]]`, where `other` is another placeholder (row) in the same `variants.csv`.
@@ -347,7 +474,10 @@ The splice lives in `agent_tools.render_root_velocity()` (Leg 0 pre-fill) and
 - ❌ No bare `$data.<systemField>` (e.g. `$data.policyNumber`) — must be `$data.policy.<f>`
   (segment) or `$data.quote.<f>` (quote).
 - ✅ Every resolved field is under `$data.policy` / `$data.segment` / `$data.quote` /
-  `$data.account`; every loop is `#foreach ($item in $data.<root>.items)`.
+  `$data.account`; every entity loop is `#foreach ($item in $data.<root>.items)`.
+  (Exception: a **plugin-built list** iterates its own top-level key —
+  `#foreach ($coverage in $data.coverages)` is correct; the generated plugin
+  `.put()`s that key itself.)
 
 If any bare path slips through, the resolution is wrong — fix the data_source, don't ship it.
 
@@ -518,7 +648,7 @@ python3 tests/pipeline/run_test_pipeline.py --auto --render-preview
 Output lands in `tests/pipeline/output/<stem>/`. Exit code is non-zero on failure.
 
 **What is tested:** Leg 0 → variants.csv fill (built from `condition_seeds.yaml`) →
-`--parse-variants-csv` → Leg 2+3 → Leg 4 (single combined plugin) across nine fixtures:
+`--parse-variants-csv` → Leg 2+3 → Leg 4 (single combined plugin) across eleven fixtures:
 `TestQuoteSummary(quote)`, `TestItemCert(segment)`, `TestRenewalNotice(segment)`,
 `TestItemsSchedule(segment)` (loops over the items array via `[Item]`/`[/Item]` markers),
 `TestGiftSchedule(segment)` (an `[Item]` loop inside a `[[conditional]]` → `render: template`
@@ -530,7 +660,11 @@ block — the variants-only template-as-`when`-only-row guard),
 `{discountAmount}` — exercises Leg 4's variant-text leaf resolution / "Decision B"), and
 `TestNestedVariantLabel(segment)` (a `[[$token]]` block whose variant text embeds a **nested
 `[[$label]]` reference** to a second, document-marker-less placeholder — exercises the
-nested-ref peel + block synthesis + topo-ordered plugin composition).
+nested-ref peel + block synthesis + topo-ordered plugin composition),
+`TestCoverageGrid(segment)` (the **giant-table** pattern — `[Name?]` conditional row
+regions in all three shapes plus always-guarded coverage-hop fields), and
+`TestCoverageSchedule(segment)` (a `[Coverage/]` **plugin-list** loop — one row per
+item × coverage present, iterated over the plugin-built `$data.coverages`).
 
 **Adding a new fixture** (four-step checklist):
 1. Add a builder function to `tools/generate_test_fixtures.py` and append it to `FIXTURES`.

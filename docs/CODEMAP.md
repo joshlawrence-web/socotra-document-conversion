@@ -21,7 +21,7 @@ final) + a canonical `.path-review.md` before Leg 0.
 | Symbol | Line | Role |
 |---|---|---|
 | `collect_placeholders()` | 110 | Scan doc text for `{leaf}` placeholders + loop scope |
-| `_loop_spans()` / `_loop_for_position()` | 90 / 103 | Map `[Item]…[/Item]` spans → which loop a position is in |
+| `_loop_spans()` / `_loop_for_position()` | 90 / 103 | Map `[Item/]…[/Item]` spans → which loop a position is in |
 | `resolve_fields()` | 141 | Match each leaf against registry candidates |
 | `run_suggest()` | 378 | **Suggest mode** entry — writes CSV + review + map + changes |
 | `write_path_review/map/changes()` | 167 / 301 / 329 | The canonical artifacts |
@@ -39,11 +39,11 @@ final) + a canonical `.path-review.md` before Leg 0.
 | `convert_docx()` / `convert_pdf()` | 74 / 137 | Document → raw HTML |
 | `extract_fields()` | 225 | `{field}` + occurrence symbols → token list |
 | `annotate_fields()` | 359 | `{field}` → `$TBD_field` in HTML |
-| `extract_conditionals()` | 432 | `[[…]]` blocks (incl. `[[$variant]]`), nesting, block IDs |
-| `annotate_conditionals()` | 518 | Conditional blocks → `$doc.condN` |
-| `extract_loops()` | 596 | `[Name]…[/Name]` → `#foreach` scaffold; moves fields into loop |
+| `extract_conditionals()` | 453 | Every `[[…]]` block must be a named `[[$token]]` — raises `ValueError` on a bare block or duplicate token |
+| `annotate_conditionals()` | 511 | Conditional blocks → `$doc.<token>` |
+| `extract_loops()` | 558 | `[Name/]…[/Name]` → `#foreach` scaffold + per-loop `render: template` block; legacy `[Name]` opener warns |
 | `write_leg2_mapping()` | 793 | Emit `.mapping.yaml` (Leg 2 contract) |
-| `write_variants_csv()` | 835 | Single human-fill `.variants.csv` for ALL conditional text (binary / template / N-way) |
+| `write_variants_csv()` | 783 | Single human-fill `.variants.csv` for ALL conditional text (`[[$token]]` variant / N-way / loop `when`-only row) |
 | `write_conditional_blocks()` | 899 | Machine sidecar `.conditional-blocks.yaml` (per-block metadata the CSV can't carry) |
 | `load_conditional_blocks()` | 925 | Read the sidecar back at parse time |
 | `parse_conditional_form()` | 943 | **legacy `--parse-conditional-form` mode** — in-flight form → blocks |
@@ -96,8 +96,9 @@ final) + a canonical `.path-review.md` before Leg 0.
 | `process_vm()` | 338 | Strip `#if($TBD_*)` guards, substitute tokens, resolve foreach |
 | `build_substitution_map()` | 265 | `$TBD_*` → data_source path |
 | `build_foreach_map()` | 292 | Loop placeholder → `#foreach` directive |
-| `build_cond_map()` | 102 | `$doc.condN` → `${data.condN}` |
-| `apply_cond_substitutions()` | 115 | Innermost-first conditional-block resolution |
+| `build_cond_map()` | 102 | `$doc.<key>` → `${data.<key>}` |
+| `_strip_unregistered_guards()` | 115 | Phase -1: strip `#if($doc.X)…#end` for a `[Name/]` loop whose `when` row was left blank (unconditional) |
+| `apply_cond_substitutions()` | 144 | Phase -1 guard strip, then innermost-first conditional-block resolution |
 | `split_delegated()` | 175 | Separate plugin-owned vs template-resolved tokens |
 | `_flatten_to_primary_root()` | 230 | Schema 2.0 per-root verdicts → flat fields |
 | `write_report()` | 451 | `.leg3-report.md` |
@@ -114,9 +115,9 @@ final) + a canonical `.path-review.md` before Leg 0.
 | `_build_cond_field_lookup()` | 205 | Variable name → Java wiring |
 | `_augment_field_lookup_for_variants()` | 320 | Add field tokens from variant text |
 | `_analyse_cond_fields()` | 400 | Classify unresolved (hard-fail) / unsupported / mixed-scope |
-| `render_conditional_puts()` | 1324 | Binary + variant `if/else-if/else` chains (binary routes through the variant generator) |
-| `_render_variant_puts()` | 1209 | N-way + binary variant chain (first match wins) |
-| `_render_template_put()` | 1269 | Template (`render: template`) block → Boolean from `when` AST (or legacy `conditions[]`) |
+| `render_conditional_puts()` | 1324 | `[[$token]]` variant + `[Name/]` loop template `if/else-if/else` chains (single-condition routes through the variant generator) |
+| `_render_variant_puts()` | 1209 | N-way + single-condition variant chain (first match wins) |
+| `_render_template_put()` | 1269 | `[Name/]` loop's `render: template` block → Boolean from `when` AST (or legacy `conditions[]`) |
 | `condition_to_java()` | *(condition_dsl.py:546)* | Condition AST → Java boolean expr |
 | `render_occurrence_guards()` | 482 | Null/empty guards for required / one_or_more |
 | `_parse_existing_plugin_keys()` / `parse_plugin_keys()` | 742 / 749 | **Additive mode** — read existing `.java` |

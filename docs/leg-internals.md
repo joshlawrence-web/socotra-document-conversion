@@ -20,15 +20,17 @@ flowchart TD
 
   subgraph PD["_parse_document() — 1176"]
     C["detect suffix"]
-    C -->|.docx| D["convert_docx() — 88"]
+    C -->|".docx (default)"| D2["convert_docx_soffice()<br/>run-flatten → xhtml → prepare → verify"]
+    C -->|".docx --converter legacy"| D["convert_docx() — 88"]
     C -->|.pdf| E["convert_pdf() — 151"]
+    D2 --> F
     D --> F["apply_path_map() — 339"]
     E --> F
     F --> G["extract_fields() — 239"]
     G --> H["annotate_fields() — 373"]
-    H --> I["extract_conditionals() — 446"]
+    H --> I["extract_conditionals() — 446<br/>(raises on bare/dup blocks)"]
     I --> J["annotate_conditionals() — 532"]
-    J --> K["extract_loops() — 610<br/>(sets render: template)"]
+    J --> K["extract_loops() — 610<br/>(sets render: template per loop)"]
   end
 
   P --> PD
@@ -62,21 +64,35 @@ conditional text), `.conditional-blocks.yaml` (machine sidecar); or filled `.var
 + `.conditional-blocks.yaml` → `.conditional-registry.yaml`.
 
 **Key internal stages:**
-- `convert_docx()` (88) / `convert_pdf()` (151) — parse paragraphs/tables/text → raw HTML.
+- `convert_docx_soffice()` — the **default** `.docx` converter (lossless styling). Four
+  stages: (A) `_normalize_docx_runs()` flattens any Word runs that would split a
+  `{field}` / `[[$token]]` / `[Name/]` token across tag boundaries (a run boundary
+  becomes a tag boundary in soffice HTML, and the annotators match tokens on the raw
+  HTML string); (B) LibreOffice headless converts the normalized temp copy
+  (`--convert-to "xhtml:XHTML Writer File"`, unique `-env:UserInstallation` profile per
+  invocation — the XHTML filter keeps theme body fonts/sizes that StarWriter HTML
+  drops); (C) `_prepare_soffice_html()` cleans XHTML for Velocity (DOCTYPE/xmlns,
+  fix `! important`, drop the XHTML `td { font-size:12pt }` override, zero
+  horizontal cell padding so tables share the body text edge) while
+  keeping source `font-family` names as-is; (D) `_verify_token_integrity()` confirms every token visible in the text
+  exists verbatim in the HTML — a failure is a hard `RuntimeError` (a Stage-A gap to
+  fix, never HTML to patch). Hard-errors with an install hint when `soffice` is missing.
+- `convert_docx()` (88) / `convert_pdf()` (151) — legacy structure-only converters
+  (`--converter legacy` for docx; always used for PDF). Styling is discarded.
 - `extract_fields()` (239) — regex-extract `{field}` tokens with occurrence symbols (`$ + *`), dedupe, optionally resolve dotted names via registry.
-- `extract_conditionals()` (446) — recursive `[[…]]` matching; detect variant tokens `[[$placeholder]]`, assign stable block IDs, nest children, dedupe keys.
-- `extract_loops()` (610) — match `[Name]…[/Name]`; move enclosed fields to loop scope; flip a containing conditional block to `render: template`; emit `#foreach`/`#end`.
-- `write_variants_csv()` (835) — emit `.variants.csv`, the single human-fill file for ALL conditional text (binary blocks fold to a conditioned row + empty-default row; template blocks to a `when`-only row; N-way blocks to one row per condition + a default).
+- `extract_conditionals()` (453) — recursive `[[…]]` matching; every block must be a named variant token `[[$placeholder]]` — a bare `[[literal text]]` block raises `ValueError` listing every offender (nothing is written); a table-spanning bare block gets a targeted hint. A repeated `[[$token]]` dedupes to one block with a stderr NOTE (same CSV-keyed text renders at every occurrence).
+- `extract_loops()` (558) — match `[Name/]…[/Name]` (trailing slash on the opener marks a loop); move enclosed fields to loop scope; emit `#foreach`/`#end` wrapped in an `#if($doc.<Name>)` guard; append a `render: template` block keyed by the loop name. Legacy `[Name]` openers (no slash) draw a migration warning and stay literal; a loop name colliding with a `[[$token]]` key raises `ValueError`. **Also matches `[Name?]…[/Name]` conditional regions** (the `?` opener — conditional table rows): inside a loop with `Name` a coverage of that exposure → a final `#if($<iterator>.<Name>)` emitted directly (iterator from the registry iterable; per-item coverage presence, no block, no CSV row); inside a loop otherwise → an in-loop **value** region: a `render: template` block with `loop_scope: {loop, iterator}` metadata (when-only CSV row; the `when` is per-item — paths must root at the iterator — parsed via `parse_variants_csv(loop_scoped=…)`, compiled by Leg 3's `condition_to_velocity` into an in-template `#if` inside the loop, skipped by Leg 4); document level with `Name` a registry coverage → a `render: template` block carrying `presence` metadata (skipped in the variants.csv, auto-registered at parse, Leg 4 emits an any-item-carries-it Boolean); document level otherwise → a plain `render: template` block (when-only CSV row, blank = always render). A `[Name/]` loop whose registry iterable is `kind: plugin_list` (e.g. `[Coverage/]` → `$data.coverages`) is resolved by Leg 2 without a JAR verdict — the builder spec is stamped onto the mapping (`plugin_list:`) and Leg 4 generates the list-builder Java.
+- `write_variants_csv()` (783) — emit `.variants.csv`, the single human-fill file for ALL conditional text (`[[$token]]` blocks fold to one conditioned row + an empty default row, more rows for N-way; `[Name/]` loop `render: template` blocks fold to a single `when`-only row, blank = unconditional loop).
 - `write_conditional_blocks()` (899) — emit the `.conditional-blocks.yaml` machine sidecar (id/key/placeholder/variant/render/source_text/top_level/parent_id/depth) the 3-column CSV can't carry.
 - `load_conditional_blocks()` (925) / `parse_variants_csv_to_blocks()` (1050) — read the sidecar + filled CSV → block list with conditions resolved through the DSL.
 - `write_leg2_mapping()` (793) — emit `.mapping.yaml` in Leg 2 contract (variables + loops, top-level/loop field split).
 
 **Invariants / gotchas:**
 - **Field token format:** `{field}` + occurrence symbol → deduped, normalized to `$TBD_field` (symbol never appears in output); name conflicts keep the first symbol seen and warn on stderr.
-- **Loop field membership** is decided *after* field annotation: a field whose every occurrence is inside `[Name]…[/Name]` moves to that loop; a field used both in and out stays top-level.
-- **Conditional with a loop inside** flips to `render: template` — `#if($doc.condN)` wraps the loop in the template and the plugin emits `condN` as a Boolean; in the CSV it surfaces as a single `when`-only row (text blank). Nested loops, or a loop crossing a block boundary, are refused (markers left literal, stderr warning). Genuinely unsupported: an N-way `[[$token]]` block whose variants each carry their own loop (loop bodies can't live in a CSV `text` cell, and `render: template` is binary, not N-way).
+- **Loop field membership** is decided *after* field annotation: a field whose every occurrence is inside `[Name/]…[/Name]` moves to that loop; a field used both in and out stays top-level.
+- **Every `[Name/]` loop gets its own `render: template` block** keyed by the loop name — `#if($doc.<Name>)` wraps the loop in the template. In the CSV it surfaces as a single `when`-only row: blank `when` = unconditional loop (Leg 3's `_strip_unregistered_guards` removes the guard pair), filled `when` = the guard renames to `#if($data.<Name>)` and the plugin emits `<Name>` as a Boolean. Loop names share a key space with `[[$token]]` names — a collision raises `ValueError`. A `[[$token]]` block fully inside a loop is allowed but warned (conditions are document-scoped, so it renders identically for every item). Genuinely unsupported: an N-way `[[$token]]` block whose variants each carry their own loop (loop bodies can't live in a CSV `text` cell, and `render: template` is binary, not N-way).
 - **Conditions use the condition DSL** (`condition_dsl.parse_variants_csv`) — `present`/`absent`, not `!= null`. Conditions are document-scoped: quote/account/policy(segment) accessors only; per-exposure `item.*` is rejected at document scope.
-- **Variant placeholder dedupe:** `[[$stateClause]]` → placeholder `stateClause`; a colliding placeholder warns and falls back to positional `cond<id>` so registry keys stay unique.
+- **Variant placeholder naming:** `[[$stateClause]]` → placeholder `stateClause`; a bare `[[literal text]]` block raises `ValueError` (listing every offender, nothing written); a repeated `[[$token]]` dedupes to one block (every occurrence renders the same CSV-defined text) — no more positional `cond<id>` fallback. `cond<id>` keys are legacy-only now, still parsed from pre-existing registries.
 - **Path-map rewrite** runs *before* extraction (non-destructive; the source doc is never modified — the rewrite targets the working HTML).
 
 ---
@@ -196,7 +212,7 @@ flowchart TD
   E --> F["_load_cond_registry() — 72"]
   F --> G["build_cond_map() — 102"]
   G --> H["process_vm() — 338"]
-  H --> I["apply_cond_substitutions() — 115"]
+  H --> I["apply_cond_substitutions() — 144<br/>(phase -1: _strip_unregistered_guards — 115)"]
   I --> J["split_delegated() — 175"]
   J --> K["write_report() — 451"]
   K --> L["write .final.vm + .leg3-report.md"]
@@ -210,14 +226,16 @@ Leg 1 `.vm` → `.final.vm` + `.leg3-report.md`.
 **Key internal stages:**
 - `build_substitution_map()` (265) — `{$TBD_*: data_source path}` from variables + loop fields.
 - `build_foreach_map()` (292) — loop placeholder → `#foreach` directive (where both data_source and foreach exist).
-- `build_cond_map()` (102) — `$doc.condN` → `${data.condN}`.
+- `build_cond_map()` (102) — `$doc.<key>` → `${data.<key>}`.
 - `process_vm()` (338) — strip `#if($TBD_*)` guards, substitute resolved tokens, replace foreach placeholders.
-- `apply_cond_substitutions()` (115) — multi-pass innermost-first resolution of `[[…]]$doc.condN` blocks.
+- `_strip_unregistered_guards()` (115) — phase -1 of `apply_cond_substitutions`: strip `#if($doc.X)…#end` pairs whose key has no conditional-registry entry — a `[Name/]` loop whose `when` row was left blank (unconditional loop), keeping the content.
+- `apply_cond_substitutions()` (144) — phase -1 guard strip, then phase 0 renames surviving `#if($doc.X)` template guards to `#if($data.X)`, then multi-pass innermost-first resolution of `[[…]]$doc.<key>` blocks.
 - `split_delegated()` (175) — separate tokens that live only inside conditional blocks (plugin-wired) from template-resolved tokens.
 
 **Invariants / gotchas:**
 - Unresolved tokens (`$TBD_*` with empty data_source) stay verbatim in the output and are listed in the report.
-- `$doc.condN` → `${data.condN}` because the **plugin owns conditional text**; the template only emits the resolved block string.
+- A `[Name/]` loop's `#if($doc.<Name>)` guard is stripped (content kept) when the customer left the loop's `when` row blank; otherwise it renames to `#if($data.<Name>)` and the plugin supplies `<Name>` as a Boolean.
+- `$doc.<key>` → `${data.<key>}` because the **plugin owns conditional text**; the template only emits the resolved block string.
 - Tokens inside `[[…]]$doc.condN` blocks are *delegated to Leg 4* — they don't appear in `.final.vm`, only in the report.
 - `#if($TBD_*)` guard wrappers are stripped entirely; nested `#if`/`#foreach` inside them are preserved with substitution.
 - Schema 2.0 mapping promotes per-root verdicts to flat fields via the primary root; schema 1.x passes through unchanged.
@@ -275,7 +293,7 @@ flowchart TD
 - **Named variant blocks** merge by `block_key()` (name-based) — no positional renumber; a duplicate name is a logged conflict.
 
 **Conditional / variant / occurrence handling:**
-- **Binary block:** now routes through the variant generator (`_render_variant_puts()` 1209) as a one-real-row + empty-default fold: `String cond<id> = ""; if (<java_cond>) { cond<id> = <baked_text>; }`.
+- **Single-conditioned-row `[[$token]]` block** (the ordinary show/hide case, and the legacy `cond<id>`-keyed binary block from an old registry) routes through the variant generator (`_render_variant_puts()` 1209) as a one-real-row + empty-default fold: `String <key> = ""; if (<java_cond>) { <key> = <baked_text>; }`.
 - **N-way variant** (`_render_variant_puts()` 1209): `if (<cond0>) {…} else if (…) {…} else { <default> }`, first match wins.
 - **Template block** (`_render_template_put()` 1269): emits a Boolean `condN` from the single `when` AST (new flow) or legacy `conditions[]`.
 - **Field tokens inside blocks** → in-scope fields wired as Java accessor concat (`Objects.toString(policy.data().lastName(), "")`); unresolved field inside a block **hard-fails** (run Leg 2); unsupported (per-exposure/account/DataFetcher) → `// TODO` + WARN row.
@@ -283,7 +301,7 @@ flowchart TD
 - **Scope blocking:** a quote-scoped condition in the policy overload (or vice-versa) renders an empty put; mixed-scope blocks render empty in both overloads.
 
 **Invariants / gotchas:**
-- Conditional-ID renumber is form-local and positional for binary blocks; named variants never renumber.
+- Conditional-ID renumber is form-local and positional — legacy-only, for `cond<id>`-keyed blocks from old registries; named `[[$token]]` variants and `[Name/]` loop template blocks never renumber (merged by name).
 - Occurrence guard names are tracked in the existing `.java` so additive re-runs don't double-guard.
 - DataFetcher calls are deduped per root and skipped when the root isn't in `valid_roots`; the legacy `pricing` key is always skipped for quote.
 - `segment` is optional in the policy overload (`.orElse(null)`) — a missing segment warns but does not fail.

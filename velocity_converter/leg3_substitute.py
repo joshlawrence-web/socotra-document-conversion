@@ -29,6 +29,7 @@ from pathlib import Path
 
 import yaml
 
+from velocity_converter.condition_dsl import ast_from_dict, condition_to_velocity
 from velocity_converter.models import (
     ConditionalRegistry,
     ContractError,
@@ -112,23 +113,56 @@ def build_cond_map(cond_blocks: list[dict]) -> dict[str, str]:
     }
 
 
+def _strip_unregistered_guards(vm_text: str, cond_map: dict[str, str]) -> str:
+    """Strip #if($doc.X)…#end pairs whose key has no conditional-registry entry.
+
+    Leg 0 wraps every [Name/] loop section in an #if($doc.<Name>) guard; a
+    customer who left the loop's `when` row blank produces no registry entry —
+    the loop is unconditional, so the guard pair is removed and its content
+    kept. Line-based, mirroring process_vm's #if($TBD_*) guard strip: nested
+    #if/#foreach inside a stripped guard are preserved.
+    """
+    out: list[str] = []
+    open_stack: list[bool] = []  # True = this open was a stripped guard
+    for raw in vm_text.splitlines(keepends=True):
+        s = raw.strip()
+        m = re.fullmatch(r"#if\(\$doc\.([A-Za-z_]\w*)\)", s)
+        if m and f"$doc.{m.group(1)}" not in cond_map:
+            open_stack.append(True)
+            continue
+        if s.startswith("#if") or s.startswith("#foreach"):
+            open_stack.append(False)
+            out.append(raw)
+        elif s == "#end":
+            if open_stack and open_stack.pop():
+                continue
+            out.append(raw)
+        else:
+            out.append(raw)
+    return "".join(out)
+
+
 def apply_cond_substitutions(vm_text: str, cond_map: dict[str, str]) -> str:
-    """Replace [[text]]$doc.condN with ${data.condN}; multi-pass for nesting.
+    """Replace [[$token]]$doc.<key> with ${data.<key>}; multi-pass for nesting.
 
     The plugin owns conditional text — it puts the resolved string (or "") into
-    renderingData under "condN". The template just outputs ${data.condN}.
+    renderingData under "<key>". The template just outputs ${data.<key>}.
 
-    Three phases:
-      0. Rewrite #if($doc.condN) guards → #if($data.condN). These come from
-         Leg 0's render-template blocks (a [[conditional]] containing a loop):
-         the content stays in the template and the plugin puts condN as a
-         Boolean, so only the guard token needs renaming.
-      1. Resolve [[...]]$doc.condN blocks innermost-first (repeated until stable).
-         Bare $doc.condN tokens are left untouched so outer blocks can still match
+    Four phases:
+      -1. Strip #if($doc.X) guard pairs whose key is NOT in the registry —
+         a [Name/] loop whose `when` row was left blank is unconditional.
+      0. Rewrite remaining #if($doc.X) guards → #if($data.X). These come from
+         Leg 0's [Name/] loop wrap (render: template rows): the content stays
+         in the template and the plugin puts X as a Boolean, so only the guard
+         token needs renaming.
+      1. Resolve [[...]]$doc.<key> blocks innermost-first (repeated until stable).
+         Bare $doc.<key> tokens are left untouched so outer blocks can still match
          on the next pass.
-      2. Replace any remaining bare $doc.condN tokens (e.g. inside a cond block's
+      2. Replace any remaining bare $doc.<key> tokens (e.g. inside a cond block's
          source_text that the annotator left un-bracketed).
     """
+    # Phase -1: unconditional loop guards (no registry entry) are stripped
+    vm_text = _strip_unregistered_guards(vm_text, cond_map)
     # Phase 0: template-rendered conditional guards
     vm_text = re.sub(r"#if\(\$doc\.([A-Za-z_]\w*)\)", r"#if($data.\1)", vm_text)
     # Phase 1: peel [[...]]$doc.<key> from innermost outward
@@ -303,13 +337,16 @@ def build_substitution_map(suggested: dict) -> dict[str, str]:
             if not fph:
                 continue
             val = _resolve(fld)
-            # A field reached THROUGH an optional coverage (e.g.
-            # `$item.AccidentalDamage.data.labourCovered`, AccidentalDamage =
-            # zero_or_one) navigates a nullable intermediate. A quiet ref
-            # (`$!{...}`) doesn't help — the strict renderer aborts the moment it
-            # calls `.data` on a null coverage (error 216041). Guard the whole
-            # reference on the coverage's presence so absent coverages render empty.
-            cov_vel = _optional_coverage_prefix(
+            # A field reached THROUGH a coverage (e.g.
+            # `$item.AccidentalDamage.data.labourCovered`) navigates a nullable
+            # intermediate. A quiet ref (`$!{...}`) doesn't help — the strict
+            # renderer aborts the moment it calls `.data` on a null coverage
+            # (error 216041). Guard the whole reference on the coverage's
+            # presence so absent coverages render empty. Every coverage hop is
+            # guarded regardless of quantifier: live tenant data can lack an
+            # `exactly_one_auto` coverage (unrated quote, config drift), and a
+            # redundant #if on a present coverage costs nothing.
+            cov_vel = _coverage_prefix(
                 _clean_data_source(fld.get("data_source") or ""), coverages)
             if val and cov_vel:
                 val = f"#if({cov_vel}){val}#end"
@@ -317,19 +354,14 @@ def build_substitution_map(suggested: dict) -> dict[str, str]:
     return smap
 
 
-def _optional_coverage_prefix(ds: str, coverages: list[dict]) -> str | None:
-    """If ``ds`` traverses an OPTIONAL coverage (``zero_or_one``/``zero_or_more``,
-    i.e. quantifier ``?``/``*``), return that coverage's velocity prefix (the
-    nullable intermediate to guard); else None. ``exactly_one`` coverages (``!``)
-    are always present and need no guard."""
+def _coverage_prefix(ds: str, coverages: list[dict]) -> str | None:
+    """If ``ds`` traverses a coverage (any quantifier), return that coverage's
+    velocity prefix (the nullable intermediate to guard); else None."""
     for cov in coverages:
         vel = (cov.get("velocity") or "").strip()
         if not vel:
             continue
-        card = (cov.get("cardinality") or "").strip()
-        quant = (cov.get("quantifier") or "").strip()
-        optional = card in {"zero_or_one", "zero_or_more"} or quant in {"?", "*"}
-        if optional and (ds == vel or ds.startswith(vel + ".")):
+        if ds == vel or ds.startswith(vel + "."):
             return vel
     return None
 
@@ -475,6 +507,36 @@ def process_vm(
 
 
 # ---------------------------------------------------------------------------
+# Font scan — flag fonts the tenant must carry as customFonts resources.
+# Socotra falls back to standard fonts SILENTLY when a font is missing
+# (docs: features/documents/dynamic-documents "Custom Fonts"), so the only
+# warning the author ever gets is this one.
+# ---------------------------------------------------------------------------
+
+# PDF base families + CSS generics; anything else needs a customFonts upload.
+_STANDARD_FONTS = {
+    "arial", "helvetica", "times", "times new roman", "courier", "courier new",
+    "serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui",
+}
+
+_FONT_FAMILY_RE = re.compile(r"font-family\s*:\s*([^;{}<>]+)", re.IGNORECASE)
+
+
+def custom_fonts_needed(vm_text: str) -> list[str]:
+    """Return non-standard first-choice font families used in the template.
+
+    Only the first family of each font-family stack is checked — that is the
+    font the author intends; the rest are fallbacks.
+    """
+    found: dict[str, str] = {}  # lower → display form
+    for m in _FONT_FAMILY_RE.finditer(vm_text):
+        first = m.group(1).split(",")[0].strip().strip("'\"").strip()
+        if first and first.lower() not in _STANDARD_FONTS:
+            found.setdefault(first.lower(), first)
+    return sorted(found.values(), key=str.lower)
+
+
+# ---------------------------------------------------------------------------
 # Report writer
 # ---------------------------------------------------------------------------
 
@@ -542,8 +604,10 @@ def write_report(
     generated_at: str,
     repo_root: Path,
     cond_blocks: list[dict] | None = None,
+    custom_fonts: list[str] | None = None,
 ) -> None:
     delegated_vars = delegated_vars or []
+    custom_fonts = custom_fonts or []
     cond_blocks = cond_blocks or []
     cond_count = len(cond_blocks)
     total_all = (
@@ -587,6 +651,24 @@ def write_report(
         "---",
         "",
     ]
+
+    # ---- §0a Custom fonts ------------------------------------------------------
+    if custom_fonts:
+        lines += [
+            f"## ⚠ Custom fonts required ({len(custom_fonts)})",
+            "",
+            "The template styles text with fonts that are not PDF-standard. Socotra",
+            "falls back to standard fonts **silently** when a font is missing — the PDF",
+            "renders, just off-brand. Before rendering on a tenant, for each font:",
+            "",
+            "1. Add its name to the top-level configuration `customFonts` array",
+            "2. Add it to this document's `DocumentConfig` `customFonts` array and deploy",
+            "3. Upload the font file (TTF/OTF, one font per file) via the `addFont`",
+            "   endpoint and assign it to a resource group",
+            "",
+        ]
+        lines += [f"- `{f}`" for f in custom_fonts]
+        lines += ["", "---", ""]
 
     # ---- §0 Conditional blocks -----------------------------------------------
     if cond_count > 0:
@@ -830,10 +912,21 @@ def main() -> int:
     foreach_map = build_foreach_map(suggested)
     cond_registry_path = out_dir / f"{stem}.conditional-registry.yaml"
     cond_blocks = _load_cond_registry(cond_registry_path)
-    cond_map = build_cond_map(cond_blocks)
+    # In-loop value regions render their condition in the template (per-item —
+    # the plugin can only compute doc-scoped values), so they are excluded from
+    # the $doc→$data cond map and their guard is compiled to Velocity below.
+    loop_scoped_blocks = [b for b in cond_blocks if b.get("loop_scope")]
+    cond_map = build_cond_map([b for b in cond_blocks if not b.get("loop_scope")])
 
     # --- Process -------------------------------------------------------------
     final_vm = process_vm(vm_text, smap, foreach_map)
+    for b in loop_scoped_blocks:
+        variants = b.get("variants") or []
+        when = (variants[0] or {}).get("when") if variants else None
+        if not when:
+            continue  # blank-when regions never reach the registry
+        vel = condition_to_velocity(ast_from_dict(dict(when)))
+        final_vm = final_vm.replace(f"#if($doc.{block_key(b)})", f"#if({vel})")
     final_vm = apply_cond_substitutions(final_vm, cond_map)
 
     # --- Categorise entries ---------------------------------------------------
@@ -872,6 +965,7 @@ def main() -> int:
         generated_at=generated_at,
         repo_root=repo_root,
         cond_blocks=cond_blocks,
+        custom_fonts=custom_fonts_needed(final_vm),
     )
 
     print(f"Wrote {out_vm_path}")

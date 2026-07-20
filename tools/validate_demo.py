@@ -28,11 +28,12 @@ from pathlib import Path
 
 import yaml
 
-MARKER = re.compile(r"(?<!\$)\{[+*$]?([A-Za-z0-9_.]+)\}")   # {leaf}, not ${resolved}
+MARKER = re.compile(r"(?<!\$)(?<!\$!)\{[+*$]?([A-Za-z0-9_.]+)\}")   # {leaf}, not ${resolved}/$!{resolved}
 BLOCK = re.compile(r"\[\[(.+?)\]\]", re.S)
-LOOP = re.compile(r"\[/?[A-Za-z0-9_]+\]")
+LOOP = re.compile(r"\[/?[A-Za-z0-9_]+[/?]?\]")  # [Item/] / [Name?] openers, [/Item] closer (+ legacy [Item])
 # Entity keys the plugin .put()s — every resolved field must sit under one.
-ENTITY_KEYS = ("quote", "segment", "policy", "account", "pricing", "charges", "termCharges")
+# "coverages" = the plugin-built [Coverage/] list key (the generated plugin puts it).
+ENTITY_KEYS = ("quote", "segment", "policy", "account", "pricing", "charges", "termCharges", "coverages")
 
 
 def _doc_lines(path: Path):
@@ -82,6 +83,8 @@ def main():
         sys.exit(1)
     vm = vm_path.read_text()
     vm_flat = re.sub(r"\s+", " ", vm)
+    # prose split across styling spans (e.g. "[</span>Plan A") still counts
+    vm_text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", vm))
     reg = {}
     if reg_path.is_file():
         reg = {b["key"]: b for b in (yaml.safe_load(reg_path.read_text()) or [])}
@@ -100,6 +103,13 @@ def main():
         checks += 1
         if bad in vm:
             fails.append(f"unresolved {bad!r} left in template")
+    # any surviving loop opener [Name/], region opener [Name?], or closer
+    # [/Name] means Leg 0 never consumed the marker (bare [Name] is excluded —
+    # it can be prose brackets)
+    checks += 1
+    leftover = re.findall(r"(?<!\[)\[(?:[A-Za-z_]\w*[/?]|/[A-Za-z_]\w*)\](?!\])", vm)
+    if leftover:
+        fails.append(f"unconsumed loop/region marker(s) left in template: {sorted(set(leftover))}")
     checks += 1
     if MARKER.search(vm):
         fails.append(f"bare {{leaf}} markers left in template: {MARKER.findall(vm)}")
@@ -151,7 +161,7 @@ def main():
                 if len(chunk) < 4:
                     continue
                 checks += 1
-                if chunk not in vm_flat:
+                if chunk not in vm_flat and chunk not in vm_text:
                     fails.append(f"doc prose missing from template: {chunk!r}")
     elif doc:
         print(f"(note: {doc.name} is not .docx — skipped prose-coverage; shape + marker checks only)")

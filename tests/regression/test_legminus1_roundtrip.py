@@ -39,7 +39,7 @@ def _build_fixture(path: Path) -> None:
     d.add_paragraph("Dear {firstName} {lastName},")
     d.add_paragraph("Policy {policyNumber}. Contact {email}.")
     d.add_paragraph("Reference: {bogusLeaf}.")
-    d.add_paragraph("[Item]")
+    d.add_paragraph("[Item/]")
     d.add_paragraph("Type {itemTypeCode}, price {purchasePrice}, cover {premium}.")
     d.add_paragraph("[/Item]")
     d.save(str(path))
@@ -117,7 +117,7 @@ class TestLegMinus1RoundTrip(unittest.TestCase):
         self.assertIn("{item.data.purchasePrice}", text)
         self.assertIn("{item.AccidentalDamage.charges.premium.amount}", text)
         self.assertIn("{account.data.email}", text)
-        self.assertIn("[Item]", text)  # loop markers preserved
+        self.assertIn("[Item/]", text)  # loop markers preserved
         self.assertIn("[/Item]", text)
 
         # Audit records suggested-vs-override provenance.

@@ -6,13 +6,13 @@ Usage:
     python3 scripts/generate_test_fixtures.py [--out-dir tests/pipeline/fixtures]
 
 Each document uses real registry accessor paths in {field} tokens and
-[[conditional]] blocks so Leg 0 + Leg 2 produce high-confidence matches.
+[[$token]] conditional blocks so Leg 0 + Leg 2 produce high-confidence matches.
 
 Documents:
     TestQuoteSummary(quote).docx      — quote-level fields, 2 conditionals
     TestItemCert(segment).docx        — item/coverage fields, 3 conditionals
     TestRenewalNotice(segment).docx   — policy renewal fields, 3 conditionals
-    TestItemsSchedule(segment).docx   — [Item] loop over the items array, 1 conditional
+    TestItemsSchedule(segment).docx   — [Item/] loop over the items array, 1 conditional
 """
 from __future__ import annotations
 
@@ -77,13 +77,9 @@ def _build_quote_summary(doc):
     _heading(doc, "Coverage", level=2)
     _para(doc, "Breakdown Cover is included as standard in your plan.")
     _para(doc, "")
-    _para(doc,
-          "[[Accidental Damage cover is included in your plan. "
-          "Your item is protected against unexpected physical damage.]]")
+    _para(doc, "[[$accidentalDamageNote]]")
     _para(doc, "")
-    _para(doc,
-          "[[Theft cover is included in your plan. "
-          "You are protected if your item is lost or stolen.]]")
+    _para(doc, "[[$theftCoverNote]]")
     _para(doc, "")
 
     _heading(doc, "Premium Summary", level=2)
@@ -130,21 +126,15 @@ def _build_item_cert(doc):
     _para(doc, "")
 
     _heading(doc, "Item Status at Inception", level=2)
-    _para(doc,
-          "[[This item was confirmed to be within the manufacturer warranty period "
-          "at the date of policy inception.]]")
+    _para(doc, "[[$warrantyStatusNote]]")
     _para(doc, "")
-    _para(doc,
-          "[[This item was confirmed to be in full working order "
-          "at the date of policy inception.]]")
+    _para(doc, "[[$workingOrderNote]]")
     _para(doc, "")
 
     _heading(doc, "Coverage Summary", level=2)
     _para(doc, "Breakdown Cover is included as standard. Labour and parts are covered.")
     _para(doc, "")
-    _para(doc,
-          "[[Accidental Damage Cover applies to this policy. "
-          "Your item is protected against accidental physical damage.]]")
+    _para(doc, "[[$accidentalDamageNote]]")
     _para(doc, "")
 
     _para(doc, "ZenCover Limited")
@@ -181,19 +171,13 @@ def _build_renewal_notice(doc):
     _para(doc, "")
 
     _heading(doc, "Discounts and Adjustments", level=2)
-    _para(doc,
-          "[[A loyalty discount of {policy.data.discountAmount} has been applied "
-          "to your renewal premium (discount type: {policy.data.discountType}).]]")
+    _para(doc, "[[$loyaltyDiscountNote]]")
     _para(doc, "")
 
     _heading(doc, "Your Rights", level=2)
-    _para(doc,
-          "[[A cooling-off period applies to this renewal. "
-          "You have the right to cancel within the cooling-off window.]]")
+    _para(doc, "[[$coolingOffNote]]")
     _para(doc, "")
-    _para(doc,
-          "[[A grace period may apply if your renewal payment is not received "
-          "by the due date. Please contact us for details.]]")
+    _para(doc, "[[$gracePeriodNote]]")
     _para(doc, "")
 
     _para(doc, "Thank you for choosing ZenCover.")
@@ -202,7 +186,7 @@ def _build_renewal_notice(doc):
 
 
 # ---------------------------------------------------------------------------
-# Document 4: TestItemsSchedule(segment) — [Item] loop over the items array
+# Document 4: TestItemsSchedule(segment) — [Item/] loop over the items array
 # ---------------------------------------------------------------------------
 
 def _build_items_schedule(doc):
@@ -214,14 +198,14 @@ def _build_items_schedule(doc):
     _para(doc, "")
 
     _heading(doc, "Your Covered Items", level=2)
-    # [Item]/[/Item] rows mark the repeating section — Leg 0 turns them into
+    # [Item/]/[/Item] rows mark the repeating section — Leg 0 turns them into
     # a #foreach scaffold so each item renders one row; the header stays once.
     tbl = doc.add_table(rows=1, cols=4)
     tbl.rows[0].cells[0].text = "Item Type"
     tbl.rows[0].cells[1].text = "Purchase Date"
     tbl.rows[0].cells[2].text = "Purchase Price"
     tbl.rows[0].cells[3].text = "Serial Number"
-    tbl.add_row().cells[0].text = "[Item]"
+    tbl.add_row().cells[0].text = "[Item/]"
     row = tbl.add_row()
     row.cells[0].text = "{item.data.itemTypeCode}"
     row.cells[1].text = "{item.data.purchaseDate}"
@@ -233,16 +217,15 @@ def _build_items_schedule(doc):
     _heading(doc, "Coverage Notes", level=2)
     _para(doc, "Breakdown Cover is included as standard for every listed item.")
     _para(doc, "")
-    _para(doc,
-          "[[Accidental Damage Cover applies to the items listed above. "
-          "Each item is protected against unexpected physical damage.]]")
+    _para(doc, "[[$accidentalDamageNote]]")
     _para(doc, "")
 
     _para(doc, "ZenCover Limited")
 
 
 # ---------------------------------------------------------------------------
-# Document 5: TestGiftSchedule(segment) — [Item] loop inside a [[conditional]]
+# Document 5: TestGiftSchedule(segment) — conditional loop section via the
+# loop's when row
 # ---------------------------------------------------------------------------
 
 def _build_gift_schedule(doc):
@@ -251,17 +234,17 @@ def _build_gift_schedule(doc):
     _para(doc, "Dear {account.data.firstName} {account.data.lastName},")
     _para(doc, "")
 
-    # The whole gift section (including the repeating item list) only appears
-    # when the condition holds — Leg 0 flips this block to render: template
-    # (#if guard stays in the .vm; the plugin puts the condition as a Boolean).
-    _para(doc, "[[The following promotional gift items are included with your policy:")
-    _para(doc, "[Item]")
+    # The loop itself carries its own conditionality: the customer's seed fills
+    # the Item row's `when` in the variants.csv, so Leg 0/2/3 wrap the whole
+    # #foreach in #if($data.Item) — no wrapping [[...]] block needed any more.
+    _para(doc, "The following promotional gift items are included with your policy:")
+    _para(doc, "[Item/]")
     _para(doc, "Gift: {item.data.itemTypeCode} valued at {item.data.purchasePrice}")
     _para(doc, "[/Item]")
-    _para(doc, "Gift items are subject to availability.]]")
+    _para(doc, "Gift items are subject to availability.")
     _para(doc, "")
 
-    _para(doc, "[[Theft cover is included in your plan.]]")
+    _para(doc, "[[$theftCoverNote]]")
     _para(doc, "")
     _para(doc, "ZenCover Limited")
 
@@ -312,14 +295,16 @@ def _build_state_disclosure(doc):
 # ---------------------------------------------------------------------------
 
 def _build_variant_then_binary(doc):
-    """Regression fixture: a [[$token]] variant block placed BEFORE a binary block.
+    """Regression fixture: a [[$token]] variant block placed BEFORE a second,
+    plain tokenised block.
 
     The old conditional-form parser's binary-block regex used a DOTALL non-greedy
     body capture that ran *past* the variant block (which carries no Condition:
-    line) and stole the following binary block's condition — producing two
-    `id: 1` entries and dropping the binary block. Order is load-bearing: the
-    variant MUST precede the binary to reproduce it. Keep both blocks here so the
-    suite fails if that parse ever regresses.
+    line) and stole the following block's condition — producing two `id: 1`
+    entries and dropping the second block. Order is load-bearing: the first
+    variant MUST precede the second block to reproduce it. Both blocks are now
+    named [[$token]] blocks (bare [[text]] is a hard error) — the suite still
+    fails if that parse ever regresses.
     """
     _heading(doc, "Variant Then Binary Notice")
 
@@ -340,11 +325,9 @@ def _build_variant_then_binary(doc):
     # Variant block FIRST (Block 1) …
     _para(doc, "[[$disclosureClause]]")
     _para(doc, "")
-    # … binary block SECOND (Block 2) — its condition was the one the old parser
-    # stole into the phantom block.
-    _para(doc,
-          "[[A cooling-off period applies to this policy. "
-          "You have the right to cancel within the cooling-off window.]]")
+    # … second tokenised block SECOND (Block 2) — its condition was the one the
+    # old parser stole into the phantom block.
+    _para(doc, "[[$coolingOffNote]]")
     _para(doc, "")
 
     _para(doc, "Thank you for choosing ZenCover.")
@@ -434,6 +417,80 @@ def _build_nested_variant_label(doc):
 
 
 # ---------------------------------------------------------------------------
+# Document 10: TestCoverageGrid(segment) — the "giant table" pattern: one table
+# where whole rows appear per coverage. Exercises [Name?] conditional regions
+# in all four shapes (in-loop coverage presence / in-loop VALUE condition
+# [BreakdownLabourRow?] / doc-level coverage presence / doc-level generic)
+# plus coverage-hop dotted fields (always-guarded by Leg 3).
+# ---------------------------------------------------------------------------
+
+def _build_coverage_grid(doc):
+    _heading(doc, "Your Cover At A Glance")
+    _para(doc, "Dear {account.data.firstName} {account.data.lastName},")
+    _para(doc, "")
+    tbl = doc.add_table(rows=1, cols=3)
+    tbl.rows[0].cells[0].text = "Section"
+    tbl.rows[0].cells[1].text = "Labour"
+    tbl.rows[0].cells[2].text = "Parts"
+    tbl.add_row().cells[0].text = "[Item/]"
+    row = tbl.add_row()
+    row.cells[0].text = "Item: {item.data.itemTypeCode}"
+    row.cells[1].text = "{item.data.purchaseDate}"
+    row.cells[2].text = "{item.data.purchasePrice}"
+    tbl.add_row().cells[0].text = "[AccidentalDamage?]"
+    row = tbl.add_row()
+    row.cells[0].text = "Accidental Damage"
+    row.cells[1].text = "{item.AccidentalDamage.data.labourCovered}"
+    row.cells[2].text = "{item.AccidentalDamage.data.partsCovered}"
+    tbl.add_row().cells[0].text = "[/AccidentalDamage]"
+    row = tbl.add_row()
+    row.cells[0].text = "Breakdown"
+    row.cells[1].text = "{item.Breakdown.data.labourCovered}"
+    row.cells[2].text = "{item.Breakdown.data.partsCovered}"
+    tbl.add_row().cells[0].text = "[BreakdownLabourRow?]"
+    row = tbl.add_row()
+    row.cells[0].text = "Breakdown labour is covered for this item."
+    tbl.add_row().cells[0].text = "[/BreakdownLabourRow]"
+    tbl.add_row().cells[0].text = "[/Item]"
+    tbl.add_row().cells[0].text = "[Theft?]"
+    row = tbl.add_row()
+    row.cells[0].text = "Theft cover is included on at least one of your items."
+    tbl.add_row().cells[0].text = "[/Theft]"
+    tbl.add_row().cells[0].text = "[CoolingOffRow?]"
+    row = tbl.add_row()
+    row.cells[0].text = "You may cancel within your cooling-off period."
+    tbl.add_row().cells[0].text = "[/CoolingOffRow]"
+    _para(doc, "")
+    _para(doc, "ZenCover Limited")
+
+
+# ---------------------------------------------------------------------------
+# Document 11: TestCoverageSchedule(segment) — [Coverage/] plugin-list loop:
+# one table row per (item x coverage present), iterated over the plugin-built
+# $data.coverages list (registry iterable kind: plugin_list).
+# ---------------------------------------------------------------------------
+
+def _build_coverage_schedule(doc):
+    _heading(doc, "Coverage Schedule")
+    _para(doc, "Dear {account.data.firstName} {account.data.lastName},")
+    _para(doc, "")
+    _para(doc, "The coverages included in your ZenCover policy are listed below.")
+    _para(doc, "")
+    tbl = doc.add_table(rows=1, cols=3)
+    tbl.rows[0].cells[0].text = "Item"
+    tbl.rows[0].cells[1].text = "Coverage"
+    tbl.rows[0].cells[2].text = "Labour Covered"
+    tbl.add_row().cells[0].text = "[Coverage/]"
+    row = tbl.add_row()
+    row.cells[0].text = "{coverage.itemTypeCode}"
+    row.cells[1].text = "{coverage.displayName}"
+    row.cells[2].text = "{coverage.labourCovered}"
+    tbl.add_row().cells[0].text = "[/Coverage]"
+    _para(doc, "")
+    _para(doc, "ZenCover Limited")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -447,6 +504,8 @@ FIXTURES = [
     ("TestVariantThenBinary(segment).docx", _build_variant_then_binary),
     ("TestVariantBareLeaf(segment).docx", _build_variant_bare_leaf),
     ("TestNestedVariantLabel(segment).docx", _build_nested_variant_label),
+    ("TestCoverageGrid(segment).docx", _build_coverage_grid),
+    ("TestCoverageSchedule(segment).docx", _build_coverage_schedule),
 ]
 
 

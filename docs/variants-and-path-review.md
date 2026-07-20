@@ -22,9 +22,13 @@ They split the document's dynamic parts in two: **path-review = the always-there
 (`Dear {policyHolderName}, …`). Columns: **`field`** (the bare marker), **`suggested`**
 (registry guess), **`final`** (the accessor to actually use — the human confirms or types it).
 
-**`variants.csv`** — one row per conditional block the author marked with `[[…]]`.
-Columns: **`placeholder`** (the block's name), **`when`** (the show/hide condition), **`text`**
-(the wording that prints when the `when` is true).
+**`variants.csv`** — one row group per conditional block: either a named `[[$token]]`
+block the author wrote in the body, or a `[Name/]…[/Name]` loop section. Columns:
+**`placeholder`** (the block's name), **`when`** (the show/hide condition), **`text`**
+(the wording that prints when the `when` is true). A `[[$token]]` block gets a
+conditioned row + a default row (more rows for an N-way pick); a `[Name/]` loop gets a
+single `when`-only row with no `text` — the section's wording stays in the document, and
+a blank `when` just means the loop always shows.
 
 ---
 
@@ -33,7 +37,8 @@ Columns: **`placeholder`** (the block's name), **`when`** (the show/hide conditi
 Two ways:
 
 1. **They divide the document.** Anything the author wrote as a plain `{field}` becomes a
-   path-review row; anything wrapped as a `[[block]]` becomes a variants row. Neither file
+   path-review row; anything wrapped as a `[[$token]]` block or a `[Name/]` loop becomes a
+   variants row. Neither file
    alone is the whole picture — path-review without variants drops the conditional sections,
    variants without path-review leaves the body blanks unresolved.
 
@@ -43,6 +48,38 @@ Two ways:
    `policyHolderState` is printed in the address block (a path-review field) *and* it decides
    which state-specific clause prints (a variants `when`). If path-review resolves it one way
    and a `when` references it another, the document is internally inconsistent.
+
+---
+
+## The edge case: a field that appears *only* inside a block
+
+Sometimes a data field is written **only** inside a block's `text` and nowhere in the
+plain body — e.g. `{coolingOffPeriod}` typed into a `variants.csv` `text` cell. It still
+prints, so it still needs an accessor, so it still needs a `path-review.csv` row. But
+Leg -1's first pass only scans the plain body — it never sees a leaf that lives inside a
+block, and a plain Leg -1 re-run will **drop** the row for it.
+
+To pull those variant-text leaves into `path-review.csv` (with a registry suggestion),
+re-run Leg -1 pointed at the filled `variants.csv` — this is **pass 2**:
+
+```
+python3 -m velocity_converter.legminus1_resolve_paths \
+  --input <doc> --registry registry/path-registry.yaml \
+  --output-dir workspace/output \
+  --variants-csv workspace/action-needed/<stem>.variants.csv
+```
+
+Pass 2 *appends* only the net-new (variant-text) leaves onto the existing CSV. **This is
+where the suggester earns its keep early:** it maps a hand-added leaf to the config
+accessor for you instead of leaving a blank to fill from scratch — so even a run that
+started `suggestions=off` benefits from flipping predictive for these.
+
+> ⚠️ **The suggested accessor is not the final render path.** Leg -1 (and the registry)
+> emit the root-relative form — `coolingOffPeriod` shows as `policy.data.coolingOffPeriod`
+> and the registry stores `$data.data.coolingOffPeriod`. A bare `$data.data.<field>` does
+> **not** resolve in renderingData; the entity-key splice (→ `$data.segment.data.<field>`
+> for a segment custom field) happens in Leg 2. The path-review value is a pre-splice
+> pick, not the template path.
 
 ---
 

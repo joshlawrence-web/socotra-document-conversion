@@ -49,7 +49,7 @@ def _block(scope="policy", default="Default text.", variants=None):
 class TestVariantCodegen(unittest.TestCase):
     def test_if_elseif_chain_and_default(self):
         java = render_conditional_puts([_block()], scope="policy", field_lookup=FL)
-        self.assertIn('String stateClause = "";', java)
+        self.assertIn('String stateClause = " ";', java)
         self.assertIn("if (", java)
         self.assertIn("} else if (", java)
         self.assertIn("} else {", java)
@@ -62,7 +62,7 @@ class TestVariantCodegen(unittest.TestCase):
         # unconditionally — no if-chain and no dangling `} else {`.
         b = _block(scope="", variants=[], default="Always shown.")
         java = render_conditional_puts([b], scope="quote", field_lookup=FL)
-        self.assertIn('String stateClause = "";', java)
+        self.assertIn('String stateClause = " ";', java)
         self.assertIn('stateClause = "Always shown.";', java)
         self.assertNotIn("} else {", java)
         self.assertNotIn("if (", java)
@@ -101,7 +101,7 @@ class TestVariantCodegen(unittest.TestCase):
 
     def test_scope_blocked_empty_put(self):
         java = render_conditional_puts([_block(scope="policy")], scope="quote", field_lookup=FL)
-        self.assertIn('renderingData.put("stateClause", "");', java)
+        self.assertIn('renderingData.put("stateClause", " ");', java)
         self.assertNotIn("else if", java)
 
     def test_template_block_puts_boolean(self):
@@ -144,7 +144,7 @@ class TestBinaryFieldRegression(unittest.TestCase):
         }
         java = render_conditional_puts([b], scope="quote", field_lookup=FL)
         # Binary block: still keyed cond1, still concatenates the accessor.
-        self.assertIn('String cond1 = "";', java)
+        self.assertIn('String cond1 = " ";', java)
         self.assertIn('renderingData.put("cond1", cond1);', java)
         self.assertIn('" + Objects.toString(quote.quoteNumber(), "") + "', java)
         self.assertNotIn("$TBD_", java)
