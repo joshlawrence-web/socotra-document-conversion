@@ -105,6 +105,14 @@ then `--parse-variants-csv`, then Leg 2+3+4.
 
 ---
 
+## Guided authoring (customer-facing) lives elsewhere
+
+The Word → validated template **guided experience** is the sibling Claude plugin /
+repo [`socotra-template-authoring`](https://github.com/joshlawrence-web/socotra-template-authoring)
+(`socotra-template-authoring@socotra-template`). Do not recreate `AGENTS.md` or
+`template-patterns` here — that collapses the mechanical gap. This repo is the
+engine + maintainer docs.
+
 ## Config-agnostic, template-only mode (no registry, no plugin)
 
 When the product config doesn't exist yet — or the user says "no config", "just the
@@ -115,6 +123,8 @@ manual `data_source` mapping (the agent plays the registry, using the renderingD
 table), Leg 3, and a shape-band-only done-gate. Conditionals still promote to
 `${data.<token>}` + the conditional-registry, so Leg 4 can be run later, unchanged,
 once the user *willingly* provides config — never push config/plugin on them early.
+Template-lite is **maintainer / advanced** (stays in this fat repo), not part of
+the thin public authoring plugin.
 
 ---
 
