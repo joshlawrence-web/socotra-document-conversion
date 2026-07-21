@@ -11,7 +11,7 @@ the patterns beyond the basic cheat-sheet. Route by goal:
 
 | User goal | Pattern | Section |
 |---|---|---|
-| "a table row per covered item" | `[Item/]` … `[/Item]` loop — **markers as rows *inside* the table, not standalone around it, or the header repeats per item** | (basic — cheat-sheet) |
+| "a table row per covered item" | `[Item/]` … `[/Item]` loop — markers as rows *inside* the table (AGENTS.md "Loop inside a table"), never standalone around it | (basic — cheat-sheet) |
 | "a row per coverage, with its limit/terms" | `[Coverage/]` plugin-list loop | §1 |
 | "show these rows only if the coverage is present" | `[Name?]` … `[/Name]` region | §2 |
 | "different paragraph per state / N options" | N-way `[[$token]]` block | §3 |

@@ -45,8 +45,29 @@ formatting mid-token.
 | `{leaf}` | a data field, by bare name — the pipeline resolves the full accessor path | `Dear {firstName},` |
 | `{$leaf}` / `{+leaf}` / `{*leaf}` | same, with occurrence: optional / one-or-more / zero-or-more | `{$middleName}` |
 | `[[$token]]` | a **named** conditional text block — the wording and its condition live in `variants.csv`, not the doc | `[[$discountNote]]` |
-| `[Item/]` … `[/Item]` | a repeating region (loop). Opener has a **trailing slash**; name must match a registry iterable. **For a table: put the markers as their own rows *inside* the table (marker row → data row → marker row) — that repeats just the data row, header stays once. Markers as standalone paragraphs *around* a whole table wrap the entire table, so the header repeats per item — and the done-gate won't catch it (it checks data, not layout), so eyeball the generated table.** | schedule tables |
+| `[Item/]` … `[/Item]` | a repeating region (loop). Opener has a **trailing slash**; name must match a registry iterable. **For a table, place the markers as rows inside it — see below.** | schedule tables |
 | `[Name?]` … `[/Name]` | rows/paragraphs that render only under a condition (e.g. coverage present) — advanced; invoke the **template-patterns** skill | coverage grids |
+
+### Loop inside a table — the exact layout (do this, don't improvise)
+
+The #1 authoring mistake: putting `[Item/]` / `[/Item]` as standalone paragraphs
+*around* a whole table. That wraps the **entire** table — header included — so the
+header repeats once per item (three gadgets → three stacked mini-tables). **The
+done-gate does NOT catch this** — it checks data, not visual layout.
+
+To repeat only the data row and keep the header once, the markers must be their
+**own rows inside the same table**:
+
+| row | cell 1 | cell 2 |
+|---|---|---|
+| header (stays once) | `Gadget` | `Purchased` |
+| marker row | `[Item/]` | *(empty)* |
+| data row (repeats) | `{itemTypeCode}` | `{purchaseDate}` |
+| marker row | `[/Item]` | *(empty)* |
+
+(Standalone-paragraph markers are correct only when the repeating content is
+**not** a table — e.g. a repeating paragraph.) After finalize, always eyeball the
+generated table region to confirm the header sits **outside** the `#foreach`.
 
 **Beyond the cheat-sheet — invoke the `template-patterns` skill** whenever the
 user's goal is: a row per *coverage* (`[Coverage/]` — the one place fields are
