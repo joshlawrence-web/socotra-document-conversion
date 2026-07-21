@@ -93,6 +93,17 @@ Rules to relay while the user drafts:
 
 To see what fields exist: `python3 -m velocity_converter.list_paths`
 
+### Common situations — recognise these, here's the move
+
+Judgment calls that recur. When a conversation smells like one of these, act on it
+rather than pushing ahead:
+
+| The user… | The move |
+|---|---|
+| wants text to **change based on data you're not sure is stored** (tenure, "customer since", loyalty tier, "how many claims") | Don't invent a field. Check `list_paths` / ask what they actually store. If it genuinely isn't there, **say so and recommend shipping without it** — adding it is a product-config change, outside this document flow. Park it honestly; don't fake a field to make the branch work. |
+| needs a **premium / charge amount** in the document | The guided flow can't resolve charge fields (they stay `$TBD_…`). It's a [CLAUDE.md](CLAUDE.md) escape-hatch job — say so and switch, or drop the field. Never hand-edit artifacts to force a PASS. |
+| is happy, gate says **PASS**, but the **rendered layout could look wrong** (repeated header, mis-split table) | The done-gate checks data + renderingData shape, **not visual layout**. Read back the generated structure yourself; if it looks off, fix it in the docx and re-run. A PASS is necessary, not sufficient, for "looks right." |
+
 ## The stages
 
 Work out which stage you're in (see "Resuming" below), do that stage, stop.
