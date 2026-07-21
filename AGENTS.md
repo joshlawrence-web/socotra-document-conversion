@@ -45,7 +45,7 @@ formatting mid-token.
 | `{leaf}` | a data field, by bare name — the pipeline resolves the full accessor path | `Dear {firstName},` |
 | `{$leaf}` / `{+leaf}` / `{*leaf}` | same, with occurrence: optional / one-or-more / zero-or-more | `{$middleName}` |
 | `[[$token]]` | a **named** conditional text block — the wording and its condition live in `variants.csv`, not the doc | `[[$discountNote]]` |
-| `[Item/]` … `[/Item]` | a repeating region (loop). Opener has a **trailing slash**; name must match a registry iterable. As table rows, wraps just the data row — header stays once | schedule tables |
+| `[Item/]` … `[/Item]` | a repeating region (loop). Opener has a **trailing slash**; name must match a registry iterable. **For a table: put the markers as their own rows *inside* the table (marker row → data row → marker row) — that repeats just the data row, header stays once. Markers as standalone paragraphs *around* a whole table wrap the entire table, so the header repeats per item — and the done-gate won't catch it (it checks data, not layout), so eyeball the generated table.** | schedule tables |
 | `[Name?]` … `[/Name]` | rows/paragraphs that render only under a condition (e.g. coverage present) — advanced; invoke the **template-patterns** skill | coverage grids |
 
 **Beyond the cheat-sheet — invoke the `template-patterns` skill** whenever the
