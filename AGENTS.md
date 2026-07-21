@@ -45,8 +45,29 @@ formatting mid-token.
 | `{leaf}` | a data field, by bare name — the pipeline resolves the full accessor path | `Dear {firstName},` |
 | `{$leaf}` / `{+leaf}` / `{*leaf}` | same, with occurrence: optional / one-or-more / zero-or-more | `{$middleName}` |
 | `[[$token]]` | a **named** conditional text block — the wording and its condition live in `variants.csv`, not the doc | `[[$discountNote]]` |
-| `[Item/]` … `[/Item]` | a repeating region (loop). Opener has a **trailing slash**; name must match a registry iterable. As table rows, wraps just the data row — header stays once | schedule tables |
+| `[Item/]` … `[/Item]` | a repeating region (loop). Opener has a **trailing slash**; name must match a registry iterable. **For a table, place the markers as rows inside it — see below.** | schedule tables |
 | `[Name?]` … `[/Name]` | rows/paragraphs that render only under a condition (e.g. coverage present) — advanced; invoke the **template-patterns** skill | coverage grids |
+
+### Loop inside a table — the exact layout (do this, don't improvise)
+
+The #1 authoring mistake: putting `[Item/]` / `[/Item]` as standalone paragraphs
+*around* a whole table. That wraps the **entire** table — header included — so the
+header repeats once per item (three gadgets → three stacked mini-tables). **The
+done-gate does NOT catch this** — it checks data, not visual layout.
+
+To repeat only the data row and keep the header once, the markers must be their
+**own rows inside the same table**:
+
+| row | cell 1 | cell 2 |
+|---|---|---|
+| header (stays once) | `Gadget` | `Purchased` |
+| marker row | `[Item/]` | *(empty)* |
+| data row (repeats) | `{itemTypeCode}` | `{purchaseDate}` |
+| marker row | `[/Item]` | *(empty)* |
+
+(Standalone-paragraph markers are correct only when the repeating content is
+**not** a table — e.g. a repeating paragraph.) After finalize, always eyeball the
+generated table region to confirm the header sits **outside** the `#foreach`.
 
 **Beyond the cheat-sheet — invoke the `template-patterns` skill** whenever the
 user's goal is: a row per *coverage* (`[Coverage/]` — the one place fields are
@@ -71,6 +92,17 @@ Rules to relay while the user drafts:
   the pipeline suggests the full path and the user confirms it in a CSV.
 
 To see what fields exist: `python3 -m velocity_converter.list_paths`
+
+### Common situations — recognise these, here's the move
+
+Judgment calls that recur. When a conversation smells like one of these, act on it
+rather than pushing ahead:
+
+| The user… | The move |
+|---|---|
+| wants text to **change based on data you're not sure is stored** (tenure, "customer since", loyalty tier, "how many claims") | Don't invent a field. Check `list_paths` / ask what they actually store. If it genuinely isn't there, **say so and recommend shipping without it** — adding it is a product-config change, outside this document flow. Park it honestly; don't fake a field to make the branch work. |
+| needs a **premium / charge amount** in the document | The guided flow can't resolve charge fields (they stay `$TBD_…`). It's a [CLAUDE.md](CLAUDE.md) escape-hatch job — say so and switch, or drop the field. Never hand-edit artifacts to force a PASS. |
+| is happy, gate says **PASS**, but the **rendered layout could look wrong** (repeated header, mis-split table) | The done-gate checks data + renderingData shape, **not visual layout**. Read back the generated structure yourself; if it looks off, fix it in the docx and re-run. A PASS is necessary, not sufficient, for "looks right." |
 
 ## The stages
 
