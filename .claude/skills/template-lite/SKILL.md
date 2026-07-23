@@ -66,7 +66,22 @@ config — never push them toward it), and validation is the **shape band only**
    | (quote) | system | `$data.quote.<f>` |
    | (quote) | custom | `$data.quote.data.<f>` |
    | any | account | `$data.account.data.<f>` |
-   | (segment) | items loop | `$data.segment.items`, fields `$item.data.<f>` |
+   | (segment) | items loop | `$data.segment.items`, fields per next rule |
+   | items loop | `locator` (per-item system id) | `$item.locator` |
+   | items loop | custom data field | `$item.data.<f>` |
+
+   **`locator` is the only per-item system leaf safe to hardcode** — each
+   element has a unique ULID at `$item.locator`. Everything an author actually
+   wants in an item row (`itemTypeCode`, `purchaseDate`, `serialNumber`, …) is a
+   config data-extension field → `$item.data.<f>`.
+
+   **Trap — `{name}` inside a loop.** `$item.name` is a valid accessor but
+   resolves to the element *type* label (the exposure's `displayName`, e.g.
+   "Item") — the **same value for every row**, not a per-item field. An author
+   who put `{name}` in an item cell almost always meant a data field like
+   `{itemTypeCode}`. Do **not** silently map it to `$item.name`; ask what they
+   meant. (Same split one level up on the root entity: bare `.<x>` like
+   `$data.policy.policyNumber` is system; `.data.<x>` is custom.)
 
 4. **Finalize.**
 
