@@ -82,7 +82,8 @@ def build_candidate_index(reg: dict, roots: list[str] | None = None) -> list[dic
     out: list[dict] = []
 
     def _add(entry: dict, exposure: str | None, *, accessor: str | None = None,
-             velocity: str | None = None, df: dict | None = None) -> None:
+             velocity: str | None = None, df: dict | None = None,
+             suggestable: bool = True) -> None:
         field = str(entry.get("field") or "")
         if not field:
             return
@@ -101,6 +102,9 @@ def build_candidate_index(reg: dict, roots: list[str] | None = None) -> list[dic
             "options": list(entry.get("options") or []),
             "source": str(entry.get("source") or ""),
             "datafetcher": df,
+            # False = keep valid/discoverable but never auto-suggest for a bare
+            # {leaf}. See the exposure `name` system field below.
+            "suggestable": suggestable,
         })
 
     for section in ("system_paths", "quote_paths", "account_paths", "quote_data"):
@@ -153,9 +157,19 @@ def build_candidate_index(reg: dict, roots: list[str] | None = None) -> list[dic
         if not isinstance(exp, dict):
             continue
         exp_name = str(exp.get("name") or "")
-        for e in (exp.get("fields") or []) + (exp.get("system_fields") or []):
+        for e in exp.get("fields") or []:
             if isinstance(e, dict):
                 _add(e, exp_name)
+        for e in exp.get("system_fields") or []:
+            if isinstance(e, dict):
+                # The exposure `name` system field is the element TYPE label (its
+                # displayName) — identical for every element in the array, never a
+                # meaningful per-item value. Keep it valid (a fully-typed
+                # {Item.name} still resolves via the full-accessor pass-through)
+                # but never suggest it for a bare {name}; the author almost always
+                # meant a data field (e.g. itemTypeCode). `locator` stays.
+                is_type_label = str(e.get("field") or "").lower() == "name"
+                _add(e, exp_name, suggestable=not is_type_label)
         for cov in exp.get("coverages") or []:
             if not isinstance(cov, dict):
                 continue
@@ -207,11 +221,15 @@ def match_leaf(leaf: str, loop_name: str | None, candidates: list[dict]) -> dict
             "showing document-level matches; confirm scope"
         )
 
-    exact = [c for c in in_scope if c["leaf"] == leaf.lower()]
+    # Only suggestable candidates are offered for a bare {leaf}; a non-suggestable
+    # one (e.g. the exposure type-label `name`) stays reachable via the
+    # full-accessor pass-through below, so it is never lost, just never led with.
+    suggestible = [c for c in in_scope if c.get("suggestable", True)]
+    exact = [c for c in suggestible if c["leaf"] == leaf.lower()]
     if not exact:
-        exact = [c for c in in_scope if _norm(c["field"]) == nl]
+        exact = [c for c in suggestible if _norm(c["field"]) == nl]
     similar = [
-        c for c in in_scope
+        c for c in suggestible
         if c not in exact and (_norm(c["display"]) == nl or nl and nl in _norm(c["display"]))
     ]
 

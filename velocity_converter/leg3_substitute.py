@@ -121,22 +121,32 @@ def _strip_unregistered_guards(vm_text: str, cond_map: dict[str, str]) -> str:
     the loop is unconditional, so the guard pair is removed and its content
     kept. Line-based, mirroring process_vm's #if($TBD_*) guard strip: nested
     #if/#foreach inside a stripped guard are preserved.
+
+    Leg 0 emits directives HTML-wrapped (e.g. `<span ...>#if($doc.Item)`), so
+    match the guard/#end anywhere on the line — not just standalone — and strip
+    only the directive text, keeping the surrounding markup intact. Registered
+    guards are pushed too (kept, then phase 0 rewrites the token) so their #end
+    pairs stay balanced.
     """
+    guard_re = re.compile(r"#if\(\$doc\.([A-Za-z_]\w*)\)")
+    end_re = re.compile(r"#end\b")
     out: list[str] = []
     open_stack: list[bool] = []  # True = this open was a stripped guard
     for raw in vm_text.splitlines(keepends=True):
         s = raw.strip()
-        m = re.fullmatch(r"#if\(\$doc\.([A-Za-z_]\w*)\)", s)
-        if m and f"$doc.{m.group(1)}" not in cond_map:
-            open_stack.append(True)
-            continue
-        if s.startswith("#if") or s.startswith("#foreach"):
+        m = guard_re.search(s)
+        if m:
+            strip = f"$doc.{m.group(1)}" not in cond_map
+            open_stack.append(strip)
+            out.append(raw.replace(m.group(0), "", 1) if strip else raw)
+        elif s.startswith("#if") or s.startswith("#foreach"):
             open_stack.append(False)
             out.append(raw)
-        elif s == "#end":
+        elif end_re.search(s):
             if open_stack and open_stack.pop():
-                continue
-            out.append(raw)
+                out.append(end_re.sub("", raw, count=1))  # drop guard's #end, keep markup
+            else:
+                out.append(raw)
         else:
             out.append(raw)
     return "".join(out)

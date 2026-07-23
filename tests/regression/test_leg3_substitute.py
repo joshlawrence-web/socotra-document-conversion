@@ -13,6 +13,7 @@ from __future__ import annotations
 import unittest
 
 from velocity_converter.leg3_substitute import (
+    _strip_unregistered_guards,
     _substitute_tokens,
     _to_quiet_ref,
     _TBD_TOKEN_RE,
@@ -218,6 +219,38 @@ class TestOptionalCoverageGuard(unittest.TestCase):
         self.assertEqual(
             smap["$TBD_item.AccidentalDamage.data.labourCovered"],
             "$item.AccidentalDamage.data.labourCovered")
+
+
+class TestStripUnregisteredGuards(unittest.TestCase):
+    # Leg 0 emits directives HTML-wrapped, so the guard/#end are not alone on
+    # their line. Before the fix, fullmatch missed them and phase 0 rewrote
+    # #if($doc.Item) -> #if($data.Item) (a boolean nothing sets), so an
+    # unconditional loop rendered nothing.
+    _HTML = (
+        '<span>#if($doc.Item)\n'
+        '#foreach ($item in $x)</span>\n'
+        '<span>body</span>\n'
+        '<span>#end\n'   # closes #foreach -> keep
+        '#end</span>\n'  # closes guard -> strip #end, keep </span>
+    )
+
+    def test_html_wrapped_unregistered_guard_stripped(self):
+        out = _strip_unregistered_guards(self._HTML, cond_map={})
+        self.assertNotIn("#if(", out)
+        self.assertIn("#foreach ($item in $x)", out)
+        self.assertEqual(out.count("#end"), 1)  # only the #foreach's #end remains
+        self.assertIn("</span>", out.splitlines()[-1])  # guard's #end line keeps its markup
+
+    def test_registered_guard_preserved_and_balanced(self):
+        out = _strip_unregistered_guards(self._HTML, cond_map={"$doc.Item": "${data.Item}"})
+        self.assertIn("#if($doc.Item)", out)  # phase 0 rewrites the token later
+        self.assertEqual(out.count("#end"), 2)
+
+    def test_standalone_guard_still_stripped(self):
+        plain = "#if($doc.Foo)\n#foreach ($i in $y)\nx\n#end\n#end\n"
+        out = _strip_unregistered_guards(plain, cond_map={})
+        self.assertNotIn("#if(", out)
+        self.assertEqual(out.count("#end"), 1)
 
 
 if __name__ == "__main__":

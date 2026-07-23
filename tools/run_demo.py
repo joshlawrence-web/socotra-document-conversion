@@ -144,7 +144,51 @@ def _check_fills(stem: str):
               "was meant to be conditional, fill its `when` before finalizing.")
 
 
-def finalize(stem: str):
+def _fill_loop_roots_no_jar(stem: str, out_dir: str):
+    """JAR-free stand-in for Leg 2's loop-root resolution (no-config mode).
+
+    Leg 2 needs the SDK jar only to *verify* paths; the loop's collection path
+    is registry knowledge (the iterable's list_velocity). Scalars and loop
+    fields are already resolved by Leg -1/Leg 0 via the path-map — including
+    element system fields like `$item.locator` / `$item.name`, which the
+    registry's system_fields block classifies correctly. Here we fill only each
+    loop's empty data_source from the registry, reprefixed to the doc's
+    rendering root. Registry-grounded, NOT SDK-verified.
+    """
+    import yaml
+    from velocity_converter.leg2_fill_mapping import (
+        build_registry_index, suggest_loop_root, parse_rendering_roots,
+        _reprefix, _vel_prefix,
+    )
+    mp = Path(out_dir) / f"{stem}.mapping.yaml"
+    mapping = yaml.safe_load(mp.read_text(encoding="utf-8")) or {}
+    loops = [l for l in (mapping.get("loops") or []) if not (l.get("data_source") or "").strip()]
+    if not loops:
+        return
+    reg = yaml.safe_load(Path(REGISTRY).read_text(encoding="utf-8")) or {}
+    idx = build_registry_index(reg)
+    root_ids, _err = parse_rendering_roots(mapping.get("source") or stem)
+    rp = _vel_prefix(root_ids[0] if root_ids else "")
+    filled, missing = [], []
+    for loop in loops:
+        name = loop.get("name") or ""
+        list_vel, _step, _r, iterator, _fe, _cov = suggest_loop_root(name, idx, None, reg)
+        if not list_vel:
+            missing.append(name)
+            continue
+        loop["data_source"] = _reprefix(list_vel, rp)
+        if iterator:
+            loop["iterator"] = iterator
+        filled.append(f"{name} → {loop['data_source']}")
+    mp.write_text(yaml.safe_dump(mapping, sort_keys=False), encoding="utf-8")
+    for f in filled:
+        print(f"  loop root (registry, not SDK-verified): {f}")
+    if missing:
+        print(f"  NOTE: no registry iterable for loop(s) {', '.join(missing)} — "
+              "data_source left blank; the done-gate will flag the unresolved $TBD_.")
+
+
+def finalize(stem: str, no_config: bool = False):
     src = _find_source(stem)
     _fold_variant_text_leaves(stem, src)
     _check_fills(stem)
@@ -160,12 +204,26 @@ def finalize(stem: str):
     run([PY, "-m", "velocity_converter.leg0_ingest",
          "--parse-variants-csv", f"{ACTION}/{stem}.variants.csv", "--output-dir", out_dir + "/"],
         "Parse variants.csv → conditional-registry")
-    run([PY, "-m", "velocity_converter.agent", "--yes",
-         f"RUN_PIPELINE leg2+leg3 mapping={out_dir}/{stem}.mapping.yaml registry={REGISTRY}"],
-        "Leg 2 + Leg 3 (resolve paths → .final.vm)")
+    if no_config:
+        print("\n=== Loop roots (registry-only, no JAR) ===")
+        _fill_loop_roots_no_jar(stem, out_dir)
+        run([PY, "-m", "velocity_converter.leg3_substitute",
+             "--suggested", f"{out_dir}/{stem}.mapping.yaml",
+             "--vm", f"{out_dir}/{stem}.annotated.html"],
+            "Leg 3 (substitute → .final.vm) — no-config, Leg 2/JAR skipped")
+    else:
+        run([PY, "-m", "velocity_converter.agent", "--yes",
+             f"RUN_PIPELINE leg2+leg3 mapping={out_dir}/{stem}.mapping.yaml registry={REGISTRY}"],
+            "Leg 2 + Leg 3 (resolve paths → .final.vm)")
     run([PY, "tools/validate_demo.py", stem, "--registry", REGISTRY],
         "VALIDATE (doc coverage + renderingData shape) — the done-gate")
-    print(f"\nDONE — {out_dir}/{stem}.final.vm is validated.")
+    if no_config:
+        print(f"\nDONE (no-config) — {out_dir}/{stem}.final.vm passes the done-gate.\n"
+              "Paths are registry-grounded but NOT SDK-verified (no config jar), and\n"
+              "${data.<token>} conditionals render empty until a Leg 4 plugin exists.\n"
+              "Bring config later to run Leg 2 (verify) + Leg 4 (plugin) — template unchanged.")
+    else:
+        print(f"\nDONE — {out_dir}/{stem}.final.vm is validated.")
 
 
 def main():
@@ -175,11 +233,15 @@ def main():
     pi.add_argument("doc", help="workspace/inbox/<stem>.docx|.pdf")
     pf = sub.add_parser("finalize", help="apply → ingest → parse → Leg 2+3 → validate")
     pf.add_argument("stem", help="the doc stem, e.g. ZenCoverProtectionLetter(segment)")
+    pf.add_argument("--no-config", action="store_true",
+                    help="template-only: skip Leg 2/JAR, fill loop roots from the "
+                         "registry, emit via Leg 3. Paths are registry-grounded, not "
+                         "SDK-verified. For business users demoing without a config jar.")
     args = ap.parse_args()
     if args.cmd == "intake":
         intake(args.doc)
     else:
-        finalize(args.stem)
+        finalize(args.stem, no_config=args.no_config)
 
 
 if __name__ == "__main__":
