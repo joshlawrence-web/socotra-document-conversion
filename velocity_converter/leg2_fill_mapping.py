@@ -985,16 +985,42 @@ def variable_verdict_for_root(candidate: dict, root: dict, classpath: str) -> di
 # ---------------------------------------------------------------------------
 
 
+def _naive_plural(word: str) -> str:
+    """English plural, good enough to synthesize a demo collection name.
+
+    ponytail: naive heuristic — handles -y→-ies, sibilant→-es, else +s, and
+    leaves an already-plural word alone. Irregulars (child→children, person→
+    people) are NOT handled; that's fine for a no-config demo where the real
+    plural arrives with the product config. Upgrade path: swap in `inflect` if
+    a product ever needs true irregulars.
+    """
+    w = word
+    if w.endswith("s"):
+        return w  # assume already plural (pets stays pets)
+    if w.endswith("y") and len(w) > 1 and w[-2].lower() not in "aeiou":
+        return w[:-1] + "ies"
+    if w.endswith(("s", "x", "z", "ch", "sh")):
+        return w + "es"
+    return w + "s"
+
+
 def suggest_loop_root(
     loop_name: str,
     idx: dict,
     terminology: dict | None,
     reg: dict,
+    no_config: bool = False,
 ) -> tuple[str, str, str, str | None, str | None, list[dict]]:
     """
     Returns (list_velocity, match_step, reasoning, iterator, foreach, available_coverages).
-    ``match_step`` is one of exact|none (root-independent;
+    ``match_step`` is one of exact|synthesized|none (root-independent;
     the per-root SDK verdict is graded later). available_coverages may be empty.
+
+    In ``no_config`` (template-only) mode, a loop with no exact registry match
+    SYNTHESIZES a generic iterable from the loop word (Pet → $pet / $data.pets)
+    instead of returning empty. This is unverified-until-real-config by design —
+    the point of no-config mode is to demo the rules without a product. With a
+    real config (no_config=False) resolution stays strict.
     """
     ln = loop_name.lower()
     iby_name = idx["iterables_by_name"]
@@ -1008,6 +1034,17 @@ def suggest_loop_root(
     cand = iby_name.get(ln)
     if cand and cand.get("name") == loop_name:
         it, step = cand, "exact"
+
+    if it is None and no_config:
+        # Synthesize a generic collection accessor from the loop word.
+        iterator = "$" + ln
+        list_vel = "$data." + _naive_plural(ln)
+        foreach = f"#foreach ({iterator} in {list_vel})"
+        reasoning = (
+            f"loop `{loop_name}` synthesized (no-config): {iterator} in {list_vel} "
+            "— unverified until real product config is supplied"
+        )
+        return list_vel, "synthesized", reasoning, iterator, foreach, []
 
     if it is None:
         return (

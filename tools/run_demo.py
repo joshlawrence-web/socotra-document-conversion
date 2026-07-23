@@ -169,23 +169,42 @@ def _fill_loop_roots_no_jar(stem: str, out_dir: str):
     idx = build_registry_index(reg)
     root_ids, _err = parse_rendering_roots(mapping.get("source") or stem)
     rp = _vel_prefix(root_ids[0] if root_ids else "")
-    filled, missing = [], []
+    filled, missing, synthesized = [], [], []
     for loop in loops:
         name = loop.get("name") or ""
-        list_vel, _step, _r, iterator, _fe, _cov = suggest_loop_root(name, idx, None, reg)
+        list_vel, step, _r, iterator, _fe, _cov = suggest_loop_root(
+            name, idx, None, reg, no_config=True)
         if not list_vel:
             missing.append(name)
             continue
         loop["data_source"] = _reprefix(list_vel, rp)
         if iterator:
             loop["iterator"] = iterator
-        filled.append(f"{name} → {loop['data_source']}")
+        if step == "synthesized":
+            # Machine-only marker so downstream/config-time work knows this
+            # collection was invented from the loop word, not verified.
+            loop["no_config_synthesized"] = True
+            # No registry knows the loop's BODY fields either, so leg0 left them
+            # UNRESOLVED:. Synthesize them from the field accessor the same way:
+            # a field rooted at the synthesized iterator (pet.data.petName) → its
+            # velocity ref ($pet.data.petName). Only touch fields under this
+            # iterator; real-registry-resolved fields already carry a `$` path.
+            it_name = (iterator or "").lstrip("$")
+            for fld in loop.get("fields") or []:
+                acc = fld.get("name") or ""
+                if it_name and acc.split(".", 1)[0] == it_name:
+                    fld["data_source"] = "$" + acc
+            synthesized.append(f"{name} → {loop['data_source']}")
+        else:
+            filled.append(f"{name} → {loop['data_source']}")
     mp.write_text(yaml.safe_dump(mapping, sort_keys=False), encoding="utf-8")
     for f in filled:
-        print(f"  loop root (registry, not SDK-verified): {f}")
+        print(f"  loop collection (from registry, shown for demo only): {f}")
+    for f in synthesized:
+        print(f"  loop collection (assumed from the loop name for this demo): {f}")
     if missing:
-        print(f"  NOTE: no registry iterable for loop(s) {', '.join(missing)} — "
-              "data_source left blank; the done-gate will flag the unresolved $TBD_.")
+        print(f"  Note: could not build a collection for loop(s) {', '.join(missing)} — "
+              "left blank; the final check will flag it.")
 
 
 def finalize(stem: str, no_config: bool = False):
@@ -205,23 +224,24 @@ def finalize(stem: str, no_config: bool = False):
          "--parse-variants-csv", f"{ACTION}/{stem}.variants.csv", "--output-dir", out_dir + "/"],
         "Parse variants.csv → conditional-registry")
     if no_config:
-        print("\n=== Loop roots (registry-only, no JAR) ===")
+        print("\n=== Filling loop collections (template-only preview) ===")
         _fill_loop_roots_no_jar(stem, out_dir)
         run([PY, "-m", "velocity_converter.leg3_substitute",
              "--suggested", f"{out_dir}/{stem}.mapping.yaml",
              "--vm", f"{out_dir}/{stem}.annotated.html"],
-            "Leg 3 (substitute → .final.vm) — no-config, Leg 2/JAR skipped")
+            "Building the template (template-only, no product config)")
     else:
         run([PY, "-m", "velocity_converter.agent", "--yes",
              f"RUN_PIPELINE leg2+leg3 mapping={out_dir}/{stem}.mapping.yaml registry={REGISTRY}"],
-            "Leg 2 + Leg 3 (resolve paths → .final.vm)")
+            "Resolving data paths and building the template")
     run([PY, "tools/validate_demo.py", stem, "--registry", REGISTRY],
-        "VALIDATE (doc coverage + renderingData shape) — the done-gate")
+        "Final check (document coverage + data shape)")
     if no_config:
-        print(f"\nDONE (no-config) — {out_dir}/{stem}.final.vm passes the done-gate.\n"
-              "Paths are registry-grounded but NOT SDK-verified (no config jar), and\n"
-              "${data.<token>} conditionals render empty until a Leg 4 plugin exists.\n"
-              "Bring config later to run Leg 2 (verify) + Leg 4 (plugin) — template unchanged.")
+        print(f"\nDONE (template-only) — {out_dir}/{stem}.final.vm passes the final check.\n"
+              "This is a preview: the data paths are based on your document and product\n"
+              "naming, but have not yet been checked against a real product. Conditional\n"
+              "wording shows as blank until the product is connected. Connect the product\n"
+              "later to verify every path — the template itself does not change.")
     else:
         print(f"\nDONE — {out_dir}/{stem}.final.vm is validated.")
 
