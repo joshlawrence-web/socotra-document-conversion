@@ -70,6 +70,10 @@ def main():
     ap.add_argument("--registry", default="registry/path-registry.yaml")
     ap.add_argument("--output", default="workspace/output")
     ap.add_argument("--inbox", default="workspace/inbox")
+    ap.add_argument("--no-config", action="store_true",
+                    help="template-only run: config-readiness findings ($TBD_ + "
+                         "renderingData shape) become advisory notes, not failures. "
+                         "Authoring-faithfulness checks stay hard.")
     args = ap.parse_args()
 
     stem = args.stem
@@ -82,6 +86,16 @@ def main():
         print(f"MISMATCH: no template at {vm_path} — run the pipeline through Leg 3 first.")
         sys.exit(1)
     vm = vm_path.read_text()
+
+    # authoring-gate honesty: a .vm older than its inputs is a stale artifact
+    # (a re-fill that never got re-finalized). Hard fail even in no-config.
+    stale = []
+    vm_mtime = vm_path.stat().st_mtime
+    for inp in (Path("workspace/action-needed") / f"{stem}.path-review.csv",
+                Path("workspace/action-needed") / f"{stem}.variants.csv",
+                out_dir / f"{stem}.mapping.yaml"):
+        if inp.is_file() and inp.stat().st_mtime > vm_mtime:
+            stale.append(inp.name)
     vm_flat = re.sub(r"\s+", " ", vm)
     # prose split across styling spans (e.g. "[</span>Plan A") still counts
     vm_text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", vm))
@@ -96,10 +110,22 @@ def main():
             doc = p
             break
 
-    fails, checks = [], 0
+    # group A = authoring-faithfulness (always hard). group B = config-readiness
+    # (advisory in --no-config: nothing to decide without a product config).
+    fails, advisories, checks = [], [], 0
+
+    if stale:
+        fails.append(f"stale template: {vm_path.name} is older than its input(s) "
+                     f"{sorted(stale)} — re-run finalize before validating")
 
     # 1. leftover-marker guard
-    for bad in ("$TBD_", "$doc.cond", "[Item]", "[/Item]"):
+    checks += 1
+    if "$TBD_" in vm:
+        # config-readiness: no accessor (charge/premium, DataFetcher, un-reviewed
+        # marker). Without a config there is nothing to resolve it against.
+        tbd = sorted(set(re.findall(r"\$TBD_[A-Za-z0-9_.]+", vm)))
+        advisories.append(f"unresolved $TBD_ accessor(s) left in template: {tbd}")
+    for bad in ("$doc.cond", "[Item]", "[/Item]"):
         checks += 1
         if bad in vm:
             fails.append(f"unresolved {bad!r} left in template")
@@ -114,16 +140,16 @@ def main():
     if MARKER.search(vm):
         fails.append(f"bare {{leaf}} markers left in template: {MARKER.findall(vm)}")
 
-    # 2. renderingData shape
+    # 2. renderingData shape (config-readiness → advisory in --no-config)
     checks += 1
     if "$data.data." in vm:
-        fails.append("renderingData shape: '$data.data.*' has no entity key — "
-                     "should be '$data.segment.data.*' (segment) / '$data.quote.data.*' (quote)")
+        advisories.append("renderingData shape: '$data.data.*' has no entity key — "
+                          "should be '$data.segment.data.*' (segment) / '$data.quote.data.*' (quote)")
     for sysf in sorted(_system_field_names(registry)):
         checks += 1
         if re.search(r"\$\{?data\." + re.escape(sysf) + r"\b", vm):
-            fails.append(f"renderingData shape: bare '$data.{sysf}' has no entity key — "
-                         f"should be '$data.policy.{sysf}' (segment) / '$data.quote.{sysf}' (quote)")
+            advisories.append(f"renderingData shape: bare '$data.{sysf}' has no entity key — "
+                              f"should be '$data.policy.{sysf}' (segment) / '$data.quote.{sysf}' (quote)")
     # any other $data.<x> whose <x> is not a known entity key or a computed/cond key
     for m in re.finditer(r"\$\{?data\.([A-Za-z_]\w*)\.", vm):
         seg = m.group(1)
@@ -131,8 +157,8 @@ def main():
         if seg not in ENTITY_KEYS and seg != "data":  # 'data' already reported above
             # tolerate computed top-level keys ($data.disclosureClause.x is unusual;
             # cond refs are $data.condN with no trailing dot, so not matched here)
-            fails.append(f"renderingData shape: '$data.{seg}.*' is not a known entity key "
-                         f"({', '.join(ENTITY_KEYS)}) — confirm the plugin .put()s '{seg}'")
+            advisories.append(f"renderingData shape: '$data.{seg}.*' is not a known entity key "
+                              f"({', '.join(ENTITY_KEYS)}) — confirm the plugin .put()s '{seg}'")
 
     # 3 + 4. doc coverage (docx only)
     if doc and doc.suffix.lower() == ".docx":
@@ -169,11 +195,26 @@ def main():
         print(f"(note: no source doc found in {args.inbox} for '{stem}' — shape + marker checks only)")
 
     print(f"ran {checks} checks on {vm_path}")
+
+    # with a real config, config-readiness findings are fatal (as before);
+    # in --no-config they are advisory only.
+    if not args.no_config:
+        fails += advisories
+        advisories = []
+
     if fails:
         print(f"\nMISMATCH ({len(fails)}):")
         for f in fails:
             print("  -", f)
         sys.exit(1)
+    if advisories:
+        print(f"\nNOTE (config-readiness): {len(advisories)} finding(s) — "
+              "template-only, nothing to resolve without a product config:")
+        for a in advisories:
+            print("  -", a)
+        print(f"\nPASS (authoring) — template matches the document. "
+              f"template-only: {len(advisories)} item(s) need a config before they render.")
+        return
     print("PASS — template matches the document and renderingData shape is correct.")
 
 

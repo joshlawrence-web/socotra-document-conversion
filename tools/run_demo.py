@@ -119,11 +119,14 @@ def _fold_variant_text_leaves(stem: str, src: Path):
     run([PY, "-m", "velocity_converter.legminus1_resolve_paths", "--input", str(src),
          "--registry", REGISTRY, "--output-dir", OUTPUT, "--variants-csv", str(vr)],
         "Leg -1 pass 2 (fold variant-text fields into path-review)")
-    new = [row["field"] for row in csv.DictReader(pr.open()) if row["field"] not in before]
+    # only stop for new rows the suggester could NOT pre-fill — a blank `final`
+    # needs a human. A pre-filled row converges without a round-trip.
+    new = [row["field"] for row in csv.DictReader(pr.open())
+           if row["field"] not in before and not (row.get("final") or "").strip()]
     if new:
-        sys.exit(f"\nvariants.csv text mentions new field(s): {', '.join(new)} — "
-                 f"rows appended to {pr}.\nConfirm each new `final` accessor, "
-                 f"then re-run: python3 tools/run_demo.py finalize \"{stem}\"")
+        sys.exit(f"\nvariants.csv text mentions new field(s) with no accessor: "
+                 f"{', '.join(new)} — rows appended to {pr}.\nConfirm each new "
+                 f"`final` accessor, then re-run: python3 tools/run_demo.py finalize \"{stem}\"")
 
 
 def _check_fills(stem: str):
@@ -234,7 +237,8 @@ def finalize(stem: str, no_config: bool = False):
         run([PY, "-m", "velocity_converter.agent", "--yes",
              f"RUN_PIPELINE leg2+leg3 mapping={out_dir}/{stem}.mapping.yaml registry={REGISTRY}"],
             "Resolving data paths and building the template")
-    run([PY, "tools/validate_demo.py", stem, "--registry", REGISTRY],
+    run([PY, "tools/validate_demo.py", stem, "--registry", REGISTRY]
+        + (["--no-config"] if no_config else []),
         "Final check (document coverage + data shape)")
     if no_config:
         print(f"\nDONE (template-only) — {out_dir}/{stem}.final.vm passes the final check.\n"
