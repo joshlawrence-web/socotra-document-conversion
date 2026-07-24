@@ -162,6 +162,26 @@ class TestVariantsCsvStub(unittest.TestCase):
             write_variants_csv(blocks, "Demo", out)
             self.assertEqual(out.read_text(), first)
 
+    def test_reingest_drops_orphans_keeps_edits_appends_new(self):
+        # A re-ingest of a DIFFERENT document (or a doc with a marker removed)
+        # must reconcile the CSV to the current blocks: keep the edited surviving
+        # row, drop the departed block's orphan rows, append the new block's stub.
+        # This is the CGL "Pet" residue fix.
+        with TemporaryDirectory() as d:
+            out = Path(d) / "Demo.variants.csv"
+            write_variants_csv(extract_conditionals("<p>[[$alpha]]</p><p>[[$beta]]</p>"),
+                               "Demo", out)
+            edited = out.read_text().replace("alpha,,", 'alpha,"state == ""CA""",Keep me', 1)
+            assert edited != out.read_text(), "test edit must actually change the stub"
+            out.write_text(edited, encoding="utf-8")
+            # Re-ingest: beta departed, gamma is new; alpha survives.
+            write_variants_csv(extract_conditionals("<p>[[$alpha]]</p><p>[[$gamma]]</p>"),
+                               "Demo", out)
+            result = out.read_text()
+        self.assertIn('alpha,"state == ""CA""",Keep me', result)  # edit preserved
+        self.assertNotIn("beta", result)                          # orphan dropped
+        self.assertIn("gamma", result)                            # new block appended
+
 
 class TestParseVariantsCsvMerge(unittest.TestCase):
     GOOD_CSV = (
