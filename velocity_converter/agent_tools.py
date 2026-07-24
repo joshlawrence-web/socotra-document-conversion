@@ -3,6 +3,7 @@
 No Claude API code here — only business logic called by agent.py dispatch.
 """
 
+import os
 import re
 import subprocess
 import sys
@@ -52,14 +53,35 @@ def _find_repo_root() -> Path:
     )
 
 
-def _resolve_safe(p: str, repo_root: Path) -> Path:
-    """Resolve a path to absolute and verify it stays inside repo_root."""
-    resolved = (repo_root / p).resolve()
-    try:
-        resolved.relative_to(repo_root)
-    except ValueError:
-        raise ValueError(f"Path escapes repo root: {p!r}")
-    return resolved
+def _workspace_root() -> Path:
+    """The author's data dir. $CONVERTER_WORKSPACE if set, else the code root.
+
+    Defaulting to the code root keeps in-repo/standalone/test runs behaving
+    exactly as before the code/workspace split.
+    """
+    env = os.environ.get("CONVERTER_WORKSPACE")
+    return Path(env).resolve() if env else _find_repo_root()
+
+
+def _resolve_safe(p: str) -> Path:
+    """Resolve a data path to absolute, confined to the code root OR workspace root.
+
+    Two allowed roots: CODE_ROOT (the engine install — shipped assets like the
+    default registry resolve here from relative paths) and WORKSPACE_ROOT (the
+    author's dir, where the wrapper builds absolute data paths). A path that
+    escapes both — a real traversal like ``$WORKSPACE/../../etc/passwd`` — is
+    rejected. Confine-to-workspace is a better boundary than confine-to-install.
+    """
+    code_root = _find_repo_root()
+    base = Path(p)
+    resolved = base.resolve() if base.is_absolute() else (code_root / p).resolve()
+    for root in (code_root, _workspace_root()):
+        try:
+            resolved.relative_to(root)
+            return resolved
+        except ValueError:
+            pass
+    raise ValueError(f"Path escapes allowed roots: {p!r}")
 
 
 def validate_inputs(
@@ -92,7 +114,7 @@ def validate_inputs(
             missing.append("input")
         else:
             try:
-                p = _resolve_safe(input_html, repo_root)
+                p = _resolve_safe(input_html)
                 if not p.exists():
                     errors.append(f"input not found: {input_html!r}")
                 elif p.suffix.lower() not in (".docx", ".pdf"):
@@ -105,7 +127,7 @@ def validate_inputs(
             missing.append("input")
         else:
             try:
-                p = _resolve_safe(input_html, repo_root)
+                p = _resolve_safe(input_html)
                 if not p.exists():
                     errors.append(f"input not found: {input_html!r}")
                 elif p.suffix.lower() != ".html":
@@ -120,7 +142,7 @@ def validate_inputs(
             mappings = mapping if isinstance(mapping, list) else [mapping]
             for m in mappings:
                 try:
-                    p = _resolve_safe(m, repo_root)
+                    p = _resolve_safe(m)
                     if not p.exists():
                         errors.append(f"mapping not found: {m!r}")
                     elif not p.name.endswith(".mapping.yaml"):
@@ -137,7 +159,7 @@ def validate_inputs(
                 errors.append("leg3 accepts a single suggested file (leg4 accepts a list)")
             for s_item in suggesteds:
                 try:
-                    p = _resolve_safe(s_item, repo_root)
+                    p = _resolve_safe(s_item)
                     if not p.exists():
                         errors.append(f"suggested not found: {s_item!r}")
                     elif not (p.name.endswith(".mapping.yaml") or p.name.endswith(".suggested.yaml")):
@@ -148,7 +170,7 @@ def validate_inputs(
     default_registry = repo_root / "registry" / "path-registry.yaml"
     if registry:
         try:
-            p = _resolve_safe(registry, repo_root)
+            p = _resolve_safe(registry)
             if not p.exists():
                 errors.append(f"registry not found: {registry!r}")
         except ValueError as e:
@@ -158,7 +180,7 @@ def validate_inputs(
 
     if terminology:
         try:
-            p = _resolve_safe(terminology, repo_root)
+            p = _resolve_safe(terminology)
             if not p.exists():
                 errors.append(f"terminology not found: {terminology!r}")
         except ValueError as e:
@@ -171,9 +193,8 @@ def validate_inputs(
 
 def list_candidates(output_dir: str = "workspace/output") -> list[str]:
     """Find all *.mapping.yaml files under output_dir, sorted by mtime descending."""
-    repo_root = _find_repo_root()
     try:
-        d = _resolve_safe(output_dir, repo_root)
+        d = _resolve_safe(output_dir)
     except ValueError:
         return []
     if not d.is_dir():
@@ -183,7 +204,7 @@ def list_candidates(output_dir: str = "workspace/output") -> list[str]:
         key=lambda f: f.stat().st_mtime,
         reverse=True,
     )
-    return [str(f.relative_to(repo_root)) for f in files]
+    return [str(f) for f in files]
 
 
 def _predict_writes(
@@ -380,9 +401,9 @@ def run_leg0(input_path: str, output_dir: str, converter: str = "soffice") -> di
         "-m",
         "velocity_converter.leg0_ingest",
         "--input",
-        str(_resolve_safe(input_path, repo_root)),
+        str(_resolve_safe(input_path)),
         "--output-dir",
-        str(_resolve_safe(output_dir, repo_root)),
+        str(_resolve_safe(output_dir)),
         "--converter",
         converter,
     ]
@@ -390,9 +411,9 @@ def run_leg0(input_path: str, output_dir: str, converter: str = "soffice") -> di
     if result.returncode != 0:
         return {"ok": False, "returncode": result.returncode, "stderr": result.stderr}
 
-    input_p = _resolve_safe(input_path, repo_root)
+    input_p = _resolve_safe(input_path)
     stem = input_p.stem
-    out_p = _resolve_safe(output_dir, repo_root)
+    out_p = _resolve_safe(output_dir)
 
     # (dir, filename) pairs — the variants CSV is projected into action-needed/;
     # the machine sidecar pairs with it in the per-stem output dir.
@@ -404,7 +425,7 @@ def run_leg0(input_path: str, output_dir: str, converter: str = "soffice") -> di
         (action_needed_dir(out_p), f"{stem}.variants.csv"),
     ]
     artifacts = [
-        str((d / name).relative_to(repo_root))
+        str((d / name))
         for d, name in artifact_locs
         if (d / name).exists()
     ]
@@ -425,9 +446,9 @@ def run_leg0_scan(input_path: str, output_dir: str, converter: str = "soffice") 
         "-m",
         "velocity_converter.leg0_ingest",
         "--input",
-        str(_resolve_safe(input_path, repo_root)),
+        str(_resolve_safe(input_path)),
         "--output-dir",
-        str(_resolve_safe(output_dir, repo_root)),
+        str(_resolve_safe(output_dir)),
         "--scan",
         "--converter",
         converter,
@@ -436,15 +457,15 @@ def run_leg0_scan(input_path: str, output_dir: str, converter: str = "soffice") 
     if result.returncode != 0:
         return {"ok": False, "returncode": result.returncode, "stderr": result.stderr}
 
-    stem = _resolve_safe(input_path, repo_root).stem
-    out_p = _resolve_safe(output_dir, repo_root)
+    stem = _resolve_safe(input_path).stem
+    out_p = _resolve_safe(output_dir)
 
     # Scan emits only the single human-fill file (projected into action-needed/).
     artifact_locs = [
         (action_needed_dir(out_p), f"{stem}.variants.csv"),
     ]
     artifacts = [
-        str((d / name).relative_to(repo_root))
+        str((d / name))
         for d, name in artifact_locs
         if (d / name).exists()
     ]
@@ -468,12 +489,12 @@ def run_legminus1(input_path: str, registry: str | None, output_dir: str,
         "-m",
         "velocity_converter.legminus1_resolve_paths",
         "--input",
-        str(_resolve_safe(input_path, repo_root)),
+        str(_resolve_safe(input_path)),
         "--output-dir",
-        str(_resolve_safe(output_dir, repo_root)),
+        str(_resolve_safe(output_dir)),
     ]
     if registry:
-        cmd += ["--registry", str(_resolve_safe(registry, repo_root))]
+        cmd += ["--registry", str(_resolve_safe(registry))]
     if no_suggest:
         cmd.append("--no-suggest")
     result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(repo_root))
@@ -481,7 +502,7 @@ def run_legminus1(input_path: str, registry: str | None, output_dir: str,
         return {"ok": False, "returncode": result.returncode, "stderr": result.stderr}
 
     stem = Path(input_path).stem
-    out_p = _resolve_safe(output_dir, repo_root) / stem
+    out_p = _resolve_safe(output_dir) / stem
     # The customer-fill path-review.csv lands in action-needed/; the canonical
     # .md + map + audit stay in out_p.
     artifact_locs = [
@@ -491,7 +512,7 @@ def run_legminus1(input_path: str, registry: str | None, output_dir: str,
         (out_p, f"{stem}.path-changes.md"),
     ]
     artifacts = [
-        str((d / name).relative_to(repo_root))
+        str((d / name))
         for d, name in artifact_locs
         if (d / name).exists()
     ]
@@ -512,20 +533,20 @@ def run_legminus1_apply(review: str, output_dir: str | None = None) -> dict:
         "-m",
         "velocity_converter.legminus1_resolve_paths",
         flag,
-        str(_resolve_safe(review, repo_root)),
+        str(_resolve_safe(review)),
     ]
     if output_dir:
-        cmd += ["--output-dir", str(_resolve_safe(output_dir, repo_root))]
+        cmd += ["--output-dir", str(_resolve_safe(output_dir))]
     result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(repo_root))
     if result.returncode != 0:
         return {"ok": False, "returncode": result.returncode, "stderr": result.stderr}
     if output_dir:
-        out_p = _resolve_safe(output_dir, repo_root)
+        out_p = _resolve_safe(output_dir)
     else:
-        review_abs = Path(review) if Path(review).is_absolute() else _resolve_safe(review, repo_root)
+        review_abs = Path(review) if Path(review).is_absolute() else _resolve_safe(review)
         out_p = machine_dir_for_action_file(review_abs) or review_abs.parent
     artifacts = (
-        [str(f.relative_to(repo_root)) for f in out_p.glob("*")
+        [str(f) for f in out_p.glob("*")
          if f.is_file() and (".path-map" in f.name or ".path-changes" in f.name or ".resolved." in f.name)]
         if out_p.is_dir() else []
     )
@@ -545,11 +566,11 @@ def run_leg1(
         sys.executable,
         "-m",
         "velocity_converter.convert",
-        str(_resolve_safe(input_html, repo_root)),
+        str(_resolve_safe(input_html)),
         "--output-dir",
-        str(_resolve_safe(output_dir, repo_root)),
+        str(_resolve_safe(output_dir)),
         "--registry",
-        str(_resolve_safe(registry, repo_root)),
+        str(_resolve_safe(registry)),
     ]
     if no_conditionals:
         cmd.append("--no-conditionals")
@@ -561,9 +582,9 @@ def run_leg1(
         return {"ok": False, "returncode": result.returncode, "stderr": result.stderr}
 
     stem = Path(input_html).stem
-    out_path = _resolve_safe(output_dir, repo_root) / stem
+    out_path = _resolve_safe(output_dir) / stem
     artifacts = (
-        [str(f.relative_to(repo_root)) for f in out_path.glob("*") if f.is_file()]
+        [str(f) for f in out_path.glob("*") if f.is_file()]
         if out_path.is_dir()
         else []
     )
@@ -583,14 +604,14 @@ def run_leg3(
         "-m",
         "velocity_converter.leg3_substitute",
         "--suggested",
-        str(_resolve_safe(suggested, repo_root)),
+        str(_resolve_safe(suggested)),
         "--out",
-        str(_resolve_safe(out, repo_root)),
+        str(_resolve_safe(out)),
         "--report-out",
-        str(_resolve_safe(report_out, repo_root)),
+        str(_resolve_safe(report_out)),
     ]
     if vm:
-        cmd += ["--vm", str(_resolve_safe(vm, repo_root))]
+        cmd += ["--vm", str(_resolve_safe(vm))]
 
     result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(repo_root))
     if result.returncode != 0:
@@ -598,9 +619,9 @@ def run_leg3(
 
     artifacts = []
     for p_str in [out, report_out]:
-        p = _resolve_safe(p_str, repo_root)
+        p = _resolve_safe(p_str)
         if p.exists():
-            artifacts.append(str(p.relative_to(repo_root)))
+            artifacts.append(str(p))
     return {"ok": True, "artifacts": artifacts, "stdout": result.stdout, "stderr": result.stderr}
 
 
@@ -618,16 +639,16 @@ def run_leg2(
         "-m",
         "velocity_converter.leg2_fill_mapping",
         "--mapping",
-        str(_resolve_safe(mapping, repo_root)),
+        str(_resolve_safe(mapping)),
         "--registry",
-        str(_resolve_safe(registry, repo_root)),
+        str(_resolve_safe(registry)),
         "--out",
-        str(_resolve_safe(out, repo_root)),
+        str(_resolve_safe(out)),
         "--review-out",
-        str(_resolve_safe(review_out, repo_root)),
+        str(_resolve_safe(review_out)),
     ]
     if terminology:
-        cmd += ["--terminology", str(_resolve_safe(terminology, repo_root))]
+        cmd += ["--terminology", str(_resolve_safe(terminology))]
 
     result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(repo_root))
     if result.returncode != 0:
@@ -637,9 +658,9 @@ def run_leg2(
     for p_str in [out, review_out]:
         if p_str is None:
             continue
-        p = _resolve_safe(p_str, repo_root)
+        p = _resolve_safe(p_str)
         if p.exists():
-            artifacts.append(str(p.relative_to(repo_root)))
+            artifacts.append(str(p))
     return {"ok": True, "artifacts": artifacts, "stdout": result.stdout, "stderr": result.stderr}
 
 
@@ -691,18 +712,18 @@ def run_leg4(
     """
     repo_root = _find_repo_root()
     suggested_list = suggested if isinstance(suggested, list) else [suggested]
-    suggested_paths = [_resolve_safe(s, repo_root) for s in suggested_list]
+    suggested_paths = [_resolve_safe(s) for s in suggested_list]
 
     cmd = [sys.executable, "-m", "velocity_converter.leg4_generate_plugin"]
     for sp in suggested_paths:
         _warn_missing_cond_registry(sp)
         cmd += ["--suggested", str(sp)]
     if output_dir:
-        cmd += ["--output-dir", str(_resolve_safe(output_dir, repo_root))]
+        cmd += ["--output-dir", str(_resolve_safe(output_dir))]
     if customer_jar:
-        cmd += ["--customer-jar", str(_resolve_safe(customer_jar, repo_root))]
+        cmd += ["--customer-jar", str(_resolve_safe(customer_jar))]
     if datamodel_jar:
-        cmd += ["--datamodel-jar", str(_resolve_safe(datamodel_jar, repo_root))]
+        cmd += ["--datamodel-jar", str(_resolve_safe(datamodel_jar))]
     if compile_check:
         cmd.append("--compile-check")
 
@@ -711,7 +732,7 @@ def run_leg4(
         return {"ok": False, "returncode": result.returncode, "stderr": result.stderr, "stdout": result.stdout}
 
     plugin_dir = (
-        _resolve_safe(output_dir, repo_root) if output_dir else suggested_paths[0].parent
+        _resolve_safe(output_dir) if output_dir else suggested_paths[0].parent
     )
     artifacts = []
     for sp in suggested_paths:
@@ -722,9 +743,9 @@ def run_leg4(
                 break
         report = sp.parent / f"{stem}.plugin-report.md"
         if report.exists():
-            artifacts.append(str(report.relative_to(repo_root)))
+            artifacts.append(str(report))
     for java_f in sorted(plugin_dir.glob("*DocumentDataSnapshotPluginImpl.java")):
-        artifacts.append(str(java_f.relative_to(repo_root)))
+        artifacts.append(str(java_f))
     return {"ok": True, "artifacts": artifacts, "stdout": result.stdout, "stderr": result.stderr}
 
 
@@ -984,12 +1005,11 @@ def resolve_dotted_path(name: str, lookup: "dict[str, str]") -> "str | None":
 
 def run_list_paths(registry_path: str, out_path: str | None = None) -> str:
     """Render path catalog Markdown from the registry."""
-    repo_root = _find_repo_root()
     from velocity_converter.list_paths import render_catalog  # noqa: PLC0415
-    abs_registry = str(_resolve_safe(registry_path, repo_root))
+    abs_registry = str(_resolve_safe(registry_path))
     catalog = render_catalog(abs_registry)
     if out_path:
-        out = _resolve_safe(out_path, repo_root)
+        out = _resolve_safe(out_path)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(catalog, encoding="utf-8")
     return catalog
