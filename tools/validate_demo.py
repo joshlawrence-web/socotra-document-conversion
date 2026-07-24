@@ -22,6 +22,7 @@ Exit 0 = PASS. Exit 1 = MISMATCH (prints every failure). Designed to be re-run
 after every fix until it prints PASS — that loop is the whole point.
 """
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
@@ -68,8 +69,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("stem")
     ap.add_argument("--registry", default="registry/path-registry.yaml")
-    ap.add_argument("--output", default="workspace/output")
-    ap.add_argument("--inbox", default="workspace/inbox")
+    ap.add_argument("--output", default=os.environ.get("CONVERTER_OUTPUT", "workspace/output"))
+    ap.add_argument("--inbox", default=os.environ.get("CONVERTER_INBOX", "workspace/inbox"))
     ap.add_argument("--no-config", action="store_true",
                     help="template-only run: config-readiness findings ($TBD_ + "
                          "renderingData shape) become advisory notes, not failures. "
@@ -91,8 +92,9 @@ def main():
     # (a re-fill that never got re-finalized). Hard fail even in no-config.
     stale = []
     vm_mtime = vm_path.stat().st_mtime
-    for inp in (Path("workspace/action-needed") / f"{stem}.path-review.csv",
-                Path("workspace/action-needed") / f"{stem}.variants.csv",
+    action_dir = Path(os.environ.get("CONVERTER_ACTION", "workspace/action-needed"))
+    for inp in (action_dir / f"{stem}.path-review.csv",
+                action_dir / f"{stem}.variants.csv",
                 out_dir / f"{stem}.mapping.yaml"):
         if inp.is_file() and inp.stat().st_mtime > vm_mtime:
             stale.append(inp.name)

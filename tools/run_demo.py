@@ -26,14 +26,19 @@ lives in the variants.csv / conditional-registry. Add Leg 4 only if asked.
 """
 import argparse
 import csv
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 PY = sys.executable
 REGISTRY = "registry/path-registry.yaml"
-OUTPUT = "workspace/output"
-ACTION = "workspace/action-needed"
+# State dirs are env-driven so the author's workspace can live outside the engine
+# repo (the with-converter.sh wrapper sets these). Defaults keep standalone/test
+# runs behaving exactly as before.
+OUTPUT = os.environ.get("CONVERTER_OUTPUT", "workspace/output")
+ACTION = os.environ.get("CONVERTER_ACTION", "workspace/action-needed")
+INBOX = os.environ.get("CONVERTER_INBOX", "workspace/inbox")
 
 
 def run(cmd, label):
@@ -49,10 +54,10 @@ def _stem_from(path: str) -> str:
 
 def _find_source(stem: str) -> Path:
     for ext in (".docx", ".pdf"):
-        p = Path("workspace/inbox") / f"{stem}{ext}"
+        p = Path(INBOX) / f"{stem}{ext}"
         if p.is_file():
             return p
-    sys.exit(f"No source doc workspace/inbox/{stem}.docx|.pdf — put the doc there first.")
+    sys.exit(f"No source doc {INBOX}/{stem}.docx|.pdf — put the doc there first.")
 
 
 def _saved_path_review_fills(stem: str) -> dict:
