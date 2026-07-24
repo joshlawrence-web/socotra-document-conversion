@@ -1255,37 +1255,43 @@ def write_variants_csv(blocks: list[dict], stem: str, output_path: Path) -> None
     w.writerows(rows)
     content = buf.getvalue()
 
-    # Clobber guard (human-fill friction Gap 2): a full re-ingest must not destroy
-    # a customer's filled conditions. If the file already exists and differs from
-    # the freshly-generated stub, it has been hand-edited — keep it, but MERGE in
-    # stub rows for any block keys the edited file doesn't know about yet (a
-    # re-ingested document may have gained new conditional blocks).
+    # Clobber guard (human-fill friction Gap 2) + orphan purge: a full re-ingest
+    # must not destroy a customer's filled conditions, but must also reconcile the
+    # file to the CURRENT document — otherwise a stem reused across documents (or a
+    # marker deleted from the doc) leaves orphan rows the author edits for markers
+    # that no longer exist (the CGL "Pet" residue). Reconcile against this run's
+    # block keys: keep hand-edited rows whose block still exists, DROP orphans whose
+    # block is gone, APPEND stubs for genuinely new blocks.
     if output_path.exists():
         existing = output_path.read_text(encoding="utf-8")
         if existing != content:
-            existing_keys = {
-                row[0] for row in csv.reader(io.StringIO(existing)) if row
-            }
+            current_keys = {r[0] for r in rows}
+            existing_rows = [r for r in csv.reader(io.StringIO(existing)) if r]
+            if existing_rows and existing_rows[0][:1] == ["placeholder"]:
+                existing_rows = existing_rows[1:]  # drop the header row
+            kept = [r for r in existing_rows if r[0] in current_keys]
+            orphans = sorted({r[0] for r in existing_rows if r[0] not in current_keys})
+            existing_keys = {r[0] for r in existing_rows}
             new_rows = [r for r in rows if r[0] not in existing_keys]
-            if new_rows:
-                buf = io.StringIO()
-                csv.writer(buf).writerows(new_rows)
-                if not existing.endswith("\n"):
-                    existing += "\n"
-                output_path.write_text(existing + buf.getvalue(),
-                                       encoding="utf-8")
-                print(
-                    f"NOTE: {output_path.name} has hand-edits — kept them and "
-                    f"appended stub row(s) for new block(s): "
-                    f"{sorted({r[0] for r in new_rows})}",
-                    file=sys.stderr,
-                )
-            else:
+            if not orphans and not new_rows:
                 print(
                     f"WARN: {output_path.name} already exists with edits — keeping it, "
                     "NOT overwriting (delete it first to regenerate the blank stub).",
                     file=sys.stderr,
                 )
+                return
+            buf = io.StringIO()
+            w = csv.writer(buf)
+            w.writerow(["placeholder", "when", "text"])
+            w.writerows(kept + new_rows)
+            output_path.write_text(buf.getvalue(), encoding="utf-8")
+            msgs = []
+            if new_rows:
+                msgs.append(f"appended stub(s) for new block(s): {sorted({r[0] for r in new_rows})}")
+            if orphans:
+                msgs.append(f"dropped orphan row(s) for block(s) no longer in the document: {orphans}")
+            print(f"NOTE: {output_path.name} has hand-edits — kept them; " + "; ".join(msgs),
+                  file=sys.stderr)
             return
     output_path.write_text(content, encoding="utf-8")
 
